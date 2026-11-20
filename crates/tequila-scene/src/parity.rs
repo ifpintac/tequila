@@ -15,12 +15,19 @@
 use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped};
 use crate::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
 use crate::{CommandBus, SceneDocument};
-use tequila_core::math::{vec3, Transform};
+use tequila_core::math::{vec2, vec3, Transform};
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::MaterialType;
 use tequila_render_core::camera::Camera;
 use tequila_render_core::material::Material;
 use tequila_render_core::settings::IntegratorConfig;
+use std::sync::Arc;
+use tequila_materials::graph::{Node, NodeKind as GraphKind, Socket, TextureId, Value};
+use tequila_materials::material_type::Param;
+use tequila_texture::image::{ColorSpace, Image};
+use tequila_texture::mip::Wrap;
+use tequila_texture::projection::{Axis, Mapping, Projection};
+use tequila_texture::texture::{MapRole, Texture};
 
 /// One scene of the set, and how it is rendered.
 #[derive(Debug)]
@@ -33,6 +40,9 @@ pub struct ParityScene {
     pub samples: u32,
     pub seed: u32,
     build: fn() -> SceneDocument,
+    /// The pictures its materials sample, made here (no image file is
+    /// shipped), by the ids its document gives them.
+    pictures: fn() -> Vec<(TextureId, Texture)>,
 }
 
 impl ParityScene {
@@ -43,6 +53,16 @@ impl ParityScene {
     /// The camera it is seen from: framed on its product.
     pub fn camera(&self, document: &SceneDocument) -> Camera {
         product_camera(document, self.width as f32 / self.height as f32)
+    }
+
+    /// A cache to snapshot the scene through, holding its pictures: the
+    /// snapshot takes them from it as it would a file's.
+    pub fn cache(&self) -> crate::snapshot::MeshCache {
+        let mut cache = crate::snapshot::MeshCache::new();
+        for (id, texture) in (self.pictures)() {
+            cache.insert_texture(id, Arc::new(texture));
+        }
+        cache
     }
 }
 
@@ -56,6 +76,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: grey_product,
+    pictures: no_pictures,
 }, ParityScene {
     name: "product_materials",
     covers: "R3 tier A, the surface: the OpenPBR stack's opaque lobes - plastic (a specular interface over a \
@@ -67,6 +88,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: simple_product,
+    pictures: no_pictures,
 }, ParityScene {
     name: "product_floor",
     covers: "R3 tier A, the floor: product_materials standing on the environment's ground, a shadow catcher with \
@@ -79,6 +101,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor,
+    pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_glossy",
     covers: "R3 tier A, the floor's other reflection: blurred (a GGX facet of roughness 0.3 drawn on the floor's \
@@ -89,6 +112,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_glossy,
+    pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_studio",
     covers: "R3 tier A, the studio floor: contact shadows by ambient occlusion rather than the sky, a bounce the \
@@ -99,6 +123,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_studio,
+    pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_lit",
     covers: "R3 tier A, ground illumination: the default ground's shadow, with the floor a bounce meets shaded as \
@@ -108,6 +133,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_lit,
+    pictures: no_pictures,
 }, ParityScene {
     name: "lamp_lit",
     covers: "R3 tier A, the lamps: the bench's lamp-lit product, the environment turned down to nothing and three              lamps in its place - a rectangular key and a disc fill, each with its stand-in the camera sees (the disc's              a square), and a spot rim weak enough beside them that the light hierarchy chooses - next-event              estimation of one lamp chosen down the hierarchy by importance, the rectangle by its spherical              rectangle (by area near its plane), the disc by area, the spot as a delta; shadow rays that pass the              stand-ins; the bounces off sharp reflections that meet the panels along their way (a draw of the open              stream between roughness 0.5 and 0.8), shared with the light sample by its choice from there; the              mirrors' views of them; Filter Glossy's blur of the mirror-smooth screen and lens past a rough bounce",
@@ -116,6 +142,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamp_lit,
+    pictures: no_pictures,
 }, ParityScene {
     name: "studio_lamps",
     covers: "R3 tier A, a studio: the product (no floor) under the environment and the studio kit's softbox, strip              and card - panels in nits, falling off to their edges (0.55, 0.45, 0.2), out of the camera's sight so              no stand-ins, yet shown in mirrors - three lamps of like power chosen by the alias table; the sky's and              a lamp's light samples summed and clamped as one",
@@ -124,6 +151,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: studio_lamps,
+    pictures: no_pictures,
 }, ParityScene {
     name: "lamps_in_view",
     covers: "R3 tier A, the stand-ins: the product on its modelled ground under the environment, lit by lamp_lit's              key and by two lamps the camera sees - a softbox behind the product facing the camera, falling off to              its edges and fading down its face, its stand-in glowing as the lamp lights (and mirrored in the              screen, the bezel and the ground by the lamp itself, the stand-in passed), and a disc turned away,              whose stand-in the camera sees from behind: a square, unlit",
@@ -132,6 +160,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamps_in_view,
+    pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball",
     covers: "R3 tier B, glass: the product on its modelled ground and a smooth ball of solid glass in front of it              (depth 0.3, IOR 1.5) - the split at the first glass the camera sees, its reflection a path of its own              traced first on the same sampler and the camera's going on through by what Fresnel leaves; refraction              in and out, total internal reflection, the medium entered and left and the media a path starts in,              Beer-Lambert absorption inside; shadow rays from the ground and the body through the ball, tinted at              each face and absorbed between; the bounces that pass the ball as the light samples did and those that              see it as glass, met past it; the ball roughened deep in a path and sampling the whole sky",
@@ -140,6 +169,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball,
+    pictures: no_pictures,
 }, ParityScene {
     name: "rough_glass_floor",
     covers: "R3 tier B, rough glass: product_floor and a block of rough (0.25) tinted glass on the floor under a              mirror-smooth coat, a tenth of it diffuse - the rough transmission lobe's evaluation, density and              sampling from both sides, compensated by the interface's table; the coat over glass trapping light              against the transmission colour; the interface and the diffuse sharing what the transmission leaves;              light sampled from both sides of a surface that transmits, the whole sky and the shadow rays leaving              from the side the light is on; the catcher's view through the reflections and not through the              refractions; no clear glass, so shadow rays stop at it",
@@ -148,6 +178,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: rough_glass_floor,
+    pictures: no_pictures,
 }, ParityScene {
     name: "pane_and_lamps",
     covers: "R3 tier B, thin glass and lamps: the product on its modelled ground under the environment, lamp_lit's key              and a softbox behind it facing the camera, seen through two thin-walled panes - one clear and tinted,              one frosted (0.3) - straight through the clear one (the thin split), off the frosted one's mirrored              half vector; lamps chosen from both sides of glass and lit through it, shadow rays tinted by the clear              pane at each face; the camera's view through glass meeting the softbox and the key, the split              reflection's own view of the lamps from its start, the stand-in passed past the first surface",
@@ -156,6 +187,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: pane_and_lamps,
+    pictures: no_pictures,
 }, ParityScene {
     name: "liquid_in_glass",
     covers: "R3 tier B, nested media: a hollow ball of glass, its outer and inner surfaces one mesh, holding a ball of              orange liquid modelled into the glass, which outranks it (priority 1) - the medium present by              priority, the glass's inner wall inside the liquid crossed as no interface, the index between liquid              and glass both ways, absorption by whichever medium is present, the camera parked at its first glass              while the reflection's path has media of its own, and a shadow ray's walk pairing one volume at a time",
@@ -164,6 +196,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: liquid_in_glass,
+    pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball_floor",
     covers: "R3 tier B, glass on the floor: product_floor and glass_ball's ball on it - the floor's shadow drawn from              the sky through the ball, tinted at each face and absorbed between, the ball split at and refracting              the floor and its reflection, the floor's reflection a path of its own seeing the ball",
@@ -172,6 +205,34 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball_floor,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "textured_product",
+    covers: "R3 tier A, image textures through the mesh's UVs: the product on its modelled ground, its body wearing a \
+             colour map of sRGB bytes (512 x 512, its mip levels sRGB bytes too) and a grey roughness map of bytes \
+             (one channel, its mip levels sixteen bits), each repeated and the roughness turned; the ground a colour \
+             map of half floats repeated forty times and the roughness map again, seen from the product's feet to \
+             the horizon so the footprint picks every level and blends between them; colour maps brought from \
+             linear sRGB into the rendering space, the roughness read as a number",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: textured_product,
+    pictures: parity_pictures,
+}, ParityScene {
+    name: "projected_product",
+    covers: "R3 tier A/B, projected pictures: the body tri-planar in real-world units, the bezel's roughness planar \
+             from above, the screen a clamped planar label of sRGB bytes with alpha (its alpha the coat) leaving the \
+             screen black outside it, the lens spherical, the buttons cylindrical about their axis, the gold button \
+             a checker on a Mapping 2D's coordinates (a projection a node reads), and the ground a picture at the \
+             place a Mapping node made of its UVs (sample_at, the sharpest level)",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: projected_product,
+    pictures: parity_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -631,4 +692,236 @@ mod tests {
             assert_eq!(material.material().base_color, Spectrum::splat(0.5), "{}", material.name);
         }
     }
+}
+
+// ---- Pictures --------------------------------------------------------------
+
+fn no_pictures() -> Vec<(TextureId, Texture)> {
+    Vec::new()
+}
+
+/// Bytes from a fixed sequence: detail at every scale, the same everywhere.
+fn noise(count: usize, seed: u32) -> Vec<u8> {
+    let mut state = seed | 1;
+    (0..count)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 24) as u8
+        })
+        .collect()
+}
+
+fn byte(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+/// The textured scenes' pictures, by id:
+/// 1. a colour map of sRGB bytes, 512 x 512: terracotta and cream squares
+///    ruled by darker lines, grained by noise;
+/// 2. a grey roughness map of bytes, 256 x 256: soft stripes, grained;
+/// 3. a colour map of half floats, 300 x 300: planks in linear light;
+/// 4. a label of sRGB bytes with alpha, 256 x 128: a ring and a bar, clear
+///    around them (small enough to be kept lossless: its mip levels floats);
+/// 5. a height of bytes, 256 x 256: rounded bumps and fine grain;
+/// 6. a tangent-space normal map of bytes, 256 x 256, from a height of
+///    ripples.
+pub fn parity_pictures() -> Vec<(TextureId, Texture)> {
+    let uv = Mapping::default();
+    let mut pictures = Vec::new();
+
+    let grain = noise(512 * 512, 11);
+    let colour: Vec<u8> = (0..512 * 512)
+        .flat_map(|i| {
+            let (x, y) = (i % 512, i / 512);
+            let square = ((x / 64) + (y / 64)) % 2 == 0;
+            let line = x % 32 == 0 || y % 32 == 0;
+            let base: [f32; 3] = if square { [0.75, 0.36, 0.24] } else { [0.9, 0.84, 0.7] };
+            let g = (grain[i] as f32 / 255.0 - 0.5) * 0.2;
+            let dark = if line { 0.55 } else { 1.0 };
+            base.map(|c| byte((c + g) * dark))
+        })
+        .collect();
+    pictures.push((TextureId(1), Texture::from_linear(Image::from_srgb8(512, 512, 3, &colour), MapRole::Color, uv)));
+
+    let grain = noise(256 * 256, 12);
+    let roughness: Vec<u8> = (0..256 * 256)
+        .map(|i| {
+            let (x, y) = ((i % 256) as f32, (i / 256) as f32);
+            let stripes = 0.5 + 0.5 * ((x + 0.3 * y) * 0.15).sin();
+            byte(0.08 + 0.55 * stripes + (grain[i] as f32 / 255.0 - 0.5) * 0.15)
+        })
+        .collect();
+    pictures.push((TextureId(2), Texture::from_linear(Image::from_raw8(256, 256, 1, &roughness), MapRole::Data, uv)));
+
+    let grain = noise(300 * 300, 13);
+    let planks: Vec<f32> = (0..300 * 300)
+        .flat_map(|i| {
+            let (x, y) = ((i % 300) as f32, (i / 300) as f32);
+            let plank = (y / 50.0).floor();
+            let rings = 0.5 + 0.5 * ((x * 0.07 + plank * 1.7 + (y * 0.05).sin() * 2.0).sin());
+            let seam = if (y as usize) % 50 < 2 { 0.4 } else { 1.0 };
+            let g = grain[i] as f32 / 255.0 * 0.05;
+            let v = (0.12 + 0.3 * rings + g) * seam;
+            [v * 1.1, v * 0.75, v * 0.45]
+        })
+        .collect();
+    let planks = Image { width: 300, height: 300, channels: 3, data: planks, color_space: ColorSpace::LinearSrgb };
+    pictures.push((TextureId(3), Texture::from_linear(planks, MapRole::Color, uv)));
+
+    let label: Vec<u8> = (0..256 * 128)
+        .flat_map(|i| {
+            let (x, y) = ((i % 256) as f32 + 0.5, (i / 256) as f32 + 0.5);
+            let r = ((x - 70.0).powi(2) + (y - 64.0).powi(2)).sqrt();
+            let ring = (1.0 - ((r - 40.0).abs() - 10.0).clamp(0.0, 1.5) / 1.5).max(0.0);
+            let bar = if (130.0..240.0).contains(&x) && (50.0..78.0).contains(&y) { 1.0 } else { 0.0 };
+            let alpha = ring.max(bar);
+            let colour = if bar > 0.0 { [0.95, 0.85, 0.2] } else { [0.15, 0.45, 0.85] };
+            [byte(colour[0]), byte(colour[1]), byte(colour[2]), byte(alpha)]
+        })
+        .collect();
+    pictures.push((TextureId(4), Texture::from_linear(Image::from_srgb8(256, 128, 4, &label), MapRole::Color, uv)));
+
+    let grain = noise(256 * 256, 14);
+    let height: Vec<u8> = (0..256 * 256)
+        .map(|i| {
+            let (x, y) = ((i % 256) as f32, (i / 256) as f32);
+            let bumps = ((x * 0.098).sin() * (y * 0.098).sin()).abs();
+            byte(0.2 + 0.6 * bumps + (grain[i] as f32 / 255.0 - 0.5) * 0.1)
+        })
+        .collect();
+    pictures.push((TextureId(5), Texture::from_linear(Image::from_raw8(256, 256, 1, &height), MapRole::Height, uv)));
+
+    let ripple = |x: f32, y: f32| (x * 0.2).sin() * 0.5 + (y * 0.13 + x * 0.05).sin() * 0.5;
+    let normals: Vec<u8> = (0..256 * 256)
+        .flat_map(|i| {
+            let (x, y) = ((i % 256) as f32, (i / 256) as f32);
+            let (dx, dy) = ((ripple(x + 0.5, y) - ripple(x - 0.5, y)) * 1.5, (ripple(x, y + 0.5) - ripple(x, y - 0.5)) * 1.5);
+            let l = (dx * dx + dy * dy + 1.0).sqrt();
+            // Green up the image: v runs down it.
+            [byte(-dx / l * 0.5 + 0.5), byte(dy / l * 0.5 + 0.5), byte(1.0 / l * 0.5 + 0.5)]
+        })
+        .collect();
+    pictures.push((TextureId(6), Texture::from_linear(Image::from_raw8(256, 256, 3, &normals), MapRole::Normal, uv)));
+    pictures
+}
+
+/// The textured scenes' pictures in `document`'s store, by the ids
+/// `parity_pictures` makes them under, at paths nothing reads (the cache
+/// holds them).
+fn store_pictures(document: &mut SceneDocument) {
+    use crate::textures::TextureSource;
+    for (id, name, role) in [
+        (1, "colour", MapRole::Color),
+        (2, "roughness", MapRole::Data),
+        (3, "planks", MapRole::Color),
+        (4, "label", MapRole::Color),
+        (5, "height", MapRole::Height),
+        (6, "normal", MapRole::Normal),
+    ] {
+        document.textures.insert_with_id(TextureId(id), TextureSource::new(format!("parity/{name}.generated"), role));
+    }
+}
+
+/// One picture wired into a material's graph: through `mapping` (a Mapping
+/// 2D node, when given) into `param`.
+struct Wire {
+    texture: u32,
+    mapping: Option<Mapping>,
+    param: Param,
+    alpha: bool,
+}
+
+fn wire(texture: u32, mapping: Option<Mapping>, param: Param) -> Wire {
+    Wire { texture, mapping, param, alpha: false }
+}
+
+/// Material `name` of `document` with `wires` added to its graph.
+fn texture_material(document: &mut SceneDocument, name: &str, wires: &[Wire]) {
+    let key = document.materials.iter().find(|(_, m)| m.name == name).map(|(k, _)| k).expect("the material");
+    let definition = document.materials.get_mut(key).expect("the material");
+    let graph = &mut definition.graph;
+    let output = graph.output();
+    for w in wires {
+        let kind = if w.alpha {
+            GraphKind::ImageAlpha { texture: TextureId(w.texture), fallback: Value::Float(0.0) }
+        } else {
+            GraphKind::ImageTexture { texture: TextureId(w.texture), fallback: Value::Color(Spectrum::splat(0.5)) }
+        };
+        let image = graph.add_node(Node::new(kind));
+        if let Some(mapping) = w.mapping {
+            let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping }));
+            graph.connect(m, image, Socket::Input(0));
+        }
+        graph.connect(image, output, Socket::Param(w.param));
+    }
+}
+
+fn uv_repeats(u: f32, v: f32) -> Mapping {
+    Mapping { scale: vec3(u, v, 1.0), ..Mapping::default() }
+}
+
+/// `simple_product` on its modelled ground, its body and its ground
+/// textured through their UVs.
+fn textured_product() -> SceneDocument {
+    let (mut document, _) = simple_product_mapped(&|material| material);
+    store_pictures(&mut document);
+    let turned = Mapping { rotation: 0.1, ..uv_repeats(2.0, 2.0) };
+    texture_material(&mut document, "Body", &[wire(1, Some(uv_repeats(3.0, 3.0)), Param::BaseColor), wire(2, Some(turned), Param::SpecularRoughness)]);
+    texture_material(&mut document, "Ground", &[wire(3, Some(uv_repeats(40.0, 40.0)), Param::BaseColor), wire(2, Some(uv_repeats(25.0, 25.0)), Param::SpecularRoughness)]);
+    document
+}
+
+/// `simple_product` on its modelled ground, its parts wearing pictures
+/// projected every way a Mapping 2D projects.
+fn projected_product() -> SceneDocument {
+    let (mut document, _) = simple_product_mapped(&|material| material);
+    store_pictures(&mut document);
+    let tri_planar = Mapping { projection: Projection::TriPlanar, real_world_units: true, scale: vec3(0.35, 0.35, 1.0), blend_sharpness: 4.0, ..Mapping::default() };
+    texture_material(&mut document, "Body", &[wire(1, Some(tri_planar), Param::BaseColor)]);
+    let from_above = Mapping { projection: Projection::Planar, axis: Axis::Y, real_world_units: true, scale: vec3(0.3, 0.3, 1.0), ..Mapping::default() };
+    texture_material(&mut document, "Bezel", &[wire(2, Some(from_above), Param::SpecularRoughness)]);
+    // The screen is 1.76 across and 1.02 deep: the label 0.9 by 0.45 in
+    // its middle, clear around.
+    let label = Mapping {
+        projection: Projection::Planar,
+        axis: Axis::Y,
+        scale: vec3(1.0 / 0.9, 1.0 / 0.45, 1.0),
+        offset: vec2(0.5, 0.5),
+        wrap_u: Wrap::Clamp,
+        wrap_v: Wrap::Clamp,
+        ..Mapping::default()
+    };
+    texture_material(&mut document, "Screen", &[wire(4, Some(label), Param::BaseColor), Wire { texture: 4, mapping: Some(label), param: Param::CoatWeight, alpha: true }]);
+    let spherical = Mapping { projection: Projection::Spherical, scale: vec3(2.0, 1.0, 1.0), ..Mapping::default() };
+    texture_material(&mut document, "Lens", &[wire(3, Some(spherical), Param::BaseColor)]);
+    let around = Mapping { projection: Projection::Cylindrical, axis: Axis::Y, scale: vec3(1.0, 20.0, 1.0), ..Mapping::default() };
+    texture_material(&mut document, "Button", &[wire(1, Some(around), Param::BaseColor)]);
+    // A checker on a Mapping 2D's coordinates: the projection read by a node.
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Trim").map(|(k, _)| k).expect("the trim");
+        let graph = &mut document.materials.get_mut(key).expect("the trim").graph;
+        let output = graph.output();
+        let planar = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(8.0, 8.0, 1.0), ..Mapping::default() };
+        let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+        let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
+        graph.connect(m, checker, Socket::Input(0));
+        graph.connect(checker, output, Socket::Param(Param::BaseColor));
+    }
+    // The ground: a picture at the place a Mapping node makes of its UVs.
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Ground").map(|(k, _)| k).expect("the ground");
+        let graph = &mut document.materials.get_mut(key).expect("the ground").graph;
+        let output = graph.output();
+        let coordinates = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::TextureCoordinate)));
+        let mut scale = Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Mapping { kind: tequila_texture::cycles::ops::MappingKind::Point }));
+        scale.literals.insert(Socket::Input(3), Value::Vector(vec3(30.0, 30.0, 1.0)));
+        let scale = graph.add_node(scale);
+        let image = graph.add_node(Node::new(GraphKind::ImageTexture { texture: TextureId(3), fallback: Value::Color(Spectrum::splat(0.5)) }));
+        graph.connect_output(coordinates, 2, scale, Socket::Input(0));
+        graph.connect(scale, image, Socket::Input(0));
+        graph.connect(image, output, Socket::Param(Param::BaseColor));
+    }
+    document
 }

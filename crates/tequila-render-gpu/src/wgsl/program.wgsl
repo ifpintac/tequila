@@ -5,6 +5,7 @@
 // write-back into the material.
 //#include nodes
 //#include openpbr
+//#include textures
 
 // Every material's instructions and write-back pairs, their constants, and
 // where each material's are (program.rs's GpuProgram). A kernel that runs
@@ -54,6 +55,7 @@ const OP_GAMMA: u32 = 20u;
 const OP_INVERT_COLOR: u32 = 21u;
 const OP_CHECKER: u32 = 22u;
 const OP_GRADIENT_TEXTURE: u32 = 23u;
+const OP_TEXTURE: u32 = 24u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -81,6 +83,12 @@ struct ProgPoint {
     generated: vec3<f32>,
     object_location: vec3<f32>,
     object_color: vec3<f32>,
+    // The footprint in the part's own space, and in UV where the surface
+    // has UVs to measure it by (SurfacePoint::uv_footprint): what a picture
+    // picks its level by.
+    footprint: f32,
+    uv_footprint: vec2<f32>,
+    has_uv_footprint: u32,
 };
 
 // The registers, and the program's first constant.
@@ -284,6 +292,10 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
             case 23u: {
                 let fac = cy_gradient_texture(settings, a[0].xyz);
                 out = vec4<f32>(vec3<f32>(fac), fac);
+            }
+            case 24u: {
+                let tp = TexPoint(pt.object, pt.object_normal, pt.uv, pt.footprint, pt.scale, pt.uv_footprint, pt.has_uv_footprint != 0u);
+                out = tex_instruction(settings, a[0], a[1], a[2], a[3], tp);
             }
             default: {}
         }

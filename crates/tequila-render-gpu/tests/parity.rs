@@ -80,6 +80,21 @@ fn the_product_in_a_studio_is_the_processors_picture() {
     same_picture("studio_lamps");
 }
 
+/// Image textures through the mesh's UVs: sRGB bytes, grey bytes, half
+/// floats, from the product's feet to the horizon so every level shows.
+#[test]
+fn the_textured_product_is_the_processors_picture() {
+    same_picture("textured_product");
+}
+
+/// Projected pictures: tri-planar, planar (a clamped label and its alpha),
+/// spherical, cylindrical, a Mapping 2D read by a node, a picture at a
+/// place the graph worked out.
+#[test]
+fn the_projected_product_is_the_processors_picture() {
+    same_picture("projected_product");
+}
+
 /// Lamps the camera sees: a softbox's stand-in glowing as it lights, and
 /// mirrored by the lamp itself; a disc's stand-in seen from behind.
 #[test]
@@ -132,22 +147,24 @@ struct Shot {
     height: usize,
     samples: u32,
     seed: u32,
+    /// What the snapshot reads its pictures from.
+    cache: MeshCache,
 }
 
 fn same_picture(name: &str) {
     let scene = parity::scene(name).expect("the parity set has it");
     let document = scene.document();
     let camera = scene.camera(&document);
-    same_shot(Shot { name: scene.name.to_string(), document, camera, width: scene.width, height: scene.height, samples: scene.samples, seed: scene.seed });
+    same_shot(Shot { name: scene.name.to_string(), document, camera, width: scene.width, height: scene.height, samples: scene.samples, seed: scene.seed, cache: scene.cache() });
 }
 
-fn same_shot(scene: Shot) {
+fn same_shot(mut scene: Shot) {
     let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
     let name = scene.name.as_str();
     let document = &scene.document;
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache);
     let camera = scene.camera;
     let config = document.lighting.config();
 
@@ -155,7 +172,15 @@ fn same_shot(scene: Shot) {
     let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
     limits.extend(tequila_render_gpu::lights::lamp_limits(&snapshot, &config));
     limits.extend(tequila_render_gpu::transport::glass_limits(&snapshot, &config));
+    limits.extend(tequila_render_gpu::textures::texture_limits(&snapshot, &config));
     assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
+    // And every material's program is one the card runs.
+    let refused: Vec<String> = tequila_render_gpu::transport::lower_programs(&snapshot)
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| l.as_ref().err().map(|why| format!("material {i}: {why}")))
+        .collect();
+    assert!(refused.is_empty(), "{name}: the card refuses {refused:?}");
 
     let started = std::time::Instant::now();
     let mut renderer = renderer(gpu, &snapshot);
@@ -353,7 +378,7 @@ fn the_headphones_are_the_processors_picture() {
     let runs = lowered.iter().filter(|l| matches!(l, Ok(Some(_)))).count();
     eprintln!("Headphones: {runs} materials run as programs on the card");
     assert!(refused.is_empty(), "the card refuses: {refused:?}");
-    same_shot(Shot { name: "headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7 });
+    same_shot(Shot { name: "headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
 }
 
 /// A preset wall: the Headphones' parts and camera, every material of it
@@ -391,7 +416,7 @@ fn preset_wall(variant: usize) {
     }
     eprintln!("preset wall {variant}: {}", names.join(", "));
     let camera = document.cameras.active().camera;
-    same_shot(Shot { name: format!("preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7 });
+    same_shot(Shot { name: format!("preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
 }
 
 #[test]
@@ -438,7 +463,7 @@ fn the_preset_walls_one_by_one() {
             document.materials.insert_with_key(*key, definition);
             let camera = document.cameras.active().camera;
             eprint!("{} on {key:?}: ", entry.name);
-            same_shot(Shot { name: format!("one_{variant}_{j}"), document, camera, width: 160, height: 90, samples: 128, seed: 7 });
+            same_shot(Shot { name: format!("one_{variant}_{j}"), document, camera, width: 160, height: 90, samples: 128, seed: 7, cache: MeshCache::new() });
         }
     }
 }
@@ -468,7 +493,7 @@ fn a_preset_as_program_or_surface() {
             document.materials.insert_with_key(key, definition);
             let camera = document.cameras.active().camera;
             eprint!("  {}: ", if constant { "constants" } else { "program" });
-            same_shot(Shot { name: format!("pos_{constant}"), document, camera, width: 160, height: 90, samples: 128, seed: 7 });
+            same_shot(Shot { name: format!("pos_{constant}"), document, camera, width: 160, height: 90, samples: 128, seed: 7, cache: MeshCache::new() });
         }
     }
 }

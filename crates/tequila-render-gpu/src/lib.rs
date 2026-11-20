@@ -27,6 +27,9 @@
 //!   by test (R2.2).
 //! - [`lights`]: the scene's analytic lamps and the way the processor
 //!   chooses one, as `LightSet` built it (R3).
+//! - [`textures`]: the pictures a scene's programs sample, every level as
+//!   `tequila-texture` keeps it, for `textures.wgsl` to filter as `mip.rs`
+//!   does (R3).
 //! - [`environment`] and [`transport`]: the transport (R2.5, R3), opaque
 //!   OpenPBR surfaces under the environment and the lamps, on a shadow
 //!   catcher's floor, the processor's path draw for draw, its samples
@@ -41,6 +44,7 @@ pub mod program;
 pub mod scene;
 pub mod shader;
 pub mod tables;
+pub mod textures;
 pub mod transport;
 
 pub use device::{GpuDevice, Needs};

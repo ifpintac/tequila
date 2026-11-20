@@ -236,7 +236,7 @@ fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram]) -> Vec<[f32;
         &inputs,
         IN,
         OUT,
-        &[(11, &table.words), (12, bytemuck::cast_slice(&table.constants))],
+        &[(11, &table.words), (12, bytemuck::cast_slice(&table.constants)), (16, &[0u32]), (17, &tequila_render_gpu::textures::header_tables())],
     );
     words.chunks(OUT).map(|c| std::array::from_fn(|k| f32::from_bits(c[k]))).collect()
 }

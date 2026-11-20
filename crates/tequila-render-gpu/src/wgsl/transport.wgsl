@@ -1108,8 +1108,20 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     pt.object_location = vec3<f32>(inst.object_to_world[0].w, inst.object_to_world[1].w, inst.object_to_world[2].w);
     pt.object_color = inst.object_color.xyz;
     // No ray differentials: the footprint widens with the distance alone.
-    s.footprint = (hit.t * frame.pixel_spread) * inst.inv_length_scale;
+    let world = hit.t * frame.pixel_spread;
+    s.footprint = world * inst.inv_length_scale;
+    pt.footprint = s.footprint;
     let derivatives = uv_derivatives(inst, mesh, c);
+    // The same footprint in UV: its length over how far the surface moves
+    // per unit of u, and of v.
+    if (derivatives.ok) {
+        let lu = cy_sqrt(cy_dot3(derivatives.dpdu, derivatives.dpdu));
+        let lv = cy_sqrt(cy_dot3(derivatives.dpdv, derivatives.dpdv));
+        if (lu > 1e-12 && lv > 1e-12) {
+            pt.uv_footprint = vec2<f32>(cy_div(world, lu), cy_div(world, lv));
+            pt.has_uv_footprint = 1u;
+        }
+    }
     s.has_derivatives = derivatives.ok;
     s.dpdu = derivatives.dpdu;
     s.dpdv = derivatives.dpdv;
