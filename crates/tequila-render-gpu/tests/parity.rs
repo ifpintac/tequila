@@ -29,7 +29,10 @@ fn the_grey_product_is_the_processors_picture() {
     let config = document.lighting.config();
 
     let started = std::time::Instant::now();
-    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let mut renderer = GpuRenderer::new(gpu, &snapshot);
+    // The processor adds the card's samples up, as it adds up its own: the
+    // comparison is of the paths alone.
+    renderer.accumulate_on_card = false;
     let mut card = Framebuffer::new(scene.width, scene.height);
     let settings = FrameSettings {
         camera,
@@ -104,4 +107,46 @@ fn the_grey_product_is_the_processors_picture() {
     );
     assert!(mean < 0.002, "the mean absolute difference is {mean:.6}, not under 0.002");
     assert!(share <= 0.001, "{far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+}
+
+/// The card adding its samples up, firefly rejection and all, gives the
+/// picture the processor's `Framebuffer` gives adding the same samples up:
+/// the two differ only in the squared luminance the rejection judges by,
+/// an f64 on the processor and two f32s on the card.
+#[test]
+fn adding_up_on_the_card_is_adding_up_on_the_processor() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let settings = FrameSettings {
+        camera: scene.camera(&document),
+        config: document.lighting.config(),
+        scene_seed: scene.seed,
+        reject_fireflies: true,
+        clamp_direct: None,
+        clamp_indirect: None,
+    };
+    let mut renderer = GpuRenderer::new(gpu, &snapshot);
+    let mut on_card = Framebuffer::new(scene.width, scene.height);
+    // In two passes, so the sums go to the card and come back between them.
+    renderer.render_pass(&mut on_card, &settings, scene.samples / 2);
+    renderer.render_pass(&mut on_card, &settings, scene.samples - scene.samples / 2);
+    renderer.accumulate_on_card = false;
+    let mut on_processor = Framebuffer::new(scene.width, scene.height);
+    renderer.render_pass(&mut on_processor, &settings, scene.samples);
+    let mut sum = 0.0f64;
+    let mut worst = 0.0f32;
+    for (a, b) in on_card.pixels().iter().zip(on_processor.pixels()) {
+        assert_eq!(a.samples, b.samples);
+        let (a, b) = (a.mean(), b.mean());
+        let d = (a.r - b.r).abs().max((a.g - b.g).abs()).max((a.b - b.b).abs());
+        sum += d as f64;
+        worst = worst.max(d);
+    }
+    let mean = sum / on_card.pixels().len() as f64;
+    eprintln!("on the card against on the processor: mean |difference| {mean:.2e}, worst {worst:.2e}");
+    assert!(mean < 1e-5 && worst < 0.01, "adding up on the card differs: mean {mean:.2e}, worst {worst:.2e}");
 }

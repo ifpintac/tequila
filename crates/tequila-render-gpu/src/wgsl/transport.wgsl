@@ -190,6 +190,7 @@ const ALBEDO: f32 = 0.5;
 struct PathOut {
     radiance: vec3<f32>,
     background: vec3<f32>,
+    coverage: f32,
 };
 
 fn sanitized(c: vec3<f32>) -> vec3<f32> {
@@ -220,6 +221,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var specular_chain = true;
     var sky_facing = vec3<f32>(0.0, 1.0, 0.0);
     var bounce = 0u;
+    var coverage = 0.0;
     loop {
         let hit = trace(origin, direction);
         if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
@@ -232,6 +234,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             let found_at = select(bounce - 1u, 0u, bounce == 0u);
             radiance += clamp_light(throughput * sky * weight, light_ceiling(specular_chain, found_at));
             break;
+        }
+        if (bounce == 0u) {
+            coverage = 1.0;
         }
         var surf = surface_of(hit);
         // facing_forward: both normals to the side the ray came from.
@@ -296,7 +301,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             throughput = throughput * (1.0 / q);
         }
     }
-    return PathOut(sanitized(radiance), background);
+    return PathOut(sanitized(radiance), background, coverage);
 }
 
 @compute @workgroup_size(8, 8)
@@ -308,8 +313,12 @@ fn transport_main(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixels = frame.width * frame.height;
     for (var i = 0u; i < frame.samples; i++) {
         let out = path(id.x, id.y, frame.sample_base + i);
-        let at = (i * pixels + pixel) * 2u;
-        frame_samples[at] = vec4<f32>(out.radiance, 0.0);
-        frame_samples[at + 1u] = vec4<f32>(out.background, 0.0);
+        if ((frame.mode & 1u) != 0u) {
+            accumulate(pixel, out.radiance, out.background, out.coverage);
+        } else {
+            let at = (i * pixels + pixel) * 2u;
+            frame_samples[at] = vec4<f32>(out.radiance, out.coverage);
+            frame_samples[at + 1u] = vec4<f32>(out.background, 0.0);
+        }
     }
 }

@@ -6,7 +6,7 @@
 
 use std::mem::{offset_of, size_of};
 use tequila_render_gpu::scene::{GpuInstance, GpuMesh};
-use tequila_render_gpu::transport::FrameParams;
+use tequila_render_gpu::transport::{FrameParams, PixelSums};
 use tequila_render_gpu::shader;
 
 /// `name`'s size and its members' (name, offset), as naga lays it out.
@@ -48,8 +48,9 @@ fn records_have_one_layout_on_both_sides() {
         FrameParams {
             camera_to_world, half_height, half_width, width, height, sample_base, samples, scene_seed, max_bounces,
             rr_start, clamp_direct, clamp_indirect, shadow_far, env_rotation, env_inverse_rotation, env_width,
-            env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, _pad0,
+            env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, mode,
             off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
         }
     );
+    layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });
 }

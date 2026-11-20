@@ -47,7 +47,8 @@ pub struct FrameParams {
     pub env_intensity: f32,
     pub env_weighted_sum: f32,
     pub env_infinite: u32,
-    pub _pad0: u32,
+    /// Bit 0: add the samples up on the card; bit 1: firefly rejection.
+    pub mode: u32,
     pub off_luminance: u32,
     pub off_cdf: u32,
     pub off_power: u32,
@@ -57,6 +58,26 @@ pub struct FrameParams {
     pub off_tile_row: u32,
     pub off_row_start: u32,
 }
+
+/// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
+/// [`Framebuffer`]'s `Pixel` this transport fills.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct PixelSums {
+    /// Radiance, and in `[3]` the energy firefly rejection took off.
+    pub sum: [f32; 4],
+    /// Background, and in `[3]` the coverage.
+    pub background: [f32; 4],
+    /// Squared luminance: the sum and Kahan's compensation, which the sum is
+    /// over by.
+    pub squares_high: f32,
+    pub squares_low: f32,
+    pub samples: u32,
+    pub _pad: u32,
+}
+
+const MODE_ON_CARD: u32 = 1;
+const MODE_REJECT: u32 = 2;
 
 /// What a render asks, as the processor's `RenderContext` has it.
 #[derive(Clone, Debug)]
@@ -92,6 +113,11 @@ const SAMPLES_PER_DISPATCH: u32 = 16;
 /// A scene on one card, ready to render.
 pub struct GpuRenderer {
     pub gpu: GpuDevice,
+    /// Add the samples up on the card, firefly rejection and all, and bring
+    /// back each pixel's sums once a pass: the fast way, and the default.
+    /// Off, each sample comes back and the processor's `Framebuffer` adds it
+    /// up, exactly as it adds up its own (the parity test).
+    pub accumulate_on_card: bool,
     tables: Tables,
     /// The scene's buffers and acceleration structures, which the bind
     /// groups read; kept for as long as the renderer is.
@@ -148,6 +174,7 @@ impl GpuRenderer {
                     wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
                 ),
                 entry(1, storage(false)),
+                entry(2, storage(false)),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -191,6 +218,7 @@ impl GpuRenderer {
         });
         GpuRenderer {
             gpu,
+            accumulate_on_card: true,
             tables,
             scene: uploaded,
             environment,
@@ -231,7 +259,7 @@ impl GpuRenderer {
             env_intensity: e.intensity,
             env_weighted_sum: e.weighted_sum,
             env_infinite: e.infinite as u32,
-            _pad0: 0,
+            mode: if self.accumulate_on_card { MODE_ON_CARD } else { 0 } | if settings.reject_fireflies { MODE_REJECT } else { 0 },
             off_luminance: e.off_luminance,
             off_cdf: e.off_cdf,
             off_power: e.off_power,
@@ -253,16 +281,47 @@ impl GpuRenderer {
         let device = &self.gpu.device;
         let start = framebuffer.pixels().first().map_or(0, |p| p.samples);
         let batch = SAMPLES_PER_DISPATCH.min(samples.max(1));
-        let bytes = (pixels * batch as usize * 2 * 16) as u64;
+        let on_card = self.accumulate_on_card;
+        // Each sample back, when the processor adds them up; else a word.
+        let sample_bytes = if on_card { 16 } else { (pixels * batch as usize * 2 * 16) as u64 };
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("samples"),
-            size: bytes,
+            size: sample_bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
+        // The pixels' sums so far, when the card adds them up; else a pixel.
+        let sums: Vec<PixelSums> = if on_card {
+            framebuffer
+                .pixels()
+                .iter()
+                .map(|p| {
+                    let high = p.sum_squared_luminance as f32;
+                    PixelSums {
+                        sum: [p.sum.r, p.sum.g, p.sum.b, p.clamped_energy],
+                        background: [p.background_sum.r, p.background_sum.g, p.background_sum.b, p.coverage_sum],
+                        squares_high: high,
+                        squares_low: (high as f64 - p.sum_squared_luminance) as f32,
+                        samples: p.samples,
+                        _pad: 0,
+                    }
+                })
+                .collect()
+        } else {
+            vec![PixelSums::default()]
+        };
+        let pixel_bytes = (sums.len() * std::mem::size_of::<PixelSums>()) as u64;
+        let pixel_buffer = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("pixels"),
+                contents: bytemuck::cast_slice(&sums),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            },
+        );
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("samples, read back"),
-            size: bytes,
+            label: Some("read back"),
+            size: sample_bytes.max(pixel_bytes),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -278,6 +337,7 @@ impl GpuRenderer {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: pixel_buffer.as_entire_binding() },
             ],
         });
         let mut done = 0u32;
@@ -295,6 +355,11 @@ impl GpuRenderer {
                 pass.set_bind_group(3, &frame_group, &[]);
                 pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
             }
+            if on_card {
+                self.gpu.queue.submit(Some(encoder.finish()));
+                done += count;
+                continue;
+            }
             let used = (pixels * count as usize * 2 * 16) as u64;
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, used);
             self.gpu.queue.submit(Some(encoder.finish()));
@@ -311,6 +376,8 @@ impl GpuRenderer {
                         let result = PathResult {
                             radiance: Spectrum { r: r[0], g: r[1], b: r[2] },
                             background: Spectrum { r: b[0], g: b[1], b: b[2] },
+                            coverage: r[3],
+                            escaped: r[3] == 0.0,
                             ..Default::default()
                         };
                         pixel.accumulate_with(&result, reject, None);
@@ -320,5 +387,26 @@ impl GpuRenderer {
             readback.unmap();
             done += count;
         }
+        if on_card {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read back") });
+            encoder.copy_buffer_to_buffer(&pixel_buffer, 0, &readback, 0, pixel_bytes);
+            self.gpu.queue.submit(Some(encoder.finish()));
+            readback.slice(..pixel_bytes).map_async(wgpu::MapMode::Read, |r| r.expect("the pixels map"));
+            self.gpu.wait();
+            {
+                let view = readback.slice(..pixel_bytes).get_mapped_range().expect("the pixels are mapped");
+                let back: &[PixelSums] = bytemuck::cast_slice(&view[..]);
+                for (pixel, s) in framebuffer.pixels_mut().iter_mut().zip(back) {
+                    pixel.sum = Spectrum { r: s.sum[0], g: s.sum[1], b: s.sum[2] };
+                    pixel.clamped_energy = s.sum[3];
+                    pixel.background_sum = Spectrum { r: s.background[0], g: s.background[1], b: s.background[2] };
+                    pixel.coverage_sum = s.background[3];
+                    pixel.sum_squared_luminance = s.squares_high as f64 - s.squares_low as f64;
+                    pixel.samples = s.samples;
+                }
+            }
+            readback.unmap();
+        }
     }
 }
+
