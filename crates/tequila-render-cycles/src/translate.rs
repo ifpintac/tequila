@@ -2208,6 +2208,48 @@ impl Builder<'_> {
         Ok(Slot::Link(node, "Value"))
     }
 
+    /// A metal's colours as they should reach Cycles' principled shader under
+    /// a clear coat of `weight` and index `ior`.
+    ///
+    /// Light crosses a coat twice, down to the base and back up, and some of
+    /// what the base returns is reflected down again by the coat's underside
+    /// for another try. Cycles lets the coat take its share once, by its
+    /// reflectance where the surface is seen (`closure_layering_weight`);
+    /// Tequila's renderer takes it both ways and sums the light trapped
+    /// between (`lobes::openpbr`'s attenuation, `layered.rs`'s "forgetting
+    /// the outbound crossing"). A metal hands light back near the angle it
+    /// arrived by, so its second crossing is at the angle it is seen at: its
+    /// colours are darkened by a further `(1 - w F) / (1 - w F R)`, `F` the
+    /// coat's Fresnel there and `R` the metal's own reflectance, for the
+    /// metal's share of the base. A clear-coated grey metal (carbon fibre's
+    /// graphite) in a white world, seen straight on, read 0.206 where the
+    /// coat's two crossings make 0.200; now 0.201.
+    fn under_coat(&mut self, shader: Shader, base: Slot, edge: Slot, metalness: Slot, weight: Slot, ior: Slot) -> Result<(Slot, Slot), String> {
+        let fresnel = self.session.node(shader, "fresnel")?;
+        self.feed(shader, fresnel, "IOR", ior, false)?;
+        let reflected = self.float_op(shader, "multiply", weight, Slot::Link(fresnel, "Fac"))?;
+        let own = match base {
+            Slot::Value(colour) => num(colour.as_color().luminance().clamp(0.0, 1.0)),
+            link => {
+                let grey = self.session.node(shader, "rgb_to_bw")?;
+                self.feed(shader, grey, "Color", link, true)?;
+                Slot::Link(grey, "Val")
+            }
+        };
+        let through = self.float_op(shader, "subtract", num(1.0), reflected)?;
+        let returned = self.float_op(shader, "multiply", reflected, own)?;
+        let again = self.float_op(shader, "subtract", num(1.0), returned)?;
+        let kept = self.float_op(shader, "divide", through, again)?;
+        // 1 - metalness (1 - kept): the metal's share darkened, the rest not.
+        let lost = self.float_op(shader, "subtract", num(1.0), kept)?;
+        let share = self.float_op(shader, "multiply", metalness, lost)?;
+        let factor = self.float_op(shader, "subtract", num(1.0), share)?;
+        Ok((
+            self.apply(shader, &NodeKind::Multiply, &[base, factor], 0)?,
+            self.apply(shader, &NodeKind::Multiply, &[edge, factor], 0)?,
+        ))
+    }
+
     /// Tequila's anisotropy as Cycles' principled shader takes it. Tequila
     /// stretches the lobe by an aspect of (1 - a^2)^(1/4)
     /// (`Ggx::from_roughness`), Cycles by sqrt(1 - 0.9 a); the same aspect is
@@ -3634,6 +3676,14 @@ impl Builder<'_> {
         } else {
             (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
         };
+        let metal = !transmissive && (m.base_metalness > 0.0 || driven.contains_key(&Param::BaseMetalness));
+        let (base, edge) = if metal && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight)) {
+            let weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
+            let ior = value(Param::CoatIor, Value::Float(m.coat_ior));
+            self.under_coat(shader, base, edge, metalness, weight, ior)?
+        } else {
+            (base, edge)
+        };
         self.feed(shader, bsdf, "base_color", base, true)?;
         self.feed(shader, bsdf, "metallic", metalness, false)?;
         self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
@@ -3781,6 +3831,13 @@ impl Builder<'_> {
             (base, edge)
         } else {
             (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
+        };
+        let (base, edge) = if metal && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight)) {
+            let weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
+            let ior = value(Param::CoatIor, Value::Float(m.coat_ior));
+            self.under_coat(shader, base, edge, metalness, weight, ior)?
+        } else {
+            (base, edge)
         };
         // A thin wall's subsurface is the light it scatters through to its
         // far side (`translucent_sheet`, below), not a solid's walk: the
