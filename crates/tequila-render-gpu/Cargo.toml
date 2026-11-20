@@ -3,9 +3,23 @@ name = "tequila-render-gpu"
 description = "GPU rendering backends: wgpu / OptiX / HIP RT"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# wgpu 30 needs a newer compiler than the workspace's floor.
+rust-version = "1.88"
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+# R2.0 spike (docs/07): a throwaway branch, not for merging.
+[dev-dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+pollster = "1"
+bytemuck = { version = "1", features = ["derive"] }
+png = "0.17"
+tequila-core = { path = "../tequila-core" }
+tequila-format = { path = "../tequila-format" }
+tequila-scene = { path = "../tequila-scene" }
+tequila-render-core = { path = "../tequila-render-core" }
+tequila-render-cpu = { path = "../tequila-render-cpu" }
+rayon = "1"
