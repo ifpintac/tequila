@@ -169,17 +169,21 @@ fn the_rounded_normal_is_the_processors() {
 }
 
 /// What rounding shows: `bevelled_product` on the card with its edges sharp
-/// and rounded, at four times the parity set's size, as PNGs in the folder
-/// `TEQUILA_BEVEL_PNG` names, exposed alike. Run by hand,
-/// `TEQUILA_BEVEL_PNG=folder cargo test --test bevel -- --ignored`.
+/// and rounded, at `TEQUILA_BEVEL_SCALE` (2 by default) times the parity
+/// set's size, as PNGs in the folder `TEQUILA_BEVEL_PNG` names, exposed
+/// alike. Run by hand, `TEQUILA_BEVEL_PNG=folder cargo test --test bevel --
+/// --ignored`. At 3 times, a dispatch of 16 samples of this scene runs past
+/// Windows' two seconds on the RTX 2060, sharp or rounded, and the device
+/// is lost.
 #[test]
 #[ignore]
 fn sharp_and_rounded_on_the_card() {
     let Ok(folder) = std::env::var("TEQUILA_BEVEL_PNG") else { return };
     let scene = parity::scene("bevelled_product").expect("the parity set has it");
-    let (width, height) = (scene.width * 4, scene.height * 4);
+    let scale: usize = std::env::var("TEQUILA_BEVEL_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
+    let (width, height) = (scene.width * scale, scene.height * scale);
     let mut white = None;
-    for rounded in [true, false] {
+    for rounded in [false, true] {
         let document = parity::bevelled_product_rounded(rounded);
         // The same aspect as the set's, so the same framing.
         let camera = scene.camera(&document);
@@ -190,7 +194,11 @@ fn sharp_and_rounded_on_the_card() {
         let renderer = GpuRenderer::new(gpu, &snap);
         let settings = FrameSettings { camera, config: document.lighting.config(), scene_seed: scene.seed, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
         let mut film = tequila_render_core::framebuffer::Framebuffer::new(width, height);
-        renderer.render_pass(&mut film, &settings, 512);
+        for _ in 0..8 {
+            renderer.render_pass(&mut film, &settings, 64);
+        }
+        let mean = film.pixels().iter().map(|p| p.mean().max_component() as f64).sum::<f64>() / film.pixels().len() as f64;
+        eprintln!("{}: {} samples a pixel, mean {mean:.4}", if rounded { "rounded" } else { "sharp" }, film.pixels()[0].samples);
         let white = *white.get_or_insert_with(|| {
             let mut levels: Vec<f32> = film.pixels().iter().map(|p| p.mean().max_component()).collect();
             levels.sort_by(f32::total_cmp);
