@@ -100,7 +100,9 @@ fn matrices() -> &'static [[u32; MATRIX_BITS]] {
 /// bits select. 16 KB, built once from [`matrices`].
 static BYTE_TABLES: std::sync::OnceLock<Vec<[[u32; 256]; 4]>> = std::sync::OnceLock::new();
 
-fn byte_tables() -> &'static [[[u32; 256]; 4]] {
+/// The tables [`sobol_u32`] reads, `[dimension][byte][value]`: public so the
+/// graphics card's sampler (`tequila-render-gpu`) reads the very same ones.
+pub fn byte_tables() -> &'static [[[u32; 256]; 4]] {
     BYTE_TABLES.get_or_init(|| {
         matrices()
             .iter()

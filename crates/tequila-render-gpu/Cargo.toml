@@ -1,11 +1,21 @@
 [package]
 name = "tequila-render-gpu"
-description = "GPU rendering backends: wgpu / OptiX / HIP RT"
+description = "Tequila's renderer on the graphics card, through wgpu ray queries (docs/07)"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# wgpu 30 needs a newer compiler than the workspace's floor.
+rust-version = "1.88"
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Pinned on its own: wgpu 22 is in Cargo.lock through another dependency
+# (docs/07 R2.1). Vulkan on Windows and Linux, Metal on the Mac; no DX12.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "wgsl"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+tequila-core = { path = "../tequila-core" }
+
+[dev-dependencies]
+naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out", "msl-out"] }
