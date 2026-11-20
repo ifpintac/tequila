@@ -121,7 +121,8 @@ pub struct FrameParams {
     /// `IntegratorConfig::shadow_glass`: [`GLASS_SOLID`], [`GLASS_CLEAR`] or
     /// [`GLASS_UNBENT`].
     pub shadow_glass: u32,
-    /// [`SCENE_TRANSMITS`] and [`SCENE_PANES`].
+    /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_EMITTERS`] and
+    /// [`SCENE_LIGHT_MATERIALS`].
     pub glass_flags: u32,
     pub _pad3: [u32; 2],
 }
@@ -137,6 +138,13 @@ pub const GLASS_UNBENT: u32 = 2;
 pub const SCENE_TRANSMITS: u32 = 1;
 /// Some material is clear glass a shadow ray passes (`SceneSnapshot::has_panes`).
 pub const SCENE_PANES: u32 = 2;
+/// The glowing triangles are lights a light sample chooses among
+/// (`SceneSnapshot::emitters` is not empty and
+/// `IntegratorConfig::light_source_materials` is on).
+pub const SCENE_EMITTERS: u32 = 8;
+/// `IntegratorConfig::light_source_materials`: a glow a diffuse bounce meets
+/// lights what the bounce left.
+pub const SCENE_LIGHT_MATERIALS: u32 = 16;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -361,6 +369,10 @@ pub struct GpuRenderer {
     glass_scene: GlassScene,
     /// What [`crate::textures::texture_limits`] says of the scene.
     texture_limits: Vec<&'static str>,
+    /// The glowing triangles' tree and leaves (`crate::emitters`), which the
+    /// scene's bind group reads, and whether there are any.
+    pub emitters: [wgpu::Buffer; 2],
+    has_emitters: bool,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -540,6 +552,20 @@ impl GpuRenderer {
         let program_words = init("program words", bytemuck::cast_slice(&programs.words));
         let program_constants = init("program constants", bytemuck::cast_slice(&programs.constants));
         let program_headers = init("programs", bytemuck::cast_slice(&programs.headers));
+        // The glowing triangles, their parts numbered as the card's
+        // instances are.
+        let mut slots = vec![crate::emitters::EMITTER_NONE; scene.instances.len()];
+        for (slot, record) in uploaded.instance_records.iter().enumerate() {
+            if let Some(at) = slots.get_mut(record.instance as usize) {
+                *at = slot as u32;
+            }
+        }
+        let emitter_records = crate::emitters::EmitterRecords::of(scene, &|n| slots.get(n as usize).copied().unwrap_or(crate::emitters::EMITTER_NONE));
+        let has_emitters = !emitter_records.is_empty();
+        let emitter_nodes = if has_emitters { emitter_records.nodes.clone() } else { vec![crate::emitters::GpuEmitterNode::default()] };
+        let emitter_leaves = if emitter_records.leaves.is_empty() { vec![crate::emitters::EMITTER_NONE] } else { emitter_records.leaves.clone() };
+        let emitter_nodes = init("emitter nodes", bytemuck::cast_slice(&emitter_nodes));
+        let emitter_leaves = init("emitter leaves", bytemuck::cast_slice(&emitter_leaves));
         let texture_texels = init("texture texels", bytemuck::cast_slice(&pictures.texels));
         let texture_header = init("texture header", bytemuck::cast_slice(&pictures.header));
 
@@ -564,6 +590,8 @@ impl GpuRenderer {
                 entry(15, storage(true)),
                 entry(16, storage(true)),
                 entry(17, storage(true)),
+                entry(18, storage(true)),
+                entry(19, storage(true)),
                 entry(20, storage(true)),
             ],
         });
@@ -610,6 +638,8 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 15, resource: uploaded.tangents.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 16, resource: texture_texels.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 17, resource: texture_header.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 18, resource: emitter_nodes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 19, resource: emitter_leaves.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 20, resource: uploaded.attributes.as_entire_binding() },
             ],
         });
@@ -644,6 +674,8 @@ impl GpuRenderer {
             lamp_scene: LampScene::of(scene),
             glass_scene: GlassScene::of(scene),
             texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
+            emitters: [emitter_nodes, emitter_leaves],
+            has_emitters,
         }
     }
 
@@ -729,7 +761,9 @@ impl GpuRenderer {
                 ShadowGlass::Clear => GLASS_CLEAR,
                 ShadowGlass::Unbent => GLASS_UNBENT,
             },
-            glass_flags: self.glass_scene.flags(),
+            glass_flags: self.glass_scene.flags()
+                | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
+                | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 },
             _pad3: [0; 2],
         }
     }

@@ -144,6 +144,13 @@ fn a_liquid_in_glass_is_the_processors_picture() {
     same_picture("liquid_in_glass");
 }
 
+/// Glows a program drives: a checker's colour, a picture's luminance,
+/// found by bounces alone and weighed whole.
+#[test]
+fn glows_a_program_drives_are_the_processors_picture() {
+    same_picture("glowing_pattern");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {

@@ -247,6 +247,18 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: bumped_product,
     pictures: parity_pictures,
+}, ParityScene {
+    name: "glowing_pattern",
+    covers: "R3 tier A, emission a program drives: the product on its modelled ground under the environment, its \
+             screen glowing in a checker planar from above (the glow's colour), its lens orange by the colour \
+             picture through its UVs (the glow's luminance) - glows no light sample takes, found by the camera \
+             and by bounces alone, weighed whole, lighting the bezel, the body and the ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_pattern,
+    pictures: parity_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -937,6 +949,37 @@ fn projected_product() -> SceneDocument {
         graph.connect(scale, image, Socket::Input(0));
         graph.connect(image, output, Socket::Param(Param::BaseColor));
     }
+    document
+}
+
+/// `simple_product` on its modelled ground, its screen glowing in a checker
+/// and its lens by a picture, both driven by programs.
+fn glowing_pattern() -> SceneDocument {
+    let (mut document, _) = simple_product_mapped(&|(name, material_type, material)| match name {
+        "Screen" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 0.5, g: 0.7, b: 1.0 }, emission_luminance: 3.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Lens" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.45, b: 0.15 }, emission_luminance: 2.0, ..MaterialType::Emissive.defaults() },
+        ),
+        _ => (name, material_type, material),
+    });
+    store_pictures(&mut document);
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Screen").map(|(k, _)| k).expect("the screen");
+        let graph = &mut document.materials.get_mut(key).expect("the screen").graph;
+        let output = graph.output();
+        let planar = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(1.2, 1.2, 1.0), ..Mapping::default() };
+        let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+        let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
+        graph.connect(m, checker, Socket::Input(0));
+        graph.connect(checker, output, Socket::Param(Param::EmissionColor));
+    }
+    texture_material(&mut document, "Lens", &[wire(1, Some(uv_repeats(2.0, 2.0)), Param::EmissionLuminance)]);
     document
 }
 

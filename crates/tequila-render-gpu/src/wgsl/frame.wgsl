@@ -74,7 +74,9 @@ struct FrameParams {
     shadow_glass: u32,
     // SCENE_TRANSMITS: some material transmits (SceneSnapshot::
     // has_transmissive), so a path starts by asking which media it is in;
-    // SCENE_PANES: some material is clear glass a shadow ray passes.
+    // SCENE_PANES: some material is clear glass a shadow ray passes;
+    // SCENE_EMITTERS: the glowing triangles are lights (emitters.wgsl);
+    // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials.
     glass_flags: u32,
     _pad3: vec2<u32>,
 };
@@ -87,6 +89,8 @@ const GLASS_UNBENT: u32 = 2u;
 // FrameParams::glass_flags.
 const SCENE_TRANSMITS: u32 = 1u;
 const SCENE_PANES: u32 = 2u;
+const SCENE_EMITTERS: u32 = 8u;
+const SCENE_LIGHT_MATERIALS: u32 = 16u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

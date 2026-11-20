@@ -78,7 +78,10 @@ pub struct GpuInstance {
     /// into a volume with. The instance here (integrator.rs keys media by
     /// instance); a solid split into parts would share one.
     pub solid: u32,
-    pub _pad: u32,
+    /// Where its triangles start among the glowing triangles' leaves
+    /// (`crate::emitters`), [`crate::emitters::EMITTER_NONE`] for a part that
+    /// is not one of those lights.
+    pub emitter: u32,
     /// What Object Info reads: the colour set on the part (the fourth float
     /// unused).
     pub object_color: [f32; 4],
@@ -293,6 +296,9 @@ impl GpuScene {
             .filter(|(_, i)| !scene.meshes[i.mesh.index()].indices.is_empty())
             .map(|(n, _)| n)
             .collect();
+        // Where each glowing part's triangles start among the leaves of the
+        // tree of them (`crate::emitters`).
+        let emitter_first = scene.emitters().first_leaves();
         let mut catcher_records: Vec<GpuCatcher> = Vec::new();
         let mut instance_records: Vec<GpuInstance> = traced
             .iter()
@@ -315,7 +321,7 @@ impl GpuScene {
                     light: inst.light.unwrap_or(NO_LIGHT),
                     flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 } | if inst.casts_shadows { INSTANCE_CASTS_SHADOWS } else { 0 },
                     solid: n as u32,
-                    _pad: 0,
+                    emitter: emitter_first.get(n).copied().unwrap_or(crate::emitters::EMITTER_NONE),
                     object_color: [inst.colour.r, inst.colour.g, inst.colour.b, 0.0],
                     inv_length_scale: inst.transform.inv_length_scale(),
                     scale: 1.0 / inst.transform.inv_length_scale(),
@@ -325,7 +331,7 @@ impl GpuScene {
             })
             .collect();
         if instance_records.is_empty() {
-            instance_records.push(GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, ..GpuInstance::default() });
+            instance_records.push(GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, emitter: crate::emitters::EMITTER_NONE, ..GpuInstance::default() });
         }
         let mut catcher_buffer_records = catcher_records.clone();
         if catcher_buffer_records.is_empty() {

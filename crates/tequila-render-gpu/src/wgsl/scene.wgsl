@@ -43,7 +43,10 @@ struct GpuInstance {
     flags: u32,
     // The solid a medium is keyed by (scene.rs).
     solid: u32,
-    _pad: u32,
+    // Where its triangles start among the glowing triangles' leaves
+    // (emitters.wgsl), EMITTER_NONE for a part that is not one of those
+    // lights.
+    emitter: u32,
     // What Object Info reads, and the part's scale as the shading point
     // holds it (scene.rs's GpuInstance).
     object_color: vec4<f32>,

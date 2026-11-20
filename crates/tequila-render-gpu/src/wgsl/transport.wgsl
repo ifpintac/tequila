@@ -21,6 +21,7 @@
 //#include environment
 //#include openpbr
 //#include lamps
+//#include emitters
 //#include program
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
@@ -591,6 +592,65 @@ fn seen_weight(seen: SeenFrom, straight: f32, reach: f32) -> f32 {
     return select(weight, 1.0, all(open.through == vec3<f32>(0.0)));
 }
 
+// mis_power of a bounce's density `pdf` against a light sample's `density`
+// per unit area of a point `distance_squared` away, met at `cos` to its
+// normal (area_to_solid_angle_pdf, whose infinity weighs the bounce
+// nothing).
+fn mis_against_area(pdf: f32, density: f32, distance_squared: f32, cos: f32) -> f32 {
+    let c = abs(cos);
+    if (c <= 1e-9) {
+        return 0.0;
+    }
+    return mis_power(pdf, density * distance_squared / c);
+}
+
+// The surface a light sample of the glowing triangles is weighed by: its
+// part's first leaf slot (`emitter`), the triangle, the point and its
+// geometric normal; not ok where there is none to weigh by.
+struct GlowTarget {
+    ok: bool,
+    first: u32,
+    primitive: u32,
+    position: vec3<f32>,
+    geometric: vec3<f32>,
+};
+
+// SeenFrom::weight_of_glow's walk (ic:2730): from the surface a seeing
+// bounce left, along the way it left, the first surface past what a shadow
+// ray passes - a part that casts no shadow, clear glass, a cutout - which
+// must face the way; a glowing part met past glass the bounce saw is
+// weighed against the light sample there as that surface's.
+fn glow_target(seen: SeenFrom) -> GlowTarget {
+    var none: GlowTarget;
+    none.ok = false;
+    var origin = offset_at(seen.position, seen.normal, seen.magnitude);
+    for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
+        let hit = trace(origin, seen.direction);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
+            return none;
+        }
+        let inst = scene_instances[hit.instance_custom_data];
+        let raw = hit_place(hit);
+        let backface = dot(seen.direction, raw.geometric) > 0.0;
+        if ((inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (scene_materials[inst.material].glass & GLASS_PANE) != 0u || cut_out(inst.material)) {
+            let g = select(raw.geometric, -raw.geometric, backface);
+            origin = offset_at(raw.position, -g, raw.magnitude);
+            continue;
+        }
+        if (backface) {
+            return none;
+        }
+        return GlowTarget(true, inst.emitter, hit.primitive_index, raw.position, raw.geometric);
+    }
+    return none;
+}
+
+// Whether a shadow ray passes a surface of `material` as a cutout
+// (SceneSnapshot::opacity_of below 0.999, or a program's).
+fn cut_out(material: u32) -> bool {
+    return scene_materials[material].geometry_opacity < 0.999 || (scene_programs[material].flags & PROGRAM_CUTS) != 0u;
+}
+
 // What a path carries from one segment to the next: the ray, what it has
 // gathered and what it carries, which way the surface it last drew the sky
 // from faced (zero: the whole sky), how the last bounce left (its density;
@@ -631,6 +691,15 @@ struct PathState {
     reflected: bool,
     in_floor: bool,
     fresh: bool,
+    // Where the path last sampled the glowing parts from, if it did where
+    // it last scattered (ic:850's emitters_from): a glow its bounce then
+    // hits was one of two ways of finding that light, weighed against the
+    // other as seen from there. Its point, its geometric normal on the side
+    // the path left by, and whether it transmits (chose both ways).
+    receiver: bool,
+    receiver_position: vec3<f32>,
+    receiver_normal: vec3<f32>,
+    receiver_two_sided: bool,
 };
 
 // A path from `origin` along `direction` (trace's set-up): the camera's, a
@@ -665,6 +734,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.reflected = reflected;
     st.in_floor = in_floor;
     st.fresh = true;
+    st.receiver = false;
     return st;
 }
 
@@ -1135,10 +1205,10 @@ fn generated_at(mesh: GpuMesh, object: vec3<f32>) -> vec3<f32> {
 }
 
 // The material at `hit`, seen along `direction` by a ray of kind `ray`
-// (ic:1626-1710): the shading point its program reads
-// (SceneSnapshot::shading_point_along), and prog_shade's program, write-back
-// and bump at it.
-fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32) -> ProgShaded {
+// whose footprint widens by `spread` (ic:1626-1710): the shading point its
+// program reads (SceneSnapshot::shading_point_along), and prog_shade's
+// program, write-back and bump at it.
+fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32, spread: f32) -> ProgShaded {
     let inst = scene_instances[hit.instance_custom_data];
     let p = scene_programs[inst.material];
     let base = scene_materials[inst.material];
@@ -1181,7 +1251,7 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     pt.closeness = measures.closeness;
     pt.vertex_color = measures.colour;
     // No ray differentials: the footprint widens with the distance alone.
-    let world = hit.t * frame.pixel_spread;
+    let world = hit.t * spread;
     s.footprint = world * inst.inv_length_scale;
     pt.footprint = s.footprint;
     let derivatives = uv_derivatives(inst, mesh, c);
@@ -1253,16 +1323,14 @@ fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
 // bounce sees, Filter Glossy, next-event estimation of the sky and the
 // lamps, the split at the first plain glass the camera sees or the bounce,
 // the media crossed, whether it sees, the catcher's view and Russian
-// roulette (ic:1862-2562).
-fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, split: ptr<function, SplitOff>) -> u32 {
+// roulette (ic:1862-2562), off the material `shaded` (material_at).
+fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>) -> u32 {
     let bounce = (*st).bounce;
     if (bounce >= (*st).max_bounces) {
         return SHADE_END;
     }
-    // The material at this point: its program run and its bump applied
-    // (ic:1626-1710), then the frame - along the anisotropy's tangent where
-    // the material is anisotropic (ic:1866-1885).
-    let shaded = material_at(hit, surf, (*st).direction, (*st).ray);
+    // The frame: along the anisotropy's tangent where the material is
+    // anisotropic (ic:1866-1885).
     let material = shaded.material;
     var f: Frame;
     if (material.specular_roughness_anisotropy > 0.0) {
@@ -1343,8 +1411,19 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // clamped as one. A surface that transmits draws the whole sky.
     let transmissive = openpbr_transmits(bsdf);
     let samples_lights = !pure_delta(bsdf) && !passing;
+    // Where the glowing parts were last sampled from: here, if they are
+    // sampled here; kept through glass being passed (ic:2057, 2117).
+    if (!passing) {
+        (*st).receiver = false;
+    }
     if (samples_lights) {
         (*st).sky_facing = select(surf.geometric, vec3<f32>(0.0), transmissive);
+        if ((frame.glass_flags & SCENE_EMITTERS) != 0u) {
+            (*st).receiver = true;
+            (*st).receiver_position = surf.position;
+            (*st).receiver_normal = surf.geometric;
+            (*st).receiver_two_sided = transmissive;
+        }
         let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);
         (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce));
     }
@@ -1452,6 +1531,11 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         (*st).pass_pdf = (*st).prev_pdf;
         if (seen_on && meets_glass && !sample.is_delta && !sees) {
             (*st).pass_pdf = max(sample.pdf - chosen.seen, 0.0);
+        }
+        // Turned back off glass being passed, the path goes where no light
+        // sample of the glowing parts looked (ic:2439).
+        if (passing) {
+            (*st).receiver = false;
         }
     }
     // What meets the lamps along the way on (ic:2442-2498): a bounce that
@@ -1912,10 +1996,54 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 ended = false;
                 break;
             }
-            // A glowing surface met from the front (ic:1813-1860): a stand-in,
-            // its face as its lamp lights, falling off to its edges.
-            let glow = base.emission;
-            if (glow.w != 0.0 && dot(st.direction, raw.geometric) <= 0.0) {
+            // The material at this point (ic:1626-1710): its program run and
+            // its bump applied, ahead of the glow it may drive and of the
+            // bounce limit, as the processor shades it there too; past the
+            // limit only where the program drives what is read before it.
+            let surf = facing(raw, st.direction);
+            var material = ProgShaded(base, surf.shading, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
+            if (st.bounce < st.max_bounces || (scene_programs[inst.material].flags & PROGRAM_AT_HIT) != 0u) {
+                material = material_at(hit, surf, st.direction, st.ray, frame.pixel_spread);
+            }
+            // A glowing surface met from the front (ic:1813-1860), but by a
+            // diffuse bounce where glows light nothing: weighed against the
+            // light sample of the glowing parts the last vertex took, or past
+            // glass a glossy bounce saw against the one its straight line
+            // meets; a stand-in its face as its lamp lights, falling off to
+            // its edges.
+            let lit = (frame.glass_flags & SCENE_LIGHT_MATERIALS) != 0u || st.ray != RAY_DIFFUSE;
+            if (material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {
+                // The light sample it is weighed against: the one taken where
+                // the path last scattered, of this point; or past glass a
+                // glossy bounce saw, the one taken there, of the glowing
+                // surface its straight line meets (one density for both, for
+                // the code's size).
+                var weigh = false;
+                var from_point = st.receiver_position;
+                var from_normal = st.receiver_normal;
+                var from_two_sided = st.receiver_two_sided;
+                var pdf = st.prev_pdf;
+                var met = GlowTarget(true, inst.emitter, hit.primitive_index, raw.position, raw.geometric);
+                var along = st.direction;
+                if (st.receiver && st.prev_pdf < PDF_INFINITE) {
+                    weigh = true;
+                } else if (st.seen.valid && st.seen.met && (frame.glass_flags & SCENE_EMITTERS) != 0u && st.seen.density < PDF_INFINITE) {
+                    met = glow_target(st.seen);
+                    weigh = met.ok;
+                    from_point = st.seen.position;
+                    from_normal = st.seen.normal;
+                    from_two_sided = st.seen.two_sided;
+                    pdf = st.seen.density;
+                    along = st.seen.direction;
+                }
+                var weight = 1.0;
+                if (weigh) {
+                    let density = emitters_density(from_point, from_normal, from_two_sided, met.first, met.primitive);
+                    if (density > 0.0) {
+                        let to = met.position - from_point;
+                        weight = mis_against_area(pdf, density, dot(to, to), dot(along, met.geometric));
+                    }
+                }
                 var face = 1.0;
                 if (inst.light != NO_LIGHT) {
                     let lamp = scene_lights[inst.light];
@@ -1924,10 +2052,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     }
                 }
                 let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                st.radiance += clamp_light(st.throughput * glow.xyz * (1.0 * face), light_ceiling(st.specular_chain, found_at));
+                st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
             }
             var off: SplitOff;
-            let shaded = shade_vertex(&st, &s, hit, facing(raw, st.direction), &off);
+            let shaded = shade_vertex(&st, &s, hit, surf, material, &off);
             if (shaded == SHADE_ON) {
                 ended = false;
             } else if (shaded == SHADE_SPLIT) {
