@@ -43,6 +43,12 @@ struct FrameParams {
     off_tile_column: u32,
     off_tile_row: u32,
     off_row_start: u32,
+    // Path regularization (IntegratorConfig): from this bounce on, every
+    // reflection lobe at least this rough.
+    regularization_start: u32,
+    regularization_roughness: f32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;

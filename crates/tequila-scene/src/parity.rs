@@ -12,7 +12,7 @@
 //! Generated, as the benchmark scenes are (`bench`), so they are the same
 //! on every machine and in every version.
 
-use crate::bench::{product_camera, simple_product_mapped};
+use crate::bench::{product_camera, simple_product, simple_product_mapped};
 use crate::SceneDocument;
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::MaterialType;
@@ -53,6 +53,14 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: grey_product,
+}, ParityScene {
+    name: "product_materials",
+    covers: "R3 tier A, the surface: the OpenPBR stack's opaque lobes - plastic (a specular interface over a              diffuse substrate, with two mirror-smooth ones until the roughness floor), aluminium and gold              metal, a diffuse foot - with the stack's lobe choice and aim, mirror bounces' MIS and the              specular chain's clamps",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: simple_product,
 }];
 
 /// The scene of the set by `name`.
@@ -81,6 +89,7 @@ mod tests {
             assert!(document.difference_from(&scene.document()).is_none(), "{} differs between builds", scene.name);
         }
         assert!(super::scene("grey_product").is_some());
+        assert!(super::scene("product_materials").is_some());
     }
 
     #[test]

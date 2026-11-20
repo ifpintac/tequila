@@ -1,5 +1,6 @@
-// The first transport (docs/07 R2.5): the processor's path for a scene of
-// grey diffuse surfaces under the environment, draw for draw - camera ray,
+// The transport (docs/07 R2.5, R3): the processor's path for a scene of
+// opaque OpenPBR surfaces (openpbr.wgsl) under the environment, draw for
+// draw - camera ray,
 // next-event estimation of the sky by its facing tables with power-heuristic
 // MIS, a cosine-sampled Lambert bounce, Russian roulette, the bounce limit,
 // the clamps. integrator.rs is the specification; the line references in
@@ -7,6 +8,9 @@
 // frame.samples samples in order.
 //#include sampler
 //#include environment
+//#include openpbr
+
+@group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 
 struct Surface {
     position: vec3<f32>,
@@ -185,7 +189,26 @@ fn occluded(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_nor
     return rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE;
 }
 
-const ALBEDO: f32 = 0.5;
+// A stack that is mirrors only - every lobe it holds a smooth reflection -
+// which next-event estimation skips (BsdfFlags DELTA without GLOSSY or
+// DIFFUSE).
+fn pure_delta(b: OpenPbr) -> bool {
+    if (b.count == 0u) {
+        return false;
+    }
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        switch slot {
+            case 1u: { if (!ggx_is_smooth(b.coat.distribution)) { return false; } }
+            case 2u: { if (!ggx_is_smooth(b.metal.distribution)) { return false; } }
+            case 3u: { if (!ggx_is_smooth(b.specular.distribution)) { return false; } }
+            default: { return false; }
+        }
+    }
+    return true;
+}
 
 struct PathOut {
     radiance: vec3<f32>,
@@ -218,6 +241,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var throughput = vec3<f32>(1.0);
     // Read only once a bounce has set it: the camera ray is weighed 1.
     var prev_pdf = 0.0;
+    // The last bounce was a mirror's: an escape after it is weighed 1, its
+    // density being infinite.
+    var prev_delta = false;
     var specular_chain = true;
     var sky_facing = vec3<f32>(0.0, 1.0, 0.0);
     var bounce = 0u;
@@ -226,7 +252,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         let hit = trace(origin, direction);
         if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
             // ic:1259-1324: the sky, weighed against having been sampled.
-            let weight = select(mis_power(prev_pdf, env_pdf_facing(direction, sky_facing)), 1.0, specular_chain);
+            let weight = select(mis_power(prev_pdf, env_pdf_facing(direction, sky_facing)), 1.0, specular_chain || prev_delta);
             let sky = env_radiance(bounce == 0u, direction);
             if (bounce == 0u) {
                 background = sky;
@@ -256,39 +282,51 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         if (wo.z <= 0.0) {
             break;
         }
+        // The stack as the integrator builds it (ic:2003-2021): every
+        // reflection lobe at least as rough as the regularization's floor
+        // from its bounce on, the lobe chances aimed at `wo`.
+        let material = scene_materials[scene_instances[hit.instance_custom_data].material];
+        let floor = select(0.0, frame.regularization_roughness, bounce >= frame.regularization_start);
+        let bsdf = openpbr_aim(openpbr_to_aim(material, floor), wo);
         sampler_begin_bounce(&s, bounce);
-        let lambert = vec3<f32>(ALBEDO) * (FRAC_1_PI * 1.0 * (1.0 + 0.0 * 0.0));
 
-        // Next-event estimation of the sky (ic:4279-4412).
+        // Next-event estimation of the sky (ic:4279-4412), but for a stack
+        // of mirrors only.
         sky_facing = surf.geometric;
-        let light = env_sample_facing(surf.geometric, sampler_light_sample(&s));
-        if (light.ok && any(light.radiance > vec3<f32>(0.0)) && dot(light.direction, surf.geometric) > 0.0) {
-            let wi = to_local(f, light.direction);
-            if (wi.z > 0.0) {
-                let bsdf_pdf = max(wi.z, 0.0) * FRAC_1_PI;
-                let w = mis_power(light.pdf, bsdf_pdf);
-                let scale = light.radiance * ((abs(wi.z) * w) / light.pdf);
-                let from_point = offset_at(surf.position, surf.geometric, surf.magnitude);
-                let aim = surf.position + light.direction * frame.shadow_far;
-                if (!occluded(from_point, surf.geometric, aim, -light.direction)) {
-                    radiance += clamp_light(throughput * (lambert * scale), light_ceiling(specular_chain, bounce));
+        if (!pure_delta(bsdf)) {
+            let light = env_sample_facing(surf.geometric, sampler_light_sample(&s));
+            if (light.ok && any(light.radiance > vec3<f32>(0.0)) && dot(light.direction, surf.geometric) > 0.0) {
+                let wi = to_local(f, light.direction);
+                if (wi.z > 0.0) {
+                    let value = openpbr_eval(bsdf, wo, wi);
+                    if (any(value != vec3<f32>(0.0))) {
+                        let bsdf_pdf = openpbr_pdf(bsdf, wo, wi);
+                        let w = mis_power(light.pdf, bsdf_pdf);
+                        let scale = light.radiance * ((abs(wi.z) * w) / light.pdf);
+                        let from_point = offset_at(surf.position, surf.geometric, surf.magnitude);
+                        let aim = surf.position + light.direction * frame.shadow_far;
+                        if (!occluded(from_point, surf.geometric, aim, -light.direction)) {
+                            radiance += clamp_light(throughput * (value * scale), light_ceiling(specular_chain, bounce));
+                        }
+                    }
                 }
             }
         }
 
-        // The bounce (ic:2318-2433).
-        let wi = sample_cosine_hemisphere(sampler_bsdf_direction(&s));
-        let pdf = max(wi.z, 0.0) * FRAC_1_PI;
-        if (!(wi.z > 0.0) || !(pdf > 0.0)) {
+        // The bounce (ic:2316-2433).
+        let chosen = openpbr_sample_reflection(bsdf, wo, sampler_bsdf_direction(&s), sampler_bsdf_lobe(&s));
+        let sample = chosen.sample;
+        if (!sample.ok || !(sample.pdf > 0.0) || all(sample.f == vec3<f32>(0.0))) {
             break;
         }
-        let wi_world = to_world(f, wi);
+        let wi_world = to_world(f, sample.wi);
         if (dot(wi_world, surf.geometric) <= 0.0) {
             break;
         }
-        throughput = throughput * (lambert * (abs(wi.z) / pdf));
-        prev_pdf = pdf;
-        specular_chain = false;
+        throughput = throughput * (sample.f * (abs(sample.wi.z) / sample.pdf));
+        prev_pdf = sample.pdf;
+        prev_delta = sample.is_delta;
+        specular_chain = specular_chain && sample.is_delta;
         origin = offset_at(surf.position, surf.geometric, surf.magnitude);
         direction = wi_world;
         bounce += 1u;

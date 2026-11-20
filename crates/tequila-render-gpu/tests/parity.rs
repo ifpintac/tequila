@@ -19,8 +19,19 @@ use tequila_scene::snapshot::{snapshot, MeshCache};
 
 #[test]
 fn the_grey_product_is_the_processors_picture() {
+    same_picture("grey_product");
+}
+
+/// R3 tier A's surface: plastics, metals and a diffuse part, with mirror
+/// bounces and the stack's lobe choice.
+#[test]
+fn the_product_in_its_materials_is_the_processors_picture() {
+    same_picture("product_materials");
+}
+
+fn same_picture(name: &str) {
     let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
-    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let scene = parity::scene(name).expect("the parity set has it");
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
@@ -85,15 +96,16 @@ fn the_grey_product_is_the_processors_picture() {
                 })
                 .flat_map(f32::to_le_bytes)
                 .collect();
-            std::fs::write(std::path::Path::new(&folder).join(format!("grey_product-{name}.f32")), bytes).expect("writes");
+            std::fs::write(std::path::Path::new(&folder).join(format!("{}-{name}.f32", scene.name)), bytes).expect("writes");
         }
     }
     let pixels = card.pixels().len();
     let mean = sum / (pixels * 3) as f64;
     let share = far as f64 / pixels as f64;
     eprintln!(
-        "grey_product {}x{} at {} samples: card {:.2} s, processor {:.2} s; mean {:.5} against {:.5}; \
+        "{} {}x{} at {} samples: card {:.2} s, processor {:.2} s; mean {:.5} against {:.5}; \
          mean |difference| {mean:.6}; {far} pixels ({:.3}%) more than 0.02 apart; worst {:.4} at pixel {}",
+        scene.name,
         scene.width,
         scene.height,
         scene.samples,
@@ -105,8 +117,8 @@ fn the_grey_product_is_the_processors_picture() {
         worst.0,
         worst.1
     );
-    assert!(mean < 0.002, "the mean absolute difference is {mean:.6}, not under 0.002");
-    assert!(share <= 0.001, "{far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+    assert!(mean < 0.002, "{name}: the mean absolute difference is {mean:.6}, not under 0.002");
+    assert!(share <= 0.001, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
 }
 
 /// The card adding its samples up, firefly rejection and all, gives the

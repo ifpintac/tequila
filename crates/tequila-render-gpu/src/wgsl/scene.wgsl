@@ -25,6 +25,9 @@ struct GpuInstance {
 @group(0) @binding(3) var<storage, read> scene_indices: array<u32>;
 @group(0) @binding(4) var<storage, read> scene_meshes: array<GpuMesh>;
 @group(0) @binding(5) var<storage, read> scene_instances: array<GpuInstance>;
+// The scene's materials (material.rs's GpuMaterial, declared in
+// openpbr.wgsl), by an instance's `material`. A kernel that reads them
+// includes openpbr; this module only names the binding.
 
 fn scene_position(i: u32) -> vec3<f32> {
     return vec3<f32>(scene_positions[3u * i], scene_positions[3u * i + 1u], scene_positions[3u * i + 2u]);

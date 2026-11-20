@@ -57,6 +57,10 @@ pub struct FrameParams {
     pub off_tile_column: u32,
     pub off_tile_row: u32,
     pub off_row_start: u32,
+    pub regularization_start: u32,
+    pub regularization_roughness: f32,
+    pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
@@ -124,6 +128,8 @@ pub struct GpuRenderer {
     pub scene: GpuScene,
     environment: GpuEnvironment,
     shadow_far: f32,
+    /// The scene's materials, which the scene's bind group reads.
+    pub materials: wgpu::Buffer,
     pipeline: wgpu::ComputePipeline,
     scene_group: wgpu::BindGroup,
     environment_group: wgpu::BindGroup,
@@ -150,6 +156,22 @@ impl GpuRenderer {
         let uploaded = GpuScene::upload(device, &gpu.queue, scene);
         let environment = GpuEnvironment::upload(device, &scene.environment);
         let shadow_far = scene.bounds().bounding_radius().max(1.0) * 1e4;
+        // The materials as data. One the card's stack cannot render yet
+        // (glass, skin, film, flakes) renders as its opaque part, and says so.
+        let records: Vec<crate::material::GpuMaterial> = scene.materials.iter().map(crate::material::GpuMaterial::from_material).collect();
+        let unsupported = scene.materials.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
+        if unsupported > 0 {
+            eprintln!("  {unsupported} material(s) render as their opaque part on the graphics card for now (docs/07 R3)");
+        }
+        let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
+        let materials = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("materials"),
+                contents: bytemuck::cast_slice(&records),
+                usage: wgpu::BufferUsages::STORAGE,
+            },
+        );
 
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene"),
@@ -160,6 +182,7 @@ impl GpuRenderer {
                 entry(3, storage(true)),
                 entry(4, storage(true)),
                 entry(5, storage(true)),
+                entry(6, storage(true)),
             ],
         });
         let environment_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -204,6 +227,7 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: uploaded.indices.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: uploaded.meshes.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: uploaded.instances.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: materials.as_entire_binding() },
             ],
         });
         let environment_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -223,6 +247,7 @@ impl GpuRenderer {
             scene: uploaded,
             environment,
             shadow_far,
+            materials,
             pipeline,
             scene_group,
             environment_group,
@@ -268,6 +293,10 @@ impl GpuRenderer {
             off_tile_column: e.off_tile_column,
             off_tile_row: e.off_tile_row,
             off_row_start: e.off_row_start,
+            regularization_start: settings.config.regularization_start_bounce,
+            regularization_roughness: settings.config.regularization_roughness,
+            _pad1: 0,
+            _pad2: 0,
         }
     }
 
