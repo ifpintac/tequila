@@ -171,3 +171,54 @@ fn what_the_new_nodes_cost_to_compile() {
         eprintln!("{name}: {:.2} s", t.as_secs_f64());
     }
 }
+
+/// What emission and cutouts cost the kernel's cold compile, each measured
+/// by leaving it out. Run by hand:
+/// `cargo test --test compile_time -- --ignored --nocapture emission`.
+#[test]
+#[ignore]
+fn what_emission_and_cutouts_cost_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let replace = |pairs: &'static [(&'static str, &'static str)]| {
+        move |s: String| {
+            let mut s = s;
+            for (from, to) in pairs {
+                assert!(s.contains(from), "no {from:?}");
+                s = s.replace(from, to);
+            }
+            s
+        }
+    };
+    let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
+        ("everything", Box::new(|s| s)),
+        ("no light sample of the glowing triangles", Box::new(replace(&[("            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no glow at a hit", Box::new(replace(&[("if (material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
+        ("no cutout at a hit", Box::new(replace(&[("if ((frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
+        (
+            "no cutouts in the walks",
+            Box::new(replace(&[
+                ("        } else if (!open) {\n            through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);", "        } else if (!open) {\n            return Visibility(vec3<f32>(0.0), false);"),
+                ("        through = cutout_walk(from_point, normal, aim, -direction);", "        through = 0.0;"),
+            ])),
+        ),
+        (
+            "no programs at crossings",
+            Box::new(replace(&[
+                ("    if ((scene_programs[material].flags & PROGRAM_CUTS) == 0u) {", "    if (true) {"),
+                ("        let programs_cut = (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;", "        let programs_cut = false;"),
+            ])),
+        ),
+        ("no glowing volume", Box::new(replace(&[("let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);", "let glow = vec3<f32>(0.0);")]))),
+    ];
+    for (i, (name, edit)) in cases.iter().enumerate() {
+        let t = cold_compile_time_edited(&renderer, salt.wrapping_add(i as u32 * 7919), edit.as_ref());
+        eprintln!("{name}: {:.2} s", t.as_secs_f64());
+    }
+}
