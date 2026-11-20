@@ -105,9 +105,10 @@ jobs:
   # The graphics card's kernels against the processor's Rust, function by
   # function (docs/07 D2, R2.4), on Mesa's software Vulkan driver: no
   # runner has a graphics card, and lavapipe runs compute shaders, if not
-  # ray queries. TEQUILA_REQUIRE_GPU_TESTS makes a missing adapter a
-  # failure here, where elsewhere it is a skip. The crate needs no Embree
-  # or OIDN, so this builds little.
+  # ray queries. TEQUILA_REQUIRE_GPU_TESTS makes a missing compute adapter
+  # a failure here, where elsewhere it is a skip; the tests that need ray
+  # queries (the parity test against the processor) skip. Embree is fetched
+  # because that test links the processor renderer.
   gpu-differential:
     name: graphics card kernels (software Vulkan)
     runs-on: ubuntu-latest
@@ -120,6 +121,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Cache third-party SDKs
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-${{ runner.os }}-${{ runner.arch }}-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-third-party.sh
 
       - name: Mesa's software Vulkan
         run: |

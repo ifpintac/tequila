@@ -12,6 +12,10 @@ pub const MODULES: &[(&str, &str)] = &[
     ("rng", include_str!("wgsl/rng.wgsl")),
     ("sobol", include_str!("wgsl/sobol.wgsl")),
     ("sampler", include_str!("wgsl/sampler.wgsl")),
+    ("scene", include_str!("wgsl/scene.wgsl")),
+    ("frame", include_str!("wgsl/frame.wgsl")),
+    ("environment", include_str!("wgsl/environment.wgsl")),
+    ("transport", include_str!("wgsl/transport.wgsl")),
 ];
 
 const INCLUDE: &str = "//#include ";
@@ -29,6 +33,27 @@ pub fn source(name: &str) -> String {
     let mut done: Vec<&str> = Vec::new();
     let mut out = String::new();
     join(name, &mut done, &mut Vec::new(), &mut out);
+    hoist_enables(&out)
+}
+
+/// WGSL's `enable` directives must come before anything else in a module,
+/// so the ones the joined modules carry are moved to the top, each once.
+fn hoist_enables(text: &str) -> String {
+    let mut enables: Vec<&str> = Vec::new();
+    let mut rest = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("enable ") && trimmed.ends_with(';') {
+            if !enables.contains(&trimmed) {
+                enables.push(trimmed);
+            }
+        } else {
+            rest.push_str(line);
+            rest.push('\n');
+        }
+    }
+    let mut out: String = enables.iter().map(|e| format!("{e}\n")).collect();
+    out.push_str(&rest);
     out
 }
 
@@ -48,7 +73,7 @@ pub fn with_includes(text: &str) -> String {
         }
     }
     out.push_str(text);
-    out
+    hoist_enables(&out)
 }
 
 fn join(name: &str, done: &mut Vec<&'static str>, path: &mut Vec<String>, out: &mut String) {
