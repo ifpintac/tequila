@@ -1,12 +1,15 @@
 //! The transport on the card (`docs/07` R2.5, R3): camera rays, triangles,
-//! the scene's opaque OpenPBR materials, the environment sampled by its own
-//! tables with next-event estimation and MIS, the analytic lamps - their
-//! light samples, the lamps a sharp enough bounce meets and the stand-ins
-//! the camera sees - Russian roulette and the bounce limit, and the shadow
-//! catcher's floor - its shadow, its reflection, the backdrop behind it - as
-//! the processor's integrator has them (`transport.wgsl`). What of a floor
-//! or of the lamps the card renders otherwise, it says ([`floor_limits`],
-//! [`crate::lights::lamp_limits`]).
+//! the scene's OpenPBR materials, the environment sampled by its own tables
+//! with next-event estimation and MIS, the analytic lamps - their light
+//! samples, the lamps a sharp enough bounce meets and the stand-ins the
+//! camera sees - glass - the media a path is in, absorption, shadow rays
+//! through clear glass, the glass a light sample passed and the glass a
+//! seeing bounce sees, the split at the first plain glass the camera sees -
+//! Russian roulette and the bounce limit, and the shadow catcher's floor -
+//! its shadow, its reflection, the backdrop behind it - as the processor's
+//! integrator has them (`transport.wgsl`). What of a floor, of the lamps or
+//! of glass and the other materials the card renders otherwise, it says
+//! ([`floor_limits`], [`crate::lights::lamp_limits`], [`glass_limits`]).
 //!
 //! The card hands each sample back, radiance and the background its camera
 //! ray saw, and the processor's [`Framebuffer`] accumulates them in sample
@@ -19,7 +22,7 @@ use tequila_render_core::camera::Camera;
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::integrator::PathResult;
 use tequila_render_core::scene::SceneSnapshot;
-use tequila_render_core::settings::IntegratorConfig;
+use tequila_render_core::settings::{IntegratorConfig, ShadowGlass};
 
 use crate::device::GpuDevice;
 use crate::environment::GpuEnvironment;
@@ -93,8 +96,27 @@ pub struct FrameParams {
     /// `IntegratorConfig::pixel_spread`: the radians a pixel spans, which a
     /// hit's footprint is its distance times (a material's program, its bump).
     pub pixel_spread: f32,
-    pub _pad2: u32,
+    /// `IntegratorConfig::max_transmission_bounces`.
+    pub max_transmission_bounces: u32,
+    /// `IntegratorConfig::shadow_glass`: [`GLASS_SOLID`], [`GLASS_CLEAR`] or
+    /// [`GLASS_UNBENT`].
+    pub shadow_glass: u32,
+    /// [`SCENE_TRANSMITS`] and [`SCENE_PANES`].
+    pub glass_flags: u32,
+    pub _pad3: [u32; 2],
 }
+
+/// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
+pub const GLASS_SOLID: u32 = 0;
+/// All clear glass does.
+pub const GLASS_CLEAR: u32 = 1;
+/// Only clear glass that does not bend light does.
+pub const GLASS_UNBENT: u32 = 2;
+/// [`FrameParams::glass_flags`]: some material transmits
+/// (`SceneSnapshot::has_transmissive`).
+pub const SCENE_TRANSMITS: u32 = 1;
+/// Some material is clear glass a shadow ray passes (`SceneSnapshot::has_panes`).
+pub const SCENE_PANES: u32 = 2;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -153,6 +175,129 @@ pub fn floor_limits(scene: &SceneSnapshot, config: &IntegratorConfig) -> Vec<&'s
     FloorScene::of(scene).limits(config)
 }
 
+/// What of glass, media and the other materials in `scene` the card renders
+/// otherwise than the processor does under `config`, one sentence each;
+/// empty where they are the processor's (`transport.wgsl`'s path through
+/// glass). The renderer says each at its first pass, with [`floor_limits`]
+/// and [`crate::lights::lamp_limits`].
+pub fn glass_limits(scene: &SceneSnapshot, config: &IntegratorConfig) -> Vec<&'static str> {
+    GlassScene::of(scene).limits(config)
+}
+
+/// What [`glass_limits`] and the glass flags ask of a scene, read when it is
+/// uploaded.
+#[derive(Clone, Copy, Debug, Default)]
+struct GlassScene {
+    transmits: bool,
+    panes: bool,
+    dispersion: bool,
+    subsurface: bool,
+    film: bool,
+    flakes: bool,
+    scattering: bool,
+    glowing_volume: bool,
+    cut_glass: bool,
+    volume_maps: bool,
+    unseen_parts: bool,
+    folded_glass: bool,
+}
+
+impl GlassScene {
+    fn of(scene: &SceneSnapshot) -> GlassScene {
+        // Each material as the card shades it: a program's constants, or
+        // the scene's own material.
+        let shaded: Vec<&tequila_materials::openpbr::Material> = (0..scene.materials.len())
+            .map(|i| match scene.program(tequila_core::ids::MaterialId(i as u32)) {
+                Some(program) => &program.constants,
+                None => &scene.materials[i],
+            })
+            .collect();
+        let any = |test: &dyn Fn(&tequila_materials::openpbr::Material) -> bool| shaded.iter().any(|m| test(m));
+        // The integrator reads a medium's boundary, priority and volume off
+        // the scene's own material, the card off one record for both.
+        let folded = shaded.iter().zip(&scene.materials).any(|(m, own)| {
+            m.transmission_weight != own.transmission_weight
+                || m.transmission_color != own.transmission_color
+                || m.transmission_depth != own.transmission_depth
+                || m.volume_density != own.volume_density
+                || m.medium_priority != own.medium_priority
+                || m.geometry_thin_walled != own.geometry_thin_walled
+        });
+        GlassScene {
+            transmits: scene.has_transmissive(),
+            panes: scene.has_panes(),
+            dispersion: scene.has_dispersion(),
+            subsurface: any(&|m| m.subsurface_weight != 0.0),
+            film: any(&|m| m.thin_film_weight > 1e-4),
+            flakes: any(&|m| m.flake_weight > 1e-4 && m.flake_coverage > 0.0),
+            scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
+            glowing_volume: any(&|m| m.has_volume() && m.volume_emission_strength > 0.0),
+            cut_glass: any(&|m| m.transmission_weight > 0.0 && m.geometry_opacity < 0.999),
+            volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
+            unseen_parts: scene
+                .instances
+                .iter()
+                .any(|i| !i.visible_to_camera || !i.seen_by_diffuse || !i.seen_by_glossy || !i.seen_by_transmission || i.holdout),
+            folded_glass: folded,
+        }
+    }
+
+    /// [`FrameParams::glass_flags`].
+    fn flags(&self) -> u32 {
+        (if self.transmits { SCENE_TRANSMITS } else { 0 }) | if self.panes { SCENE_PANES } else { 0 }
+    }
+
+    fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
+        use tequila_render_core::settings::{CausticsMethod, SpectralMode};
+        let mut limits = Vec::new();
+        let spectral = match config.spectral {
+            SpectralMode::Auto => self.dispersion,
+            SpectralMode::On => true,
+            SpectralMode::Off => false,
+        };
+        if spectral {
+            limits.push("the picture is traced in red, green and blue rather than by wavelength");
+        }
+        if self.dispersion {
+            limits.push("glass that disperses light bends every colour alike");
+        }
+        if config.caustics {
+            limits.push(match config.caustics_method {
+                CausticsMethod::Photons => "no caustic photons: the light glass and mirrors focus is left out",
+                CausticsMethod::Manifold => "no manifold caustics: a lamp's light through glass that bends it is left out",
+            });
+        }
+        if self.subsurface {
+            limits.push("subsurface scattering is left out: no random walk under a surface");
+        }
+        if self.scattering {
+            limits.push("a volume that scatters light only absorbs it");
+        }
+        if self.volume_maps {
+            limits.push("a Volume Map is left out: its part is empty inside");
+        }
+        if self.glowing_volume {
+            limits.push("a glowing volume does not glow");
+        }
+        if self.film {
+            limits.push("a thin film is left out");
+        }
+        if self.flakes {
+            limits.push("metallic flakes are left out");
+        }
+        if self.cut_glass {
+            limits.push("glass with a cutout's holes in it renders whole");
+        }
+        if self.unseen_parts {
+            limits.push("a part hidden from some rays, or held out, is seen by every ray");
+        }
+        if self.folded_glass {
+            limits.push("glass whose graph sets its transmission is a medium as its graph's constants have it");
+        }
+        limits
+    }
+}
+
 /// How many samples a dispatch draws: a bounded buffer and a bounded time
 /// for the card to run without the display.
 const SAMPLES_PER_DISPATCH: u32 = 16;
@@ -189,6 +334,8 @@ pub struct GpuRenderer {
     /// [`crate::lights::lamp_limits`] and the lamp flags read of the scene.
     pub lights: GpuLights,
     lamp_scene: LampScene,
+    /// What [`glass_limits`] and the glass flags read of the scene.
+    glass_scene: GlassScene,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -198,7 +345,6 @@ struct FloorScene {
     catcher_shadows: bool,
     lamps: bool,
     finite_dome: bool,
-    panes: bool,
     cutouts: bool,
     shadowless_parts: bool,
     background: bool,
@@ -211,7 +357,6 @@ impl FloorScene {
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
             finite_dome: !scene.environment.dome().is_infinite(),
-            panes: scene.has_panes(),
             cutouts: scene.has_cutouts(),
             shadowless_parts: scene.has_shadowless_parts(),
             background: !scene.background.is_environment(),
@@ -229,9 +374,6 @@ impl FloorScene {
         }
         if self.finite_dome {
             limits.push("the floor is lit and shadowed as under an infinitely far dome");
-        }
-        if shadows && config.shadow_glass() != tequila_render_core::settings::ShadowGlass::Solid && self.panes {
-            limits.push("clear glass casts a solid shadow on the floor");
         }
         if self.cutouts {
             limits.push("a cutout casts a solid shadow on the floor");
@@ -334,10 +476,19 @@ impl GpuRenderer {
                 None => &scene.materials[i],
             })
             .collect();
-        let records: Vec<crate::material::GpuMaterial> = bases.iter().map(|m| crate::material::GpuMaterial::from_material(m)).collect();
+        let records: Vec<crate::material::GpuMaterial> = bases
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let id = tequila_core::ids::MaterialId(i as u32);
+                crate::material::GpuMaterial::with_glass(m, scene.material(id), scene.pane(id))
+            })
+            .collect();
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
-            eprintln!("  {unsupported} material(s) render as their opaque part on the graphics card for now (docs/07 R3)");
+            eprintln!(
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  dispersion, glowing volume or holes in glass (docs/07 R3)"
+            );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
         let lights = GpuLights::upload(device, &LightRecords::of(scene));
@@ -448,6 +599,7 @@ impl GpuRenderer {
             said_floor_limits: std::sync::atomic::AtomicBool::new(false),
             lights,
             lamp_scene: LampScene::of(scene),
+            glass_scene: GlassScene::of(scene),
         }
     }
 
@@ -459,6 +611,11 @@ impl GpuRenderer {
     /// [`crate::lights::lamp_limits`] of the scene this renders, under `config`.
     pub fn lamp_limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
         self.lamp_scene.limits(config)
+    }
+
+    /// [`glass_limits`] of the scene this renders, under `config`.
+    pub fn glass_limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
+        self.glass_scene.limits(config)
     }
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
@@ -517,7 +674,14 @@ impl GpuRenderer {
             } else {
                 tequila_render_core::settings::DEFAULT_PIXEL_SPREAD
             },
-            _pad2: 0,
+            max_transmission_bounces: settings.config.max_transmission_bounces,
+            shadow_glass: match settings.config.shadow_glass() {
+                ShadowGlass::Solid => GLASS_SOLID,
+                ShadowGlass::Clear => GLASS_CLEAR,
+                ShadowGlass::Unbent => GLASS_UNBENT,
+            },
+            glass_flags: self.glass_scene.flags(),
+            _pad3: [0; 2],
         }
     }
 
@@ -531,7 +695,7 @@ impl GpuRenderer {
             "the floor's reflection alone is the processor's (tequila-render-cpu's floor.rs); the card renders the whole picture"
         );
         if !self.said_floor_limits.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            for limit in self.floor_limits(&settings.config).iter().chain(&self.lamp_limits(&settings.config)) {
+            for limit in self.floor_limits(&settings.config).iter().chain(&self.lamp_limits(&settings.config)).chain(&self.glass_limits(&settings.config)) {
                 eprintln!("  on the graphics card for now, {limit} (docs/07 R3)");
             }
         }

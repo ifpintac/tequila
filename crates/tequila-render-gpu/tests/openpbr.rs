@@ -294,15 +294,24 @@ const MATERIAL_WORDS: usize = std::mem::size_of::<GpuMaterial>() / 4;
 fn material_from_words() -> String {
     let at = |k: usize| format!("inf({k}u)");
     let mut parts: Vec<String> = (0..6).map(|c| format!("vec4<f32>({}, {}, {}, {})", at(4 * c), at(4 * c + 1), at(4 * c + 2), at(4 * c + 3))).collect();
-    // The scalars, the anisotropy's rotation and the padding, the emission.
+    // The scalars, the anisotropy's rotation and the padding, the emission,
+    // the transmission's colour and tint.
     parts.extend((24..40).map(at));
-    parts.push(format!("vec4<f32>({}, {}, {}, {})", at(40), at(41), at(42), at(43)));
+    for v in [40, 44, 48] {
+        parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
+    }
+    // The volume's density, the priority, the scene's index, the glass's
+    // flags (a word), the pane, the padding.
+    parts.extend((52..55).map(at));
+    parts.push("inp(55u)".into());
+    parts.extend((56..62).map(at));
+    parts.push(format!("vec2<f32>({}, {})", at(62), at(63)));
     format!("GpuMaterial({})", parts.join(", "))
 }
 
 fn the_stack(seed: u64, aimed: bool) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 44);
+    assert_eq!(MATERIAL_WORDS, 64);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut misses, mut floored) = (0, 0, 0);

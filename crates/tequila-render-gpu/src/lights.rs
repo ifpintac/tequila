@@ -319,6 +319,8 @@ pub const LAMPS_IN_MIRRORS: u32 = 4;
 /// One of the lamps a bounce meets lights nothing diffusely
 /// (`lamps_for_reflections`).
 pub const LAMPS_FOR_REFLECTIONS: u32 = 8;
+/// Shadow rays pass all clear glass and there is some (`meets_glass`).
+pub const LAMPS_MEETS_GLASS: u32 = 16;
 
 /// What [`lamp_flags`] and [`lamp_limits`] ask of a scene, read when it is
 /// uploaded, so either can be said once a configuration is known.
@@ -374,6 +376,7 @@ impl LampScene {
             (meets_lamps, LAMPS_MET),
             (in_mirrors, LAMPS_IN_MIRRORS),
             (for_reflections, LAMPS_FOR_REFLECTIONS),
+            (meets_glass, LAMPS_MEETS_GLASS),
         ] {
             if on {
                 flags |= flag;
