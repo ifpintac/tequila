@@ -493,6 +493,65 @@ fn another_wall_of_the_new_presets_is_the_processors_picture() {
     new_preset_wall(1);
 }
 
+/// What the snapshot measures at the mesh's corners, read by programs on the
+/// card (R3: the curvature, the baked occlusion, the distance to other parts,
+/// vertex colours): the Headphones' parts, every mesh given vertex colours
+/// banded over it, every material its constants with one of the measures
+/// driving its base colour or its roughness - the barycentrics worked out
+/// again at the hit, the measures uploaded and weighed, the curvature by the
+/// part's scale, the colours into the rendering space.
+#[test]
+fn the_measured_headphones_are_the_processors_picture() {
+    use tequila_materials::graph::{CurvatureMode, MaterialGraph, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let meshes: Vec<_> = document.geometry.keys().collect();
+    for key in meshes {
+        let mut mesh = document.geometry.get(key).expect("a mesh").clone();
+        let band = |x: f32| 0.5 + 0.5 * (x * 60.0).sin();
+        mesh.colors = mesh.positions.iter().map(|p| tequila_core::math::Vec4 { x: band(p.x), y: band(p.y + 0.01), z: band(p.z - 0.02), w: 1.0 }).collect();
+        document.geometry.insert_with_key(key, mesh);
+    }
+    let colour = |r: f32, g: f32, b: f32| Value::Color(tequila_core::spectrum::Spectrum { r, g, b });
+    let keys: Vec<_> = document.materials.keys().collect();
+    for (j, key) in keys.iter().enumerate() {
+        let mut definition = document.materials.get(*key).expect("a material").clone();
+        let mut graph = MaterialGraph::from_material(definition.graph.material().clone());
+        graph.material_mut().edge_radius = 0.0;
+        let output = graph.output();
+        // A mask between two colours, into the base colour.
+        let mix_into_base = |graph: &mut MaterialGraph, mask: NodeKind| {
+            let mask = graph.add_node(Node::new(mask));
+            let mut mix = Node::new(NodeKind::Mix);
+            mix.literals.insert(Socket::Input(0), colour(0.05, 0.05, 0.06));
+            mix.literals.insert(Socket::Input(1), colour(0.9, 0.55, 0.2));
+            let mix = graph.add_node(mix);
+            graph.connect(mask, mix, Socket::Input(2));
+            graph.connect(mix, output, Socket::Param(Param::BaseColor));
+        };
+        match j % 5 {
+            0 => mix_into_base(&mut graph, NodeKind::Curvature { mode: CurvatureMode::Convex, radius: 0.004, contrast: 1.2 }),
+            1 => mix_into_base(&mut graph, NodeKind::Occlusion { radius: 0.01, contrast: 1.5 }),
+            2 => {
+                let distance = graph.add_node(Node::new(NodeKind::Distance { radius: 0.02 }));
+                graph.connect(distance, output, Socket::Param(Param::SpecularRoughness));
+                let curvature = graph.add_node(Node::new(NodeKind::Curvature { mode: CurvatureMode::Both, radius: 0.003, contrast: 0.7 }));
+                graph.connect(curvature, output, Socket::Param(Param::BaseColor));
+            }
+            3 => {
+                let painted = graph.add_node(Node::new(NodeKind::VertexColor));
+                graph.connect(painted, output, Socket::Param(Param::BaseColor));
+            }
+            _ => mix_into_base(&mut graph, NodeKind::Curvature { mode: CurvatureMode::Concave, radius: 0.004, contrast: 1.0 }),
+        }
+        definition.graph = graph;
+        document.materials.insert_with_key(*key, definition);
+    }
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "measured_headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// Which presets of the walls the card renders otherwise: each swapped in
 /// alone. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity
 /// -- --ignored --nocapture one_by_one`.

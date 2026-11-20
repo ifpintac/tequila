@@ -56,6 +56,9 @@ struct Case {
     normal: Option<Vec3>,
     heights: Option<[f32; 2]>,
     label: String,
+    /// Added to each word's absolute bound: how far the processor's own
+    /// answer moves for an ulp of the point, where a case measures it.
+    slack: Option<Box<[f32; OUT]>>,
 }
 
 fn kernel_body() -> String {
@@ -251,6 +254,14 @@ struct Bound {
 }
 
 const NOISE: Bound = Bound { absolute: 1e-4, relative: 1e-4 };
+/// The bump's heights a step along the surface. Looser than graphs.rs's
+/// (2e-9): the card moves the point through its rows of the inverse
+/// (prog_shade, stage 1) where the processor takes `Transform::inv_vector`,
+/// an ulp apart now and then, and the patterns here are fine - a wave of
+/// 9,600 bands a unit moves 2e-4 of a band for an ulp of a point 0.3 out,
+/// which is 1e-8 of a height 1e-4 deep. The height at the point itself,
+/// where both read the same point, is held to the noise bound.
+const HEIGHTS: Bound = Bound { absolute: 1e-7, relative: 1e-4 };
 
 fn close(card: f32, processor: f32, bound: Bound) -> bool {
     if card.is_nan() && processor.is_nan() {
@@ -295,7 +306,7 @@ fn compare(harness: &Harness, name: &str, cases: &[Case], bound: Bound, normal_b
             }
             let b = if k >= 47 {
                 match case.heights {
-                    Some(_) => Bound { absolute: 2e-9, relative: 1e-4 },
+                    Some(_) => HEIGHTS,
                     None => continue,
                 }
             } else if k >= 44 {
@@ -309,6 +320,7 @@ fn compare(harness: &Harness, name: &str, cases: &[Case], bound: Bound, normal_b
             if got[k].to_bits() != want[k].to_bits() && !(got[k] == 0.0 && want[k] == 0.0) {
                 same = false;
             }
+            let b = Bound { absolute: b.absolute + case.slack.as_ref().map_or(0.0, |s| s[k]), ..b };
             if !close(got[k], want[k], b) {
                 let d = (got[k] - want[k]).abs();
                 if worst.is_none_or(|(_, g, w)| d > (g - w).abs()) {
@@ -571,7 +583,7 @@ fn tequilas_procedurals_are_the_processors() {
             let reach = if rng.next_f32() < 0.8 { 0.15 } else { 1.0 };
             let point = random_point(&mut rng, reach);
             let label = format!("{label} at {:?} scale {}", point.position, point.scale);
-            cases.push(Case { program, surface: flat_surface(&point), point, normal: None, heights: None, label });
+            cases.push(Case { program, surface: flat_surface(&point), point, normal: None, heights: None, slack: None, label });
         }
     }
     compare_all(&h, "Tequila's procedurals", &cases, NOISE);
@@ -668,7 +680,7 @@ fn the_newly_running_presets_are_the_processors() {
             let reach = if rng.next_f32() < 0.8 { 0.15 } else { 1.0 };
             let mut point = random_point(&mut rng, reach);
             point.scale = 1.0;
-            cases.push(Case { label: name.clone(), program: program.clone(), surface: flat_surface(&point), point, normal: None, heights: None });
+            cases.push(Case { label: name.clone(), program: program.clone(), surface: flat_surface(&point), point, normal: None, heights: None, slack: None });
         }
     }
     compare_all(&h, "the newly running presets", &cases, NOISE);
@@ -695,8 +707,8 @@ fn bump_scene(program: &CompiledGraph, transform: Transform, uvs: bool) -> tequi
 }
 
 /// The bumped normal of every newly running preset that bumps, at random
-/// points of a placed triangle, against `bumped_normal`: the heights to the
-/// noise bound, the normal (forward differences over a tenth of a
+/// points of a placed triangle, against `bumped_normal`: the height here to
+/// the noise bound, a step along to [`HEIGHTS`], the normal (forward differences over a tenth of a
 /// footprint, which cancel) to 1e-3.
 #[test]
 fn the_newly_running_bumps_are_the_processors() {
@@ -717,7 +729,10 @@ fn the_newly_running_bumps_are_the_processors() {
             let angle = uniform(&mut rng, -3.0, 3.0);
             let axis = unit(&mut rng);
             let scale = if k % 2 == 0 { 1.0 } else { uniform(&mut rng, 0.2, 3.0) };
-            let matrix = Mat4::translation(vec3(wide(&mut rng) * 0.01, 0.1, -0.2)) * Mat4::rotation(axis, angle) * Mat4::scale(Vec3::splat(scale));
+            // Placed within a product's reach (graphs.rs places it up to ten
+            // out): a wave of 8,400 bands a unit, distorted, read ten units
+            // out is its rounding's on the processor too.
+            let matrix = Mat4::translation(vec3(uniform(&mut rng, -0.15, 0.15), 0.1, -0.2)) * Mat4::rotation(axis, angle) * Mat4::scale(Vec3::splat(scale));
             let transform = Transform::from_matrix(matrix).expect("invertible");
             let scene = bump_scene(program, transform, k % 4 != 3);
             let mesh = scene.mesh(MeshId(0));
@@ -770,7 +785,49 @@ fn the_newly_running_bumps_are_the_processors() {
                 registers.value(register).as_float()
             };
             let heights = [height(tangent * step), height(bitangent * step)];
-            cases.push(Case { label: name.clone(), program: program.clone(), point, surface, normal: Some(bumped), heights: Some(heights) });
+            // How far the processor's own answers move for an ulp of the
+            // point: the parameters here, and the heights a step along - the
+            // card moves its point through its own rows of the inverse
+            // (prog_shade, stage 1), an ulp from Transform::inv_vector now
+            // and then, and over a step of a few hundred ulps a fine
+            // pattern's forward differences are only that good.
+            let p = point.position;
+            let nudge = vec3(p.x.abs().max(1e-3), p.y.abs().max(1e-3), p.z.abs().max(1e-3)) * f32::EPSILON;
+            let nudged = |offset: Vec3, by: Vec3| {
+                let moved = SurfacePoint { position: point.position + by, ..point };
+                let (du, dv) = match derivatives {
+                    Some((dpdu, dpdv)) => {
+                        let (a, b, c) = (dpdu.dot(dpdu), dpdu.dot(dpdv), dpdv.dot(dpdv));
+                        let det = a * c - b * b;
+                        if det.abs() < 1e-20 {
+                            (0.0, 0.0)
+                        } else {
+                            let (pu, pv) = (dpdu.dot(offset), dpdv.dot(offset));
+                            ((c * pu - b * pv) / det, (a * pv - b * pu) / det)
+                        }
+                    }
+                    None => (0.0, 0.0),
+                };
+                let moved = SurfacePoint { position: moved.position + transform.inv_vector(offset), uv: moved.uv + vec2(du, dv), ..moved };
+                let mut registers = Registers::new();
+                shade(&restricted, &TextureTable::new(), &moved, &mut registers, &mut Material::default());
+                registers.value(register).as_float()
+            };
+            let moved_by = [(nudged(tangent * step, nudge) - heights[0]).abs(), (nudged(bitangent * step, nudge) - heights[1]).abs()];
+            let mut slack = [0.0f32; OUT];
+            let at_nudge = SurfacePoint { position: point.position + nudge, ..point };
+            let mine = floats(&GpuMaterial::from_material(shade(program, &scene.textures, &point, &mut Registers::new(), &mut Material::default())));
+            let theirs = floats(&GpuMaterial::from_material(shade(program, &scene.textures, &at_nudge, &mut Registers::new(), &mut Material::default())));
+            for k in 0..40 {
+                slack[k] = 2.0 * (mine[k] - theirs[k]).abs();
+            }
+            let normal_slack = 2.0 * (moved_by[0] + moved_by[1]) / step;
+            for k in 44..47 {
+                slack[k] = normal_slack;
+            }
+            slack[47] = 2.0 * moved_by[0];
+            slack[48] = 2.0 * moved_by[1];
+            cases.push(Case { label: name.clone(), program: program.clone(), point, surface, normal: Some(bumped), heights: Some(heights), slack: Some(Box::new(slack)) });
         }
     }
     eprintln!("bumped normals: {count} newly running presets that bump");
@@ -858,7 +915,7 @@ fn wave_is_the_processors() {
                             continue;
                         }
                         let point = random_point(&mut rng, 1.0);
-                        cases.push(Case { label: format!("{node:?} {outputs:?} at {inputs:?}"), program: single_node(node, &inputs, outputs), surface: flat_surface(&point), point, normal: None, heights: None });
+                        cases.push(Case { label: format!("{node:?} {outputs:?} at {inputs:?}"), program: single_node(node, &inputs, outputs), surface: flat_surface(&point), point, normal: None, heights: None, slack: None });
                     }
                 }
             }
@@ -887,4 +944,63 @@ fn wave_refusals() {
     assert!(lowered(inputs(1.0, 20.0, 0.5)).is_err());
     assert!(lowered(inputs(1.0, -1.0, 0.5)).is_err());
     assert!(lowered(inputs(1.0, 2.0, -0.5)).is_err());
+}
+
+// ---- What the snapshot measured at the mesh's corners ---------------------
+
+/// The curvature by every mode, the baked occlusion, the distance to other
+/// parts and the vertex colour, at random points (their measures over and
+/// past their ranges) and settings, against `shade`.
+#[test]
+fn the_measures_are_the_processors() {
+    use tequila_materials::graph::CurvatureMode;
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(26, 1);
+    let mut cases = Vec::new();
+    for i in 0..12_000 {
+        let (instruction, colour) = match i % 6 {
+            0..=2 => {
+                let mode = CurvatureMode::ALL[i % 6];
+                let radius = if rng.next_f32() < 0.05 { -0.001 } else { uniform(&mut rng, 0.0, 0.01) };
+                let contrast = if rng.next_f32() < 0.3 { 1.0 } else { uniform(&mut rng, -0.5, 3.0) };
+                (Instruction::Curvature { dst: Register(0), mode, radius, contrast }, false)
+            }
+            3 => (Instruction::Occlusion { dst: Register(0), contrast: if rng.next_f32() < 0.3 { 1.0 } else { uniform(&mut rng, 0.0, 4.0) } }, false),
+            4 => (Instruction::Distance { dst: Register(0) }, false),
+            _ => (Instruction::VertexColor { dst: Register(0) }, true),
+        };
+        let label = format!("{instruction:?}");
+        let program = if colour { program_of(vec![instruction], 1, None, Some(Register(0))) } else { program_of(vec![instruction], 1, Some(Register(0)), None) };
+        let mut point = random_point(&mut rng, 1.0);
+        // Exact values at the ends now and then.
+        match rng.next_u32() % 8 {
+            0 => point.occlusion = 0.0,
+            1 => point.occlusion = 1.0,
+            2 => point.curvature = 0.0,
+            3 => point.world.closeness = 1.0,
+            _ => {}
+        }
+        let label = format!("{label} at curvature {} occlusion {} closeness {}", point.curvature, point.occlusion, point.world.closeness);
+        cases.push(Case { program, surface: flat_surface(&point), point, normal: None, heights: None, slack: None, label });
+    }
+    compare_all(&h, "The measures", &cases, Bound { absolute: 1e-6, relative: 1e-6 });
+}
+
+/// Stage 1's lowering refuses the measures as it did; the transport's runs
+/// them.
+#[test]
+fn the_measures_are_refused_only_by_stage_1() {
+    use tequila_materials::graph::CurvatureMode;
+    let pictures = no_pictures();
+    for (instruction, why) in [
+        (Instruction::Curvature { dst: Register(0), mode: CurvatureMode::Convex, radius: 0.002, contrast: 1.0 }, "the curvature"),
+        (Instruction::Occlusion { dst: Register(0), contrast: 1.0 }, "the baked occlusion"),
+        (Instruction::Distance { dst: Register(0) }, "the distance to other parts"),
+        (Instruction::VertexColor { dst: Register(0) }, "vertex colours"),
+    ] {
+        let program = program_of(vec![instruction], 1, Some(Register(0)), None);
+        assert_eq!(program::lower(&program), Err(Refusal::Instruction(why)));
+        assert!(matches!(program::lower_with(&program, Pictures::On(&pictures)), Ok(Some(_))), "{why} runs on the card");
+        assert!(program::reads_attributes(&program));
+    }
 }

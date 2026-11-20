@@ -564,6 +564,7 @@ impl GpuRenderer {
                 entry(15, storage(true)),
                 entry(16, storage(true)),
                 entry(17, storage(true)),
+                entry(20, storage(true)),
             ],
         });
         let environment_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -609,6 +610,7 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 15, resource: uploaded.tangents.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 16, resource: texture_texels.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 17, resource: texture_header.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 20, resource: uploaded.attributes.as_entire_binding() },
             ],
         });
         let environment_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

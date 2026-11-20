@@ -1052,6 +1052,73 @@ fn anisotropic_frame(hit: RayIntersection, surf: Surface, n: vec3<f32>, drawn: v
     return f;
 }
 
+// What the snapshot measured at a hit's corners, at a point of the part's
+// space (SceneSnapshot's curvature_at, occlusion_at, closeness_at and
+// vertex_color_at): the barycentrics worked out again from the point as
+// `barycentrics` works them out, each value the corners' weighed, the
+// curvature by the part's scale, the colour brought from linear sRGB into
+// the rendering space; nought, nought, nought and white where the mesh has
+// none (or the corners are degenerate). Every product an add reads rounded
+// as Rust rounds it.
+struct MeshMeasures {
+    curvature: f32,
+    occlusion: f32,
+    closeness: f32,
+    colour: vec3<f32>,
+};
+
+fn exact_dot(a: vec3<f32>, b: vec3<f32>) -> f32 {
+    return cy_exact(cy_exact(a.x * b.x) + cy_exact(a.y * b.y)) + cy_exact(a.z * b.z);
+}
+
+fn weighed(b: vec3<f32>, x: f32, y: f32, z: f32) -> f32 {
+    return cy_exact(cy_exact(x * b.x) + cy_exact(y * b.y)) + cy_exact(z * b.z);
+}
+
+fn mesh_measures(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>, object: vec3<f32>) -> MeshMeasures {
+    var m = MeshMeasures(0.0, 0.0, 0.0, vec3<f32>(1.0));
+    if (mesh.attribute_base == NO_DATA) {
+        return m;
+    }
+    let p0 = scene_position(mesh.base_vertex + c.x);
+    let e1 = scene_position(mesh.base_vertex + c.y) - p0;
+    let e2 = scene_position(mesh.base_vertex + c.z) - p0;
+    let d = object - p0;
+    let d11 = exact_dot(e1, e1);
+    let d12 = exact_dot(e1, e2);
+    let d22 = exact_dot(e2, e2);
+    let d31 = exact_dot(d, e1);
+    let d32 = exact_dot(d, e2);
+    let det = cy_exact(d11 * d22) - cy_exact(d12 * d12);
+    if (abs(det) < 1e-30) {
+        return m;
+    }
+    let v = tex_div(cy_exact(d22 * d31) - cy_exact(d12 * d32), det);
+    let w = tex_div(cy_exact(d11 * d32) - cy_exact(d12 * d31), det);
+    let b = vec3<f32>(1.0 - v - w, v, w);
+    let at = 2u * mesh.attribute_base;
+    let a0 = scene_attributes[at + 2u * c.x];
+    let a1 = scene_attributes[at + 2u * c.y];
+    let a2 = scene_attributes[at + 2u * c.z];
+    let flags = mesh.attribute_flags;
+    if ((flags & HAS_CURVATURE) != 0u) {
+        m.curvature = weighed(b, a0.x, a1.x, a2.x) * inst.inv_length_scale;
+    }
+    if ((flags & HAS_OCCLUSION) != 0u) {
+        m.occlusion = weighed(b, a0.y, a1.y, a2.y);
+    }
+    if ((flags & HAS_CLOSENESS) != 0u) {
+        m.closeness = weighed(b, a0.z, a1.z, a2.z);
+    }
+    if ((flags & HAS_COLORS) != 0u) {
+        let c0 = scene_attributes[at + 2u * c.x + 1u];
+        let c1 = scene_attributes[at + 2u * c.y + 1u];
+        let c2 = scene_attributes[at + 2u * c.z + 1u];
+        m.colour = tex_acescg(vec3<f32>(weighed(b, c0.x, c1.x, c2.x), weighed(b, c0.y, c1.y, c2.y), weighed(b, c0.z, c1.z, c2.z)));
+    }
+    return m;
+}
+
 // Where Generated puts a point of the part's space: normalized to the
 // mesh's bounds, 0 to 1, a flat axis at 0.5 (SceneSnapshot::generated_at).
 fn generated_size(h: f32) -> f32 {
@@ -1108,6 +1175,11 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     pt.generated = generated_at(mesh, pt.object);
     pt.object_location = vec3<f32>(inst.object_to_world[0].w, inst.object_to_world[1].w, inst.object_to_world[2].w);
     pt.object_color = inst.object_color.xyz;
+    let measures = mesh_measures(inst, mesh, c, pt.object);
+    pt.curvature = measures.curvature;
+    pt.occlusion = measures.occlusion;
+    pt.closeness = measures.closeness;
+    pt.vertex_color = measures.colour;
     // No ray differentials: the footprint widens with the distance alone.
     let world = hit.t * frame.pixel_spread;
     s.footprint = world * inst.inv_length_scale;

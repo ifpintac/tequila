@@ -29,7 +29,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
-use tequila_materials::graph::{CompiledGraph, Instruction, NodeKind, Register, SocketType, Value};
+use tequila_materials::graph::{CompiledGraph, CurvatureMode, Instruction, NodeKind, Register, SocketType, Value};
 use tequila_materials::material_type::Param;
 use tequila_materials::nodes::{MixData, PointInput, ShaderNode};
 use tequila_texture::cycles::noise::FractalKind;
@@ -100,6 +100,11 @@ pub const OP_PROCEDURAL: u32 = 25;
 /// The Wave Texture's point, or its value at the point (`procedural.wgsl`'s
 /// `cy_wave`): the settings word's [`WAVE_VALUE`].
 pub const OP_WAVE: u32 = 26;
+/// What the snapshot measured at the mesh's corners, read at the point
+/// (`program.wgsl`'s `prog_attribute`): the curvature as a mask, the baked
+/// occlusion shaped, the distance to other parts, the vertex colour; the
+/// settings word's [`ATTRIBUTE_WHICH`].
+pub const OP_ATTRIBUTE: u32 = 27;
 
 /// Every opcode by its WGSL name, for the test that holds the two sides to
 /// one numbering.
@@ -130,7 +135,26 @@ pub const OPCODES: &[(&str, u32)] = &[
     ("OP_TEXTURE", OP_TEXTURE),
     ("OP_PROCEDURAL", OP_PROCEDURAL),
     ("OP_WAVE", OP_WAVE),
+    ("OP_ATTRIBUTE", OP_ATTRIBUTE),
 ];
+
+/// `OP_ATTRIBUTE`'s settings word: bits 0-1 which, bits 2-3 the curvature's
+/// mode (convex, concave, both).
+pub const ATTRIBUTE_WHICH: u32 = 3;
+pub const ATTRIBUTE_CURVATURE: u32 = 0;
+pub const ATTRIBUTE_OCCLUSION: u32 = 1;
+pub const ATTRIBUTE_DISTANCE: u32 = 2;
+pub const ATTRIBUTE_VERTEX_COLOR: u32 = 3;
+
+/// Whether `program` reads what the snapshot measured at the mesh's
+/// corners (the curvature, the baked occlusion, the closeness of other
+/// parts, the vertex colours), which the card then uploads.
+pub fn reads_attributes(program: &CompiledGraph) -> bool {
+    let reads = |instructions: &[Instruction]| {
+        instructions.iter().any(|i| matches!(i, Instruction::Curvature { .. } | Instruction::Occlusion { .. } | Instruction::Distance { .. } | Instruction::VertexColor { .. }))
+    };
+    reads(&program.instructions) || program.layer.as_ref().is_some_and(|l| reads_attributes(&l.factor) || reads_attributes(&l.shader))
+}
 
 /// `OP_WAVE`'s settings word: rings (bit 0) or bands, the direction (bits
 /// 1-2), the profile (3-4), and the value at the point rather than the point.
@@ -825,10 +849,43 @@ impl Builder<'_> {
                     let held = self.procedural(procedural, *seed, point, mapping.is_some())?;
                     self.define(*dst, held)?;
                 }
-                Instruction::Curvature { .. } => return Err(Refusal::Instruction("the curvature")),
-                Instruction::Occlusion { .. } => return Err(Refusal::Instruction("the baked occlusion")),
-                Instruction::Distance { .. } => return Err(Refusal::Instruction("the distance to other parts")),
-                Instruction::VertexColor { .. } => return Err(Refusal::Instruction("vertex colours")),
+                Instruction::Curvature { dst, mode, radius, contrast } => {
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("the curvature"));
+                    }
+                    let mode = match mode {
+                        CurvatureMode::Convex => 0,
+                        CurvatureMode::Concave => 1,
+                        CurvatureMode::Both => 2,
+                    };
+                    let c = self.constant([radius.max(0.0), *contrast, 0.0, 0.0]);
+                    let (d, _) = self.push(OP_ATTRIBUTE, ATTRIBUTE_CURVATURE | mode << 2, vec![c], false)?;
+                    self.define(*dst, Self::virtual_held(d, Ty::Float, MODE_AS_IS))?;
+                }
+                Instruction::Occlusion { dst, contrast } => {
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("the baked occlusion"));
+                    }
+                    let c = self.constant([0.0, contrast.max(0.05), 0.0, 0.0]);
+                    let (d, _) = self.push(OP_ATTRIBUTE, ATTRIBUTE_OCCLUSION, vec![c], false)?;
+                    self.define(*dst, Self::virtual_held(d, Ty::Float, MODE_AS_IS))?;
+                }
+                Instruction::Distance { dst } => {
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("the distance to other parts"));
+                    }
+                    let c = self.constant([0.0; 4]);
+                    let (d, _) = self.push(OP_ATTRIBUTE, ATTRIBUTE_DISTANCE, vec![c], false)?;
+                    self.define(*dst, Self::virtual_held(d, Ty::Float, MODE_AS_IS))?;
+                }
+                Instruction::VertexColor { dst } => {
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("vertex colours"));
+                    }
+                    let c = self.constant([0.0; 4]);
+                    let (d, _) = self.push(OP_ATTRIBUTE, ATTRIBUTE_VERTEX_COLOR, vec![c], false)?;
+                    self.define(*dst, Self::virtual_held(d, Ty::Color, MODE_AS_IS))?;
+                }
                 Instruction::VolumeMap { .. } => return Err(Refusal::Instruction("a volume map")),
             }
             i += 1;

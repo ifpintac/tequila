@@ -64,6 +64,7 @@ const OP_GRADIENT_TEXTURE: u32 = 23u;
 const OP_TEXTURE: u32 = 24u;
 const OP_PROCEDURAL: u32 = 25u;
 const OP_WAVE: u32 = 26u;
+const OP_ATTRIBUTE: u32 = 27u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -207,6 +208,33 @@ fn prog_gradient(settings: u32, t_in: f32) -> vec3<f32> {
     return a.xyz * (1.0 - f) + b.xyz * f;
 }
 
+// What the snapshot measured at the mesh's corners, read at the point
+// (shade.rs): the curvature as CurvatureMode::mask has it - `c` the radius,
+// no less than nought, and the contrast; the baked occlusion as
+// occlusion_shape has it - `c.y` the contrast, no less than 0.05, its powf
+// correctly rounded; the distance to other parts, what is left of the
+// closeness; the vertex colour.
+fn prog_attribute(settings: u32, c: vec4<f32>, pt: ProgPoint) -> vec4<f32> {
+    switch settings & 3u {
+        case 0u: {
+            let scaled = pt.curvature * c.x;
+            var value: f32;
+            switch (settings >> 2u) & 3u {
+                case 0u: { value = clamp(scaled, 0.0, 1.0); }
+                case 1u: { value = clamp(-scaled, 0.0, 1.0); }
+                default: { value = 0.5 + 0.5 * clamp(scaled, -1.0, 1.0); }
+            }
+            if (c.y == 1.0) {
+                return vec4<f32>(value);
+            }
+            return vec4<f32>(clamp(cy_exact((value - 0.5) * max(c.y, 0.0)) + 0.5, 0.0, 1.0));
+        }
+        case 1u: { return vec4<f32>(tex_powf(clamp(pt.occlusion, 0.0, 1.0), c.y)); }
+        case 2u: { return vec4<f32>(clamp(1.0 - pt.closeness, 0.0, 1.0)); }
+        default: { return vec4<f32>(pt.vertex_color, 0.0); }
+    }
+}
+
 // Tequila's own nodes (graph.rs's NodeKind::evaluate), on the operands.
 fn prog_legacy(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
     switch settings & 15u {
@@ -316,6 +344,7 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
             }
             case 25u: { out = tq_instruction(settings, a); }
             case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }
+            case 27u: { out = prog_attribute(settings, a[0], pt); }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
