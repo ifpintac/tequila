@@ -295,6 +295,12 @@ fn a_wide_box_filter_is_the_processors_picture() {
     same_picture("wide_box");
 }
 
+/// A dome of a size: the sky from where each path is.
+#[test]
+fn a_dome_of_a_size_is_the_processors_picture() {
+    same_picture("finite_dome");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]

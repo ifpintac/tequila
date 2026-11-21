@@ -70,12 +70,14 @@ fn fibres_are_said() {
     assert_eq!(part_limits(&scene, &document.lighting.config()), vec!["fibres are left out: the parts that grow them are bare"]);
 }
 
+/// A dome of a size is the card's as the processor's, under a floor too.
 #[test]
-fn a_dome_of_a_size_is_said() {
-    let document = with_environment(grey(), EnvironmentParameter::scalar(EnvParam::Size, 6.0));
+fn a_dome_of_a_size_is_not_said() {
+    let document = with_environment(parity::scene("finite_dome").expect("the parity set has it").document(), EnvironmentParameter::scalar(EnvParam::Size, 6.0));
     let scene = snapped(&document);
     assert!(!scene.environment.dome().is_infinite(), "the dome has a size");
-    assert_eq!(part_limits(&scene, &document.lighting.config()), vec!["the environment is an infinitely far dome rather than one of its size"]);
+    assert!(part_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &document.lighting.config()));
+    assert!(floor_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &document.lighting.config()));
 }
 
 /// A background colour, and a backplate, are the card's as the processor's

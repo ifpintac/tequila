@@ -161,6 +161,13 @@ pub struct FrameParams {
     pub filter_width: f32,
     pub filter_last: f32,
     pub _pad5: u32,
+    /// A dome of a size under [`SCENE_FINITE_DOME`] (`Dome`): its radius in
+    /// scene units, its centre's height above the floor, and 1 where its
+    /// lower cap is the ground plane.
+    pub dome_radius: f32,
+    pub dome_height: f32,
+    pub dome_flatten: u32,
+    pub _pad6: u32,
     pub filter_table: [[f32; 4]; 256],
 }
 
@@ -205,6 +212,10 @@ pub const SCENE_BACKGROUND_COLOUR: u32 = 128;
 /// They see a backplate's picture, at the film point the path set out from
 /// (`Background::Backplate`).
 pub const SCENE_BACKPLATE: u32 = 256;
+/// The environment is a dome of a size (`Dome::radius`): the sky is looked
+/// up, sampled and weighed from where a path is, and a shadow ray towards
+/// it stops at it.
+pub const SCENE_FINITE_DOME: u32 = 512;
 
 /// [`FrameParams::camera_flags`]: the camera is a thin lens with an opening
 /// (`Camera::aperture_radius` over nought): each ray starts on the opening,
@@ -422,12 +433,6 @@ pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'s
     if scene.instances.iter().any(|i| scene.meshes.get(i.mesh.index()).is_some_and(|m| m.fibres.is_some())) {
         limits.push("fibres are left out: the parts that grow them are bare");
     }
-    // The environment as the card reads it is always infinitely far
-    // (environment.wgsl); a dome of a size looks its directions up from
-    // where a path is, for the light, its samples and the view.
-    if !scene.environment.dome().is_infinite() {
-        limits.push("the environment is an infinitely far dome rather than one of its size");
-    }
     limits
 }
 
@@ -509,8 +514,11 @@ pub struct GpuRenderer {
     /// What [`part_limits`] says of the scene.
     part_limits: Vec<&'static str>,
     /// What the camera sees past the parts: [`SCENE_BACKGROUND_COLOUR`] or
-    /// [`SCENE_BACKPLATE`] (none for the environment), and the colour.
+    /// [`SCENE_BACKPLATE`] (none for the environment), with
+    /// [`SCENE_FINITE_DOME`] for a dome of a size; and the colour.
     background_flags: u32,
+    /// The environment's dome.
+    dome: tequila_render_core::environment::Dome,
     background: [f32; 3],
     /// The kernel widened to the frame's parts a frame asked for that it
     /// left out ([`KernelFeatures::of_frame`]), each built once.
@@ -592,7 +600,6 @@ struct FloorScene {
     catcher: bool,
     catcher_shadows: bool,
     lamps: bool,
-    finite_dome: bool,
     shadowless_parts: bool,
 }
 
@@ -602,7 +609,6 @@ impl FloorScene {
             catcher: scene.instances.iter().any(|i| i.shadow_catcher.is_some()),
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
-            finite_dome: !scene.environment.dome().is_infinite(),
             shadowless_parts: scene.has_shadowless_parts(),
         }
     }
@@ -615,9 +621,6 @@ impl FloorScene {
         let shadows = config.shadows && self.catcher_shadows;
         if shadows && self.lamps {
             limits.push("the floor's shadows are the sky's alone: the lamps cast none on it");
-        }
-        if self.finite_dome {
-            limits.push("the floor is lit and shadowed as under an infinitely far dome");
         }
         if self.shadowless_parts {
             limits.push("a part that casts no shadow shadows the floor all the same");
@@ -881,7 +884,7 @@ impl GpuRenderer {
             Background::Environment => 0,
             Background::Color(_) => SCENE_BACKGROUND_COLOUR,
             Background::Backplate { .. } => SCENE_BACKPLATE,
-        };
+        } | if scene.environment.dome().is_infinite() { 0 } else { SCENE_FINITE_DOME };
         let features = KernelFeatures::of(&SceneRecords {
             materials: &records,
             programs: &programs,
@@ -970,6 +973,7 @@ impl GpuRenderer {
             kernel_seconds,
             aside,
             background_flags,
+            dome: scene.environment.dome(),
             widened: std::sync::Mutex::new(Vec::new()),
             background: match &scene.background {
                 Background::Color(c) => [c.r, c.g, c.b],
@@ -1198,6 +1202,10 @@ impl GpuRenderer {
             filter_last,
             _pad5: 0,
             filter_table,
+            dome_radius: self.dome.radius.unwrap_or(0.0),
+            dome_height: self.dome.height,
+            dome_flatten: self.dome.flatten as u32,
+            _pad6: 0,
         }
     }
 

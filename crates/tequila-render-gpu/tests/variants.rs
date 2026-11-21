@@ -71,7 +71,9 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BACKGROUND), ["background_colour", "backplate"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::DOME), *name == "finite_dome", "{name}: {}", features.names());
         let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
+        assert!(F::of_frame(u32::MAX).contains(frame_parts) && !F::of_frame(u32::MAX).contains(F::DOME));
         assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
     }
     // At least what each is in the set for.
@@ -88,7 +90,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
@@ -198,10 +200,11 @@ fn parity_shot(name: &str) -> (tequila_render_core::scene::SceneSnapshot, FrameS
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    let (mut snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    snapshot.background = parity::background(&document);
     let settings = FrameSettings {
         camera: scene.camera(&document),
-        config: document.lighting.config(),
+        config: parity::config(&document),
         scene_seed: scene.seed,
         reject_fireflies: true,
         clamp_direct: None,

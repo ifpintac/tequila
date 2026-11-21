@@ -69,6 +69,9 @@ override FEATURE_BACKPLATE: bool = true;
 override FEATURE_THIN_LENS: bool = true;
 // An opening of blades rather than a round one (a frame's part).
 override FEATURE_BLADES: bool = true;
+// A dome of a size: the sky looked up, sampled and weighed from where a
+// path is, its shadow rays stopping at the dome.
+override FEATURE_DOME: bool = true;
 // A shifted lens's film (a frame's part).
 override FEATURE_SHIFT: bool = true;
 // Parallel rays from the film plane (a frame's part).

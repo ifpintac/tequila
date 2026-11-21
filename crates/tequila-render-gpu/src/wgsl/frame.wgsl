@@ -82,7 +82,9 @@ struct FrameParams {
     // SCENE_BEVEL: some material rounds its edges (edge_radius);
     // SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE: the camera, and the mirrors
     // and glass it sees through, see a colour or a backplate's picture past
-    // the parts (integrator.rs's past_the_scene).
+    // the parts (integrator.rs's past_the_scene); SCENE_FINITE_DOME: the
+    // environment is a dome of a size (dome_*), looked up from where a path
+    // is.
     glass_flags: u32,
     // The rows this dispatch draws, row_base and every row_stride-th after
     // it: render_pass draws a big frame in interleaved sets of rows, each
@@ -117,6 +119,12 @@ struct FrameParams {
     filter_width: f32,
     filter_last: f32,
     _pad5: u32,
+    // A dome of a size under SCENE_FINITE_DOME (Dome): its radius, its
+    // centre's height, 1 where its lower cap is the ground plane.
+    dome_radius: f32,
+    dome_height: f32,
+    dome_flatten: u32,
+    _pad6: u32,
     filter_table: array<vec4<f32>, 256>,
 };
 
@@ -150,6 +158,7 @@ const SCENE_CUT_PROGRAMS: u32 = 32u;
 const SCENE_BEVEL: u32 = 64u;
 const SCENE_BACKGROUND_COLOUR: u32 = 128u;
 const SCENE_BACKPLATE: u32 = 256u;
+const SCENE_FINITE_DOME: u32 = 512u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

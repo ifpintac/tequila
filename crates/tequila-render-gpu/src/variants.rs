@@ -110,9 +110,11 @@ impl KernelFeatures {
     pub const EQUIRECTANGULAR: KernelFeatures = part(19);
     /// A pixel filter other than one pixel's box (a frame's part).
     pub const FILTER: KernelFeatures = part(20);
+    /// A dome of a size: the sky from where a path is.
+    pub const DOME: KernelFeatures = part(21);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 21] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 22] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -134,6 +136,7 @@ impl KernelFeatures {
         (Self::ORTHOGRAPHIC, "FEATURE_ORTHOGRAPHIC"),
         (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
         (Self::FILTER, "FEATURE_FILTER"),
+        (Self::DOME, "FEATURE_DOME"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -181,7 +184,7 @@ impl KernelFeatures {
     pub fn of(r: &SceneRecords) -> KernelFeatures {
         use crate::material::{GLASS_BOUNDARY, GLASS_PANE};
         use crate::program::{PROGRAM_AT_HIT, PROGRAM_CUTS, PROGRAM_NORMAL_PROJECTED, PROGRAM_NORMAL_UV, PROGRAM_RUNS};
-        use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_PANES, SCENE_TRANSMITS};
+        use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_TRANSMITS};
         let mut f = KernelFeatures::NONE;
         let mut keep = |on: bool, part: KernelFeatures| {
             if on {
@@ -243,6 +246,19 @@ impl KernelFeatures {
         // SCENE_BACKPLATE, which the scene's background sets).
         keep(r.glass_flags & (SCENE_BACKGROUND_COLOUR | SCENE_BACKPLATE) != 0, Self::BACKGROUND);
         keep(r.glass_flags & SCENE_BACKPLATE != 0, Self::BACKPLATE);
+        // The dome's lookups (the frame's SCENE_FINITE_DOME).
+        keep(r.glass_flags & SCENE_FINITE_DOME != 0, Self::DOME);
+        // A floor under a dome of a size keeps the programs' interpreter
+        // too, whether a program runs or not: without it the floor's
+        // shadow under the dome came out otherwise (finite_dome: 7,269 of
+        // 57,600 pixels, a hundredth darker), whichever way the spread
+        // bound was written, where the whole kernel gives the processor's
+        // picture. The interpreter never runs there; the driver compiles
+        // the shadow's loop otherwise without it (tests/variants.rs's
+        // which_part_left_out_moves_a_picture).
+        if f.contains(Self::FLOOR | Self::DOME) {
+            f = f | Self::PROGRAMS;
+        }
         f
     }
 
@@ -313,7 +329,8 @@ pub struct SceneRecords<'a> {
     pub emitters: bool,
     /// `FrameParams::glass_flags` as the scene sets them, whatever the
     /// configuration: `SCENE_TRANSMITS`, `SCENE_PANES`, `SCENE_CUTOUTS`,
-    /// `SCENE_CUT_PROGRAMS`, `SCENE_BACKGROUND_COLOUR`, `SCENE_BACKPLATE`.
+    /// `SCENE_CUT_PROGRAMS`, `SCENE_BACKGROUND_COLOUR`, `SCENE_BACKPLATE`,
+    /// `SCENE_FINITE_DOME`.
     pub glass_flags: u32,
 }
 

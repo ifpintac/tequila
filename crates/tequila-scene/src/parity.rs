@@ -481,7 +481,35 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: wide_box,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "finite_dome",
+    covers: "R3 tier A, a dome of a size: glass_ball_floor under the environment on a dome 8 m across, its centre \
+             a metre up, round below as above (the floor well inside it) - the sky looked up from where each path is (the camera's \
+             backdrop, the floor's, what escapes through the glass), its light samples drawn from the centre and \
+             seen from the point with their jacobian, their shadow rays stopping at the dome, the bounces weighed \
+             against them from where they left, and the floor's shadow drawn by the light onto it there",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: finite_dome,
+    lens: framed,
+    pictures: no_pictures,
 }];
+
+/// glass_ball_floor on a dome 8 m across, a metre up, round below as
+/// above: the floor's 3 m well inside it.
+fn finite_dome() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    for parameter in [
+        EnvironmentParameter::scalar(EnvParam::Size, 8.0),
+        EnvironmentParameter::scalar(EnvParam::Height, 1.0),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the dome is set");
+    }
+    document
+}
 
 /// `simple_product` under Blackman-Harris 1.5 px, Blender's own filter.
 fn soft_filter() -> SceneDocument {
