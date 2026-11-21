@@ -604,10 +604,12 @@ fn build_pipeline(
     cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::ComputePipeline {
     if let Some(salt) = salt {
-        source = source.replace(
-            "if (id.x >= frame.width || id.y >= frame.height) {",
-            &format!("if (id.x >= frame.width || id.y >= frame.height || frame.width == {}u) {{", salt | 0x8000_0000),
-        );
+        // The entry point's first test, which the salt is added to. It must
+        // be there: when dispatches were cut by rows it read `id.y` no more,
+        // the salt went nowhere, and the driver's cache answered.
+        const FIRST: &str = "if (id.x >= frame.width || y >= frame.height) {";
+        assert!(source.contains(FIRST), "the transport's entry point no longer starts with {FIRST:?}: the salt has nowhere to go");
+        source = source.replace(FIRST, &format!("if (id.x >= frame.width || y >= frame.height || frame.width == {}u) {{", salt | 0x8000_0000));
     }
     // The constants the source declares: one edited to measure what a part
     // costs may have taken some out.
