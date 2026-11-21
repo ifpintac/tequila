@@ -424,23 +424,15 @@ fn media_ior_of(m: Media, solid: u32, entering: f32) -> f32 {
 // MediumStack::cross_with: crossing a surface of `solid` leaves it if the
 // path is in it, enters it otherwise; a fifth medium is not recorded.
 fn media_cross(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32, material: u32) {
-    let at = media_position(*m, solid);
-    if (at != NO_MEDIUM) {
-        for (var j = at; j + 1u < (*m).len; j++) {
-            (*m).media[j] = (*m).media[j + 1u];
-        }
-        (*m).len -= 1u;
-    } else if ((*m).len < MAX_MEDIA) {
-        (*m).media[(*m).len] = Medium(solid, priority, ior, material, false, vec3<f32>(0.0));
-        (*m).len += 1u;
-    }
+    media_cross_walk(m, solid, priority, ior, material, false, vec3<f32>(0.0));
 }
 
-// MediumStack::cross_walk: crossing a surface of `solid` through its
-// subsurface lobe leaves the medium of `solid` the path is in, or starts a
-// walk under it (Medium::walk, of the shaded material: its priority, its
-// index and its walk's albedo); a fifth medium is not recorded.
-fn media_cross_walk(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32, material: u32, albedo: vec3<f32>) {
+// MediumStack::cross_with, or with `doorway` cross_walk: crossing a surface
+// of `solid` through its subsurface lobe leaves the medium of `solid` the
+// path is in, or starts a walk under it (Medium::walk, of the shaded
+// material: its priority, its index and its walk's albedo); a fifth medium
+// is not recorded.
+fn media_cross_walk(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32, material: u32, doorway: bool, albedo: vec3<f32>) {
     let at = media_position(*m, solid);
     if (at != NO_MEDIUM) {
         for (var j = at; j + 1u < (*m).len; j++) {
@@ -448,7 +440,7 @@ fn media_cross_walk(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32
         }
         (*m).len -= 1u;
     } else if ((*m).len < MAX_MEDIA) {
-        (*m).media[(*m).len] = Medium(solid, priority, ior, material, true, albedo);
+        (*m).media[(*m).len] = Medium(solid, priority, ior, material, doorway, albedo);
         (*m).len += 1u;
     }
 }
@@ -562,106 +554,6 @@ fn trace_within(origin: vec3<f32>, direction: vec3<f32>, t_max: f32) -> RayInter
     rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, t_max, origin, direction));
     rayQueryProceed(&rq);
     return rayQueryGetCommittedIntersection(&rq);
-}
-
-// medium_transmittance (ic:4186) through a uniform medium: what survives
-// from `start`, inside the medium of `solid`, to `reach` along `direction` -
-// the medium's transmittance over every stretch inside it, its own surface
-// passed (it bends nothing), and a part that casts no shadow; anything else
-// in the way stops it. At most 64 surfaces. The solid is the instance here
-// (scene.rs), as the processor keys its media.
-fn medium_transmittance(start: vec3<f32>, direction: vec3<f32>, reach: f32, solid: u32, sigma: vec3<f32>) -> vec3<f32> {
-    let majorant = max(max(sigma.x, sigma.y), sigma.z);
-    var through = vec3<f32>(1.0);
-    var origin = start;
-    var remaining = reach;
-    var inside = true;
-    for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
-        let hit = trace_within(origin, direction, remaining);
-        let met = hit.kind != RAY_QUERY_INTERSECTION_NONE;
-        let span = select(remaining, hit.t, met);
-        if (inside && majorant > 0.0) {
-            through = through * md_survive(sigma, span);
-        }
-        if (!met) {
-            return through;
-        }
-        let inst = scene_instances[hit.instance_custom_data];
-        if (inst.solid != solid && (inst.flags & INSTANCE_CASTS_SHADOWS) != 0u) {
-            return vec3<f32>(0.0);
-        }
-        if (inst.solid == solid) {
-            inside = !inside;
-        }
-        remaining -= hit.t;
-        if (remaining <= 0.0) {
-            return through;
-        }
-        let raw = hit_place(hit);
-        let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
-        origin = offset_at(raw.position, -g, raw.magnitude);
-    }
-    return vec3<f32>(0.0);
-}
-
-// What a collision in a medium whose surface bends nothing gathers
-// directly (medium_direct_light, ic:4123): one draw of the whole sky seen
-// from `at` (sample_from), and one lamp chosen by power - not down the
-// hierarchy, a point in a medium having no normal to cull by - each
-// weighed by the phase function towards it and by what of the medium lies
-// between; the sky's share against the phase function's density, the
-// lamp's whole. Before the path's throughput.
-struct MediumLit {
-    sky: vec3<f32>,
-    lights: vec3<f32>,
-};
-
-fn medium_light(s: ptr<function, Sampler>, at: vec3<f32>, forward: vec3<f32>, sigma: vec3<f32>, g: f32, solid: u32) -> MediumLit {
-    var lit = MediumLit(vec3<f32>(0.0), vec3<f32>(0.0));
-    let u = sampler_light_sample(s);
-    let finite = dome_finite();
-    let e = env_sample_sky(vec3<f32>(0.0), u);
-    if (e.ok) {
-        var towards = e.direction;
-        var pdf = e.pdf;
-        var reach = frame.shadow_far;
-        var ok = true;
-        if (finite) {
-            let seen = dome_from_centre(at, e.direction);
-            ok = seen.ok;
-            towards = seen.direction;
-            pdf = e.pdf * seen.jacobian;
-            reach = seen.distance * (1.0 - 1e-3);
-        }
-        if (ok && pdf > 0.0 && any(e.radiance != vec3<f32>(0.0))) {
-            var through = vec3<f32>(1.0);
-            if (frame.shadows != 0u) {
-                through = medium_transmittance(at, towards, reach, solid, sigma);
-            }
-            let phase = md_phase(md_dot(forward, towards), g);
-            lit.sky = (e.radiance * through) * cy_div(cy_exact(phase * mis_power(pdf, phase)), pdf);
-        }
-    }
-    if (FEATURE_LAMPS && frame.light_count > 0u) {
-        let choice = lamps_select(frame.light_count, sampler_light_select(s));
-        if (choice.ok) {
-            let light = scene_lights[choice.index];
-            // Light linking, by the medium's part.
-            if (lamp_lights(light, solid)) {
-                let d = light_sample(light, at, sampler_light_sample(s));
-                if (d.ok && light_has(light, LF_DIFFUSE) && any(d.radiance != vec3<f32>(0.0)) && (d.is_delta || d.pdf > 0.0)) {
-                    let density = select(d.pdf * choice.probability, choice.probability, d.is_delta);
-                    var through = vec3<f32>(1.0);
-                    if (frame.shadows != 0u && light_has(light, LF_SHADOW)) {
-                        let reach = select(d.distance * (1.0 - 1e-3), frame.shadow_far, d.infinite);
-                        through = medium_transmittance(at, d.direction, reach, solid, sigma);
-                    }
-                    lit.lights = (d.radiance * through) * cy_div(md_phase(md_dot(forward, d.direction), g), density);
-                }
-            }
-        }
-    }
-    return lit;
 }
 
 // The colour a volume lets through, raised to `exponent` channel by
@@ -806,6 +698,35 @@ struct Visibility {
 // a cutout's hole the rest; crossing_opacity). One ray query either way,
 // for the code's size.
 fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>, blockers: u32) -> Visibility {
+    return shadow_walk(glass_in, shadow_ray(from_point, from_normal, to, to_normal), false, NO_SOLID, vec3<f32>(0.0), blockers);
+}
+
+// A shadow ray: where it sets out, its way and how far it goes.
+struct ShadowRay {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+    reach: f32,
+};
+
+// intersect.rs's shadow_ray: both ends offset, stopped just short of the
+// aim.
+fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> ShadowRay {
+    let start = offset_at(from_point, from_normal, 0.0);
+    let aim = offset_at(to, to_normal, 0.0);
+    let delta = aim - start;
+    let distance = sqrt(dot(delta, delta));
+    let direction = select(from_normal, delta / distance, distance > 0.0);
+    return ShadowRay(start, direction, distance * (1.0 - 1e-4));
+}
+
+// shadow_through's walk along `ray`; or, `in_medium`, medium_transmittance
+// (ic:4186) through the uniform medium of extinction `sigma` of the part
+// `part` the ray sets out inside: its transmittance over every stretch
+// inside, its own surface passed (it bends nothing), and a part that casts
+// no shadow; anything else in the way of the parts that cast lamp
+// `blockers`' shadow stops it (the part is the instance here, scene.rs, as
+// the processor keys its media). One walk for both, for the code's size.
+fn shadow_walk(glass_in: u32, ray: ShadowRay, in_medium: bool, part: u32, sigma: vec3<f32>, blockers: u32) -> Visibility {
     var glass = glass_in;
     if (!FEATURE_PANES || (frame.glass_flags & SCENE_PANES) == 0u) {
         glass = GLASS_SOLID;
@@ -817,26 +738,27 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
         lamp = scene_lights[blockers];
         linked = (lamp.flags & (LF_SHADOW_LINKS_ONLY | LF_SHADOW_LINKS_ALL_BUT)) != 0u;
     }
-    let solid = glass == GLASS_SOLID && (!FEATURE_CUTOUTS || (frame.glass_flags & SCENE_CUTOUTS) == 0u) && !linked;
+    let solid = glass == GLASS_SOLID && (!FEATURE_CUTOUTS || (frame.glass_flags & SCENE_CUTOUTS) == 0u) && !linked && !in_medium;
     let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
     let mask = select(MASK_SURFACE, MASK_SHADOW, solid);
-    let start = offset_at(from_point, from_normal, 0.0);
-    let aim = offset_at(to, to_normal, 0.0);
-    let delta = aim - start;
-    let distance = sqrt(dot(delta, delta));
-    let direction = select(from_normal, delta / distance, distance > 0.0);
-    var origin = start;
-    var remaining = distance * (1.0 - 1e-4);
+    let direction = ray.direction;
+    var origin = ray.origin;
+    var remaining = ray.reach;
     var through = vec3<f32>(1.0);
     var bent = false;
     var along = 0.0;
     var inside = NO_SOLID;
     var since = 0.0;
+    let majorant = max(max(sigma.x, sigma.y), sigma.z);
+    var in_part = true;
     for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
         var rq: ray_query;
         rayQueryInitialize(&rq, scene_tlas, RayDesc(flags, mask, 0.0, remaining, origin, direction));
         rayQueryProceed(&rq);
         let hit = rayQueryGetCommittedIntersection(&rq);
+        if (in_medium && in_part && majorant > 0.0) {
+            through = through * md_survive(sigma, select(remaining, hit.t, hit.kind != RAY_QUERY_INTERSECTION_NONE));
+        }
         if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
             return Visibility(through, bent);
         }
@@ -849,7 +771,14 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
         let m = scene_materials[inst.material];
         let raw = hit_place(hit);
         let bends = (m.glass & GLASS_BENDS) != 0u;
-        if ((m.glass & GLASS_PANE) != 0u && pane_passes(glass, bends) && !open) {
+        if (in_medium) {
+            if (inst.solid != part && !open) {
+                return Visibility(vec3<f32>(0.0), false);
+            }
+            if (inst.solid == part) {
+                in_part = !in_part;
+            }
+        } else if ((m.glass & GLASS_PANE) != 0u && pane_passes(glass, bends) && !open) {
             through *= pane_crossing(m, dot(direction, raw.geometric));
             bent = bent || bends;
             if ((m.glass & GLASS_PANE_VOLUME) != 0u) {
@@ -864,10 +793,10 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
         } else if (!open) {
             through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);
         }
-        if (max(max(through.x, through.y), through.z) < 1e-3) {
+        if (!in_medium && max(max(through.x, through.y), through.z) < 1e-3) {
             return Visibility(vec3<f32>(0.0), false);
         }
-        remaining -= max(hit.t, 1e-6);
+        remaining -= select(max(hit.t, 1e-6), hit.t, in_medium);
         if (remaining <= 0.0) {
             return Visibility(through, bent);
         }
@@ -1863,6 +1792,46 @@ fn left_to_bounces(pdf: f32, seen_in: f32) -> vec3<f32> {
 // side the light is on; the light through clear glass is tinted, and
 // through glass that bends light the sky's and the glowing triangles' is
 // shared with the bounces that see it.
+//
+// Or a collision's (medium_direct_light, ic:4123), in a medium whose
+// surface bends nothing: one draw of the whole sky seen from the point
+// (sample_from), and one lamp chosen by power - not down the hierarchy, a
+// point in a medium having no normal to cull by - each weighed by the phase
+// function towards it and by what of the medium lies between
+// (shadow_walk's medium_transmittance); the sky's share against the phase
+// function's density, the lamp's whole; each clamped on its own, after the
+// path's throughput. One call of this for both (path's, after the vertex
+// is shaded), for the kernel's size: the second call a collision had made
+// took the whole kernel's cold compile from 40 s to over 300.
+//
+// What a vertex leaves for it: at a surface, its stack, frame, the way out,
+// the surface, its instance, whether it transmits and the sky it faces; at
+// a collision (`medium`), the point (`surf.position`), the way the path was
+// going (`wo`, in the world), the medium's part (`instance`), its
+// extinction and anisotropy. The path's throughput and the clamp's ceiling
+// where it was taken.
+struct LightSampleAt {
+    wanted: bool,
+    medium: bool,
+    bsdf: OpenPbr,
+    f: Frame,
+    wo: vec3<f32>,
+    surf: Surface,
+    instance: u32,
+    transmissive: bool,
+    facing: vec3<f32>,
+    throughput: vec3<f32>,
+    ceiling: f32,
+    sigma: vec3<f32>,
+    g: f32,
+    // Carrying wavelengths: the path's four at the vertex, whether its
+    // hero carries on alone, and whether the surface disperses light
+    // (ic:2172-2193).
+    tp4: vec4<f32>,
+    alone: bool,
+    disperses: bool,
+};
+
 // The light samples' sum, and each source's apart - the sky's, the lamp's,
 // the glowing triangle's, as the stack's value and what scales it, whose
 // product is the source's light - with whether it came through the surface
@@ -1877,7 +1846,15 @@ struct Direct {
     through: u32,
 };
 
-fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool, facing: vec3<f32>) -> Direct {
+fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
+    let bsdf = here.bsdf;
+    let f = here.f;
+    let wo = here.wo;
+    let surf = here.surf;
+    let instance = here.instance;
+    let transmissive = here.transmissive;
+    let facing = here.facing;
+    let medium = FEATURE_SCATTERING && here.medium;
     var direct = vec3<f32>(0.0);
     var parts: Direct;
     for (var source = 0u; source < 3u; source++) {
@@ -1897,7 +1874,7 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
         var glow_point = vec3<f32>(0.0);
         var glow_normal = vec3<f32>(0.0);
         if (glow) {
-            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {
+            if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {
                 continue;
             }
             // Chosen from here down the tree, on the bounce's light choice
@@ -1926,7 +1903,7 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             glow_point = e.position;
             glow_normal = e.normal;
         } else if (sky) {
-            if (frame.env_intensity <= 0.0) {
+            if (!medium && frame.env_intensity <= 0.0) {
                 continue;
             }
             // With a dome of a size, the whole sky drawn from its centre and
@@ -1962,7 +1939,7 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             }
             // The lamp chosen from this point, facing the side the path is on
             // (both sides for a surface that transmits), and its own variates.
-            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u, surf.position, surf.geometric, transmissive, sampler_light_select(s));
+            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u && !medium, surf.position, surf.geometric, transmissive, sampler_light_select(s));
             if (!choice.ok) {
                 continue;
             }
@@ -1980,47 +1957,70 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             shadow = light_has(light, LF_SHADOW);
             p_select = choice.probability;
             blockers = choice.index;
+            // A collision's lamp lights by its diffuse visibility, with a
+            // density.
+            if (medium && !(diffuse && (draw.is_delta || draw.pdf > 0.0))) {
+                continue;
+            }
             // Shared with the bounces that meet it (ic:4686).
-            is_shared = (frame.lamp_flags & LAMPS_SEEN) != 0u && frame.shadows != 0u && !draw.is_delta && lamp_met_by_bounces(light, instance);
+            is_shared = !medium && (frame.lamp_flags & LAMPS_SEEN) != 0u && frame.shadows != 0u && !draw.is_delta && lamp_met_by_bounces(light, instance);
         }
-        // Lit from behind only through a surface that transmits.
+        // Lit from behind only through a surface that transmits. A
+        // collision's stack is the phase function; the surface's
+        // evaluation runs for it too, of an empty stack, and is left.
         let below = dot(draw.direction, surf.geometric) <= 0.0;
-        if (below && !transmissive) {
+        if (!medium && below && !transmissive) {
             continue;
         }
         let wi = to_local(f, draw.direction);
-        if (wi.z == 0.0 || (wi.z < 0.0 && !transmissive)) {
+        if (!medium && (wi.z == 0.0 || (wi.z < 0.0 && !transmissive))) {
             continue;
         }
         let value = openpbr_eval_selective(bsdf, wo, wi, diffuse, specular);
-        if (all(value == vec3<f32>(0.0))) {
+        if (!medium && all(value == vec3<f32>(0.0))) {
             continue;
         }
         // The stack's density, and its seeing lobes', in one pass.
         let densities = openpbr_densities(bsdf, wo, wi, SEEN_UP_TO, PASSED_FROM);
+        let phase = md_phase(md_dot(wo, draw.direction), here.g);
         let bsdf_pdf = select(densities.x, 0.0, draw.is_delta);
         var visibility = vec3<f32>(1.0);
         var bent = false;
         if (frame.shadows != 0u && shadow) {
             // Just short of a lamp; past everything for the sky or a sun;
-            // out of the side the light is on.
+            // out of the side the light is on. From a collision, from the
+            // point itself, through the medium.
             var reach = frame.shadow_far;
             if (!draw.infinite) {
                 reach = draw.distance * (1.0 - 1e-3);
             }
-            let leaving = select(surf.geometric, -surf.geometric, below);
-            var aim = surf.position + draw.direction * reach;
-            var aim_normal = -draw.direction;
-            if (glow) {
-                aim = glow_point;
-                aim_normal = glow_normal;
+            var ray = ShadowRay(surf.position, draw.direction, reach);
+            if (!medium) {
+                let leaving = select(surf.geometric, -surf.geometric, below);
+                var aim = surf.position + draw.direction * reach;
+                var aim_normal = -draw.direction;
+                if (glow) {
+                    aim = glow_point;
+                    aim_normal = glow_normal;
+                }
+                ray = shadow_ray(offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
             }
-            let v = shadow_through(frame.shadow_glass, offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal, blockers);
-            if (all(v.through == vec3<f32>(0.0))) {
+            let v = shadow_walk(frame.shadow_glass, ray, medium, instance, here.sigma, blockers);
+            if (!medium && all(v.through == vec3<f32>(0.0))) {
                 continue;
             }
             visibility = v.through;
             bent = v.bent;
+        }
+        if (medium) {
+            var lit: vec3<f32>;
+            if (sky) {
+                lit = (draw.radiance * visibility) * cy_div(cy_exact(phase * mis_power(draw.pdf, phase)), draw.pdf);
+            } else {
+                lit = (draw.radiance * visibility) * cy_div(phase, select(draw.pdf * p_select, p_select, draw.is_delta));
+            }
+            direct += clamp_light(here.throughput * lit, here.ceiling);
+            continue;
         }
         var scale: vec3<f32>;
         if (!(source == 1u)) {
@@ -2463,7 +2463,7 @@ fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
 // lamps, the split at the first plain glass the camera sees or the bounce,
 // the media crossed, whether it sees, the catcher's view and Russian
 // roulette (ic:1862-2562), off the material `shaded` (material_at).
-fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>) -> u32 {
+fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>, light: ptr<function, LightSampleAt>) -> u32 {
     let bounce = (*st).bounce;
     if (bounce >= (*st).max_bounces) {
         return SHADE_END;
@@ -2606,28 +2606,10 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             (*st).receiver_normal = surf.geometric;
             (*st).receiver_two_sided = transmissive;
         }
-        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing);
-        if (FEATURE_SPECTRAL && spectral_on) {
-            // Through a dispersive surface the light came by the hero's
-            // index, and is the hero's alone (ic:2172-2193).
-            // The sum's colour, or each source's - the sky's, the lamp's, the
-            // glowing triangle's, in that order - from one place.
-            let apart = disperses && !(*st).alone;
-            let alone = spectral_hero_alone((*st).tp4);
-            var contribution = vec4<f32>(0.0);
-            for (var k = 0u; k < (select(1u, 3u, apart) | cy_zero); k++) {
-                var lit = direct.total;
-                var by = (*st).tp4;
-                if (apart) {
-                    lit = cy_exact3(direct.values[k] * direct.scales[k]);
-                    by = select((*st).tp4, alone, (direct.through & (1u << k)) != 0u);
-                }
-                contribution = contribution + cy_exact4(by * spectral_of(lit, true));
-            }
-            (*st).rad4 += cy_exact4(clamp_light4(contribution, light_ceiling((*st).specular_chain, bounce)));
-        } else {
-            (*st).radiance += clamp_light((*st).throughput * direct.total, light_ceiling((*st).specular_chain, bounce));
-        }
+        // Taken by path's one call of direct_light as the vertex is left: its
+        // draws are the bounce's own dimensions, and nothing between reads
+        // the radiance or meets a crossing.
+        *light = LightSampleAt(true, false, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing, (*st).throughput, light_ceiling((*st).specular_chain, bounce), vec3<f32>(0.0), 0.0, (*st).tp4, (*st).alone, disperses);
     }
 
     // The split (ic:2267-2318): at the first plain glass the camera ray
@@ -2712,33 +2694,36 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             return shade_ends(split, splitting);
         }
         (*st).eta_scale *= sample.eta * sample.eta;
-        if (FEATURE_SUBSURFACE && chosen.slot == LOBE_SUBSURFACE && bsdf.subsurface_walk) {
-            // Through the subsurface lobe: a walk begins under the surface
-            // (of the shaded material), guided back towards this point and
-            // out through this surface; or the one the path was on ends
-            // (ic:2388-2395).
-            // Its medium's albedo the shaded material's: worked out again
-            // where a program changed its colour (walk_coefficients).
-            var albedo = material.subsurface_albedo.xyz;
-            let c = material.subsurface_color.xyz;
-            if (any(c != scene_materials[inst.material].subsurface_color.xyz)) {
-                let fit = material.walk_fit;
-                let ef = material.walk_fit_ef;
-                albedo = vec3<f32>(md_walk_albedo(c.x, fit, ef.x, ef.y), md_walk_albedo(c.y, fit, ef.x, ef.y), md_walk_albedo(c.z, fit, ef.x, ef.y));
+        // Through the subsurface lobe: a walk begins under the surface (of
+        // the shaded material), guided back towards this point and out
+        // through this surface; or the one the path was on ends
+        // (ic:2388-2395). Else a boundary's medium entered or left. One
+        // crossing of the stack for both.
+        let walking = FEATURE_SUBSURFACE && chosen.slot == LOBE_SUBSURFACE && bsdf.subsurface_walk;
+        if (walking || boundary) {
+            // The walk's medium's albedo the shaded material's: worked out
+            // again where a program changed its colour (walk_coefficients).
+            var albedo = vec3<f32>(0.0);
+            if (walking) {
+                albedo = material.subsurface_albedo.xyz;
+                let c = material.subsurface_color.xyz;
+                if (any(c != scene_materials[inst.material].subsurface_color.xyz)) {
+                    let fit = material.walk_fit;
+                    let ef = material.walk_fit_ef;
+                    albedo = md_walk_albedo(c, fit, ef.x, ef.y);
+                }
             }
-            var media = (*st).media;
-            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, albedo);
-            (*st).media = media;
-            (*st).guide = md_no_guide();
-            if (media_walking_in(media, inst.solid)) {
-                (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
-            }
-        } else if (boundary) {
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
-            media_cross(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material);
+            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, walking, albedo);
             (*st).media = media;
+            if (walking) {
+                (*st).guide = md_no_guide();
+                if (media_walking_in(media, inst.solid)) {
+                    (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
+                }
+            }
         }
     }
     if (FEATURE_SPECTRAL && spectral_on) {
@@ -3439,10 +3424,19 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         cut_wanted = false;
         var seg_hit: RayIntersection;
         // A walk's flight drawn before the segment's ray was traced: whether
-        // it was, each channel's chance and the optical depth (ic:975).
+        // it was, each channel's chance and the optical depth (ic:975);
+        // whether the ray was traced only as far as it goes; and, where it
+        // was traced in full, the sampler before the draws, put back if the
+        // ray then leaves the part, where the processor draws none.
         var seg_drawn = false;
+        var seg_short = false;
         var seg_chance = vec3<f32>(0.0);
         var seg_depth = 0.0;
+        var seg_pre_s: Sampler;
+        // The light sample of the vertex the segment ends at, or of a
+        // collision in a medium (`colliding`): direct_light's one call.
+        var light: LightSampleAt;
+        var colliding = false;
         var seg_st: PathState;
         var seg_s: Sampler;
         var hit_st: PathState;
@@ -3494,15 +3488,23 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     // flight before its ray is traced, and traces it only as
                     // far as the flight goes (ic:968-1001): most flights end
                     // inside the part. Not past a seeing bounce, whose lamps
-                    // are looked for along the whole ray.
+                    // are looked for along the whole ray: its flight is the
+                    // one the processor draws after the ray (ic:1110),
+                    // drawn here for one call site, the sampler put back
+                    // where the ray leaves the part.
                     seg_drawn = false;
+                    seg_short = false;
                     var reach = 3.0e38;
-                    if ((FEATURE_SCATTERING || FEATURE_SUBSURFACE) && !st.seen.valid) {
+                    if (FEATURE_SCATTERING || FEATURE_SUBSURFACE) {
                         let top = media_top(st.media, NO_MEDIUM);
                         if (top != NO_MEDIUM && medium_scatters(st.media.media[top])) {
-                            st.walk_steps += 1u;
-                            if (st.walk_steps > MAX_WALK_STEPS) {
-                                break;
+                            seg_short = !st.seen.valid;
+                            seg_pre_s = s;
+                            if (seg_short) {
+                                st.walk_steps += 1u;
+                                if (st.walk_steps > MAX_WALK_STEPS) {
+                                    break;
+                                }
                             }
                             let walk = medium_scattering(st.media.media[top]);
                             // Guided, on the walk the path came in on: its
@@ -3519,14 +3521,16 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, stretch, pick, along);
                             seg_chance = flight.chance;
                             seg_depth = flight.depth;
-                            reach = flight.depth;
-                            if (guiding && !st.guide.flown) {
-                                reach = max(flight.depth, md_guide_look(walk.sigma));
+                            if (seg_short) {
+                                reach = flight.depth;
+                                if (guiding && !st.guide.flown) {
+                                    reach = max(flight.depth, md_guide_look(walk.sigma));
+                                }
                             }
                             seg_drawn = true;
                         }
                     }
-                    if (have_next && !seg_drawn) {
+                    if (have_next && !seg_short) {
                         hit = next;
                         have_next = false;
                     } else {
@@ -3545,7 +3549,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // but a flight drawn and traced short that meets nothing
                 // collides where it ends, and meets no sky.
                 var sky = vec3<f32>(0.0);
-                if (!(seg_drawn && open)) {
+                if (!(seg_short && open)) {
                     sky = meet_and_escape(&st, hit);
                 }
                 if (cut_wanted) {
@@ -3555,6 +3559,13 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     cut_wanted = false;
                     want = WANT_CROSSING;
                     continue;
+                }
+                // The surface met, as Embree's resolve builds it: here, for
+                // the walk's look at the surface opposite as well as for the
+                // vertex below (one call, for the kernel's size).
+                var raw: Surface;
+                if (!open) {
+                    raw = surface_of(hit);
                 }
                 // ---- The random walk (ic:1066-1256) ----
                 // Inside a medium that scatters, the path may collide before
@@ -3567,9 +3578,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // in, and a turn by the phase function: the next segment.
                 if (FEATURE_SCATTERING || FEATURE_SUBSURFACE) {
                     let top = media_top(st.media, NO_MEDIUM);
-                    if (top != NO_MEDIUM && medium_scatters(st.media.media[top]) && (!open || seg_drawn)) {
+                    if (seg_drawn && open && !seg_short) {
+                        s = seg_pre_s;
+                    }
+                    if (top != NO_MEDIUM && medium_scatters(st.media.media[top]) && (!open || seg_short)) {
                         let medium = st.media.media[top];
-                        if (!seg_drawn) {
+                        if (!seg_short) {
                             st.walk_steps += 1u;
                             if (st.walk_steps > MAX_WALK_STEPS) {
                                 break;
@@ -3580,71 +3594,48 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         // before its first turn, the surface opposite, if the
                         // first flight saw it within ten mean free paths.
                         let guiding = FEATURE_SUBSURFACE && st.guide.solid != NO_WALK && st.guide.solid == medium.solid;
-                        var stretch = 1.0;
                         var turned = false;
                         if (guiding) {
                             if (!st.guide.flown) {
                                 var opposite = -1.0;
                                 if (!open && scene_instances[hit.instance_custom_data].solid == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
-                                    let d = md_dot(hit_place(hit).position - st.guide.entry, -st.guide.normal);
+                                    let d = md_dot(raw.position - st.guide.entry, -st.guide.normal);
                                     if (d > 0.0) {
                                         opposite = d;
                                     }
                                 }
                                 st.guide.opposite = opposite;
                             }
-                            stretch = md_guide_stretch(st.guide);
                             turned = st.guide.turned;
                         }
-                        var chance = seg_chance;
-                        var depth = seg_depth;
-                        if (!seg_drawn) {
-                            let pick = sampler_next_unstructured(&s);
-                            let along = sampler_next_unstructured(&s);
-                            let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, stretch, pick, along);
-                            chance = flight.chance;
-                            depth = flight.depth;
-                        }
+                        let chance = seg_chance;
+                        let depth = seg_depth;
                         // Where the surface ahead is: where the ray met it, or
                         // past a flight traced short, further than it goes.
                         let surface_at = select(hit.t, bitcast<f32>(0x7F800000u), open);
                         var lost = false;
                         let collided = depth < surface_at;
                         var t = st.throughput;
-                        if (collided) {
-                            let kept = md_survive(walk.sigma, depth);
-                            var density = 0.0;
-                            if (turned) {
-                                density = md_guided_density(st.guide, chance, walk.sigma, depth, true);
-                            } else {
-                                density = md_plain_density(chance, walk.sigma, kept, true);
-                            }
-                            if (density <= 0.0) {
-                                lost = true;
-                            } else {
-                                t = t * (cy_exact3(cy_exact3(walk.albedo * walk.sigma) * kept) * cy_div(1.0, density));
-                                let carried = max(max(t.x, t.y), t.z);
-                                if (carried < 0.1) {
-                                    if (sampler_next_unstructured(&s) >= carried) {
-                                        lost = true;
-                                    } else {
-                                        t = t * cy_div(1.0, carried);
-                                    }
+                        // What survives to the collision or the surface,
+                        // and the density of ending there: one call for
+                        // both.
+                        let end = md_walk_end(st.guide, turned, chance, walk.sigma, select(surface_at, depth, collided), collided);
+                        let kept = end.xyz;
+                        let density = end.w;
+                        if (density <= 0.0) {
+                            lost = true;
+                        } else if (collided) {
+                            t = t * (cy_exact3(cy_exact3(walk.albedo * walk.sigma) * kept) * cy_div(1.0, density));
+                            let carried = max(max(t.x, t.y), t.z);
+                            if (carried < 0.1) {
+                                if (sampler_next_unstructured(&s) >= carried) {
+                                    lost = true;
+                                } else {
+                                    t = t * cy_div(1.0, carried);
                                 }
                             }
                         } else {
-                            let kept = md_survive(walk.sigma, surface_at);
-                            var probability = 0.0;
-                            if (turned) {
-                                probability = md_guided_density(st.guide, chance, walk.sigma, surface_at, false);
-                            } else {
-                                probability = md_plain_density(chance, walk.sigma, kept, false);
-                            }
-                            if (probability <= 0.0) {
-                                lost = true;
-                            } else {
-                                t = t * (kept * cy_div(1.0, probability));
-                            }
+                            t = t * (kept * cy_div(1.0, density));
                         }
                         st.throughput = t;
                         if (lost || !(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {
@@ -3654,25 +3645,48 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             let at = st.origin + cy_exact3(st.direction * depth);
                             st.lit_from = NO_SOLID;
                             if (FEATURE_SCATTERING && !medium.doorway && abs(medium.ior - 1.0) < 1e-3 && st.media.len == 1u && (frame.lamp_flags & LAMPS_UNSAMPLED) == 0u) {
-                                let lit = medium_light(&s, at, st.direction, walk.sigma, walk.g, medium.solid);
-                                let ceiling = light_ceiling(st.specular_chain, st.bounce);
-                                st.radiance += clamp_light(st.throughput * lit.sky, ceiling) + clamp_light(st.throughput * lit.lights, ceiling);
+                                // Its light sample (medium_direct_light), by
+                                // direct_light's one call below: its draws
+                                // are the bounce's dimensions, the turn's the
+                                // open stream's.
+                                light.wanted = true;
+                                light.medium = true;
+                                light.surf.position = at;
+                                light.wo = st.direction;
+                                light.instance = medium.solid;
+                                light.facing = vec3<f32>(0.0);
+                                light.throughput = st.throughput;
+                                light.ceiling = light_ceiling(st.specular_chain, st.bounce);
+                                light.sigma = walk.sigma;
+                                light.g = walk.g;
                                 st.lit_from = medium.solid;
                                 st.sky_facing = vec3<f32>(0.0);
                             }
-                            var onward: vec3<f32>;
+                            // The turn: guided about the entry's normal, or
+                            // by the phase function about the way the path
+                            // was going; one call of the turn.
+                            // Through a local: naga's SPIR-V writer cannot
+                            // pass a pointer to a member.
+                            var guide = st.guide;
+                            var pick: vec3<f32>;
                             if (guiding) {
-                                // Through a local: naga's SPIR-V writer cannot
-                                // pass a pointer to a member.
-                                var guide = st.guide;
-                                onward = md_guide_turn(&guide, at, st.direction, walk.g, &s);
-                                st.guide = guide;
+                                pick = md_guide_pick(&guide, at, &s);
                             } else {
                                 let u0 = sampler_next_unstructured(&s);
                                 let u1 = sampler_next_unstructured(&s);
-                                onward = md_sample_phase(st.direction, walk.g, vec2<f32>(u0, u1));
+                                pick = vec3<f32>(u0, u1, 0.0);
                             }
+                            let about_normal = guiding && guide.guided;
+                            let axis = select(st.direction, guide.normal, about_normal);
+                            let cos_theta = select(md_phase_cosine(walk.g, pick.x), pick.z, about_normal);
+                            let onward = md_turned(axis, cos_theta, pick.y);
+                            // The phase function's density for the turn: the
+                            // sky's weight past the medium, and the guide's.
                             st.lit_pdf = md_phase(md_dot(st.direction, onward), walk.g);
+                            if (guiding) {
+                                md_guide_keep(&guide, onward, st.lit_pdf, pick.z);
+                                st.guide = guide;
+                            }
                             st.least_pdf = min(st.least_pdf, st.lit_pdf);
                             st.origin = at;
                             st.direction = onward;
@@ -3681,6 +3695,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             st.through_glass = GLASS_SOLID;
                             st.seen.valid = false;
                             ended = false;
+                            if (light.wanted) {
+                                colliding = true;
+                                phase = 1u;
+                                continue;
+                            }
                             break;
                         }
                     }
@@ -3726,7 +3745,6 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         break;
                     }
                 }
-                let raw = surface_of(hit);
                 let inst = scene_instances[hit.instance_custom_data];
                 // Anything but the lit medium's own surface is a new event,
                 // which its collision's light sample did not see past; a
@@ -3920,7 +3938,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // stream against its opacity, spending no bounce and changing no
             // weight. At the first one the camera sees, the pixel's coverage
             // is the light through every surface along the ray, averaged.
-            if (FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {
+            if (!colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {
                 let opacity = material.material.geometry_opacity;
                 let beyond = offset_at(raw.position, -surf.geometric, raw.magnitude);
                 if (st.bounce == 0u && !st.reflected && !mirror && settled < 0.0) {
@@ -3962,7 +3980,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // meets; a stand-in its face as its lamp lights, falling off to
             // its edges.
             let lit = (frame.glass_flags & SCENE_LIGHT_MATERIALS) != 0u || st.ray != RAY_DIFFUSE;
-            if (FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {
+            if (!colliding && FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {
                 // The light sample it is weighed against: the one taken where
                 // the path last scattered, of this point; or past glass a
                 // glossy bounce saw, the one taken there, of the glowing
@@ -4009,7 +4027,39 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 }
             }
             var off: SplitOff;
-            let shaded = shade_vertex(&st, &s, hit, surf, material, &off);
+            var shaded = SHADE_ON;
+            if (!colliding) {
+                light.wanted = false;
+                shaded = shade_vertex(&st, &s, hit, surf, material, &off, &light);
+            }
+            // The vertex's light sample (ic:2043-2224), or the collision's
+            // (ic:4123): direct_light's one call.
+            if (light.wanted) {
+                let direct = direct_light(&s, light);
+                if (FEATURE_SCATTERING && light.medium) {
+                    st.radiance += direct.total;
+                } else if (FEATURE_SPECTRAL && spectral_on) {
+                    // Through a dispersive surface the light came by the hero's
+                    // index, and is the hero's alone (ic:2172-2193).
+                    // The sum's colour, or each source's - the sky's, the lamp's,
+                    // the glowing triangle's, in that order - from one place.
+                    let apart = light.disperses && !light.alone;
+                    let alone = spectral_hero_alone(light.tp4);
+                    var contribution = vec4<f32>(0.0);
+                    for (var k = 0u; k < (select(1u, 3u, apart) | cy_zero); k++) {
+                        var lit = direct.total;
+                        var by = light.tp4;
+                        if (apart) {
+                            lit = cy_exact3(direct.values[k] * direct.scales[k]);
+                            by = select(light.tp4, alone, (direct.through & (1u << k)) != 0u);
+                        }
+                        contribution = contribution + cy_exact4(by * spectral_of(lit, true));
+                    }
+                    st.rad4 += cy_exact4(clamp_light4(contribution, light.ceiling));
+                } else {
+                    st.radiance += clamp_light(light.throughput * direct.total, light.ceiling);
+                }
+            }
             if (cut_wanted) {
                 st = hit_st;
                 s = hit_s;

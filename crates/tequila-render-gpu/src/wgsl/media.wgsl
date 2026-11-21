@@ -203,19 +203,26 @@ fn md_phase(cos_theta: f32, g_in: f32) -> f32 {
     return tex_div(1.0 - gg, cy_exact(cy_exact((4.0 * MD_PI) * d) * cy_sqrt(d)));
 }
 
-// sample_henyey_greenstein: a way on from `forward`, drawn by the phase
-// function of anisotropy `g` from `u`.
-fn md_sample_phase(forward: vec3<f32>, g: f32, u: vec2<f32>) -> vec3<f32> {
+// sample_henyey_greenstein's cosine to the way the light was going, drawn
+// by the phase function of anisotropy `g` from `u0`; the way on is
+// md_turned's about it, `u1` of a turn round.
+fn md_phase_cosine(g: f32, u0: f32) -> f32 {
     var cos_theta: f32;
     if (abs(g) < 1e-3) {
-        cos_theta = 1.0 - 2.0 * u.x;
+        cos_theta = 1.0 - 2.0 * u0;
     } else {
         let gg = cy_exact(g * g);
-        let s = tex_div(1.0 - gg, (1.0 - g) + cy_exact(cy_exact(2.0 * g) * u.x));
+        let s = tex_div(1.0 - gg, (1.0 - g) + cy_exact(cy_exact(2.0 * g) * u0));
         cos_theta = tex_div((1.0 + gg) - cy_exact(s * s), 2.0 * g);
     }
-    cos_theta = clamp(cos_theta, -1.0, 1.0);
-    return md_turned(forward, cos_theta, u.y);
+    return clamp(cos_theta, -1.0, 1.0);
+}
+
+// sample_henyey_greenstein: a way on from `forward`, drawn by the phase
+// function of anisotropy `g` from `u` (for the tests; the kernel turns
+// once, md_turned at its collision).
+fn md_sample_phase(forward: vec3<f32>, g: f32, u: vec2<f32>) -> vec3<f32> {
+    return md_turned(forward, md_phase_cosine(g, u.x), u.y);
 }
 
 // The way at `cos_theta` to `axis`, turned `turn` of a turn round it, in
@@ -264,32 +271,48 @@ fn md_walk_flight(throughput: vec3<f32>, albedo: vec3<f32>, sigma: vec3<f32>, st
     return WalkFlight(chance, depth);
 }
 
-// What survives `t` of a medium of extinction `sigma`, channel by channel.
+// What survives `t` of a medium of extinction `sigma`, channel by channel:
+// the three by one call of the exponential, for the kernel's size (each
+// lane chosen by a select: a vector's lane written by a run-time index has
+// gone to the wrong lane on this driver).
 fn md_survive(sigma: vec3<f32>, t: f32) -> vec3<f32> {
-    return vec3<f32>(md_exp(cy_exact(-sigma.x * t)), md_exp(cy_exact(-sigma.y * t)), md_exp(cy_exact(-sigma.z * t)));
-}
-
-// The density of a plain flight - the phase function's turn, the
-// extinction as it is - over the channels' chances: of ending in a
-// collision at the end of `kept` (`collided`), or of flying past it.
-fn md_plain_density(chance: vec3<f32>, sigma: vec3<f32>, kept: vec3<f32>, collided: bool) -> f32 {
-    if (collided) {
-        return (cy_exact(cy_exact(chance.x * sigma.x) * kept.x) + cy_exact(cy_exact(chance.y * sigma.y) * kept.y)) + cy_exact(cy_exact(chance.z * sigma.z) * kept.z);
+    var kept = vec3<f32>(0.0);
+    for (var c = 0u; c < 3u; c++) {
+        let s = select(select(sigma.z, sigma.y, c == 1u), sigma.x, c == 0u);
+        let e = md_exp(cy_exact(-s * t));
+        kept = select(kept, vec3<f32>(e), vec3<bool>(c == 0u, c == 1u, c == 2u));
     }
-    return (cy_exact(chance.x * kept.x) + cy_exact(chance.y * kept.y)) + cy_exact(chance.z * kept.z);
+    return kept;
 }
 
 // walk_coefficients' albedo for one channel's colour, the walk's fit at
 // its anisotropy worked out on the processor (GpuMaterial's walk_fit: a, b,
 // c, d, and in walk_fit_ef e and f): the single-scattering albedo a walk
 // needs to give `colour` back (Chiang, Kutz and Burley's fit, as Cycles'
-// subsurface_random_walk_remap has it).
-fn md_walk_albedo(colour: f32, fit: vec4<f32>, e: f32, f: f32) -> f32 {
-    let albedo = clamp(colour, 0.0, 1.0);
-    let blend = md_pow(albedo, 0.25);
-    let near = cy_exact(cy_exact((1.0 - blend) * fit.x) * md_pow(md_atan(cy_exact(fit.y * albedo)), fit.z));
-    let far = cy_exact(cy_exact(blend * fit.w) * md_pow(md_atan(cy_exact(e * albedo)), f));
-    return clamp(near + far, 0.0, 0.999999);
+// subsurface_random_walk_remap has it). The three channels, and each one's
+// three powers, by one call of the power and one of the arctangent, for
+// the kernel's size.
+fn md_walk_albedo(colour: vec3<f32>, fit: vec4<f32>, e: f32, f: f32) -> vec3<f32> {
+    var out = vec3<f32>(0.0);
+    var blend = 0.0;
+    var near = 0.0;
+    for (var k = 0u; k < 9u; k++) {
+        let c = k / 3u;
+        let term = k - 3u * c;
+        let albedo = clamp(select(select(colour.z, colour.y, c == 1u), colour.x, c == 0u), 0.0, 1.0);
+        // blend = albedo^0.25; then atan(b albedo)^c and atan(e albedo)^f.
+        let turned = md_atan(cy_exact(select(fit.y, e, term == 2u) * albedo));
+        let raised = md_pow(select(turned, albedo, term == 0u), select(select(f, fit.z, term == 1u), 0.25, term == 0u));
+        if (term == 0u) {
+            blend = raised;
+        } else if (term == 1u) {
+            near = cy_exact(cy_exact((1.0 - blend) * fit.x) * raised);
+        } else {
+            let far = cy_exact(cy_exact(blend * fit.w) * raised);
+            out = select(out, vec3<f32>(clamp(near + far, 0.0, 0.999999)), vec3<bool>(c == 0u, c == 1u, c == 2u));
+        }
+    }
+    return out;
 }
 
 // ---- The guided walk (WalkGuide) -----------------------------------------
@@ -337,9 +360,17 @@ fn md_guide_new(solid: u32, entry: vec3<f32>, normal: vec3<f32>, albedo: vec3<f3
         return guide;
     }
     let exponent = (2.44294 - cy_exact(0.0215813 * alpha)) + tex_div(0.578637, alpha);
-    let diffusion = tex_div(1.0, cy_sqrt(1.0 - md_pow(alpha, exponent)));
+    // alpha^exponent and |g|^(1/8) by one call of the power.
+    var raised = 0.0;
+    var g_root = 0.0;
+    for (var k = 0u; k < 2u; k++) {
+        let p = md_pow(select(alpha, abs(g), k == 1u), select(exponent, 0.125, k == 1u));
+        raised = select(raised, p, k == 0u);
+        g_root = select(g_root, p, k == 1u);
+    }
+    let diffusion = tex_div(1.0, cy_sqrt(1.0 - raised));
     let phase_log = md_ln(tex_div(diffusion + 1.0, diffusion - 1.0));
-    let share = 1.0 - max(md_pow(abs(g), 0.125), 0.5);
+    let share = 1.0 - max(g_root, 0.5);
     if (!(diffusion > 1.0 && diffusion <= 3.4e38 && phase_log > 0.0 && phase_log <= 3.4e38 && share > 0.0)) {
         return guide;
     }
@@ -374,73 +405,154 @@ fn md_dwivedi(guide: WalkGuide, mu: f32) -> f32 {
     return tex_div(tex_div(1.0, cy_exact((guide.diffusion - mu) * guide.phase_log)), MD_TAU);
 }
 
-// WalkGuide::turn at `at`, the walk heading `forward`: guided by Dwivedi's
-// distribution about the entry's normal (mirrored across to the surface
-// opposite), or by the phase function of anisotropy `g`, on the open
-// stream; the way on, the turn kept for the flight after it.
-fn md_guide_turn(guide: ptr<function, WalkGuide>, at: vec3<f32>, forward: vec3<f32>, g: f32, s: ptr<function, Sampler>) -> vec3<f32> {
+// WalkGuide::turn at `at`, in two halves about the one turn a walk's
+// collision makes (md_turned, called once, for the kernel's size). The
+// first draws whether the turn is guided by Dwivedi's distribution about
+// the entry's normal (mirrored across to the surface opposite) or by the
+// phase function, on the open stream, and the two variates of the turn:
+// (u0, u1) and, guided, the cosine to the normal; the guide keeps which.
+// Its numbers drawn first, in the processor's order (the coin for a guided
+// turn, the coin across where there is a surface opposite, the turn's
+// two), then its two exponentials by one call, in a loop that draws none.
+fn md_guide_pick(guide: ptr<function, WalkGuide>, at: vec3<f32>, s: ptr<function, Sampler>) -> vec3<f32> {
     (*guide).flown = true;
-    let guided = sampler_next_unstructured(s) < (*guide).share;
-    var backward_fraction = 0.0;
     let opposite = (*guide).opposite;
     let has_opposite = opposite > 0.0;
+    let v = (*guide).diffusion;
+    let guided_coin = sampler_next_unstructured(s);
+    var across_coin = 0.0;
     if (has_opposite) {
-        let x = clamp(md_dot(at - (*guide).entry, -(*guide).normal), 0.0, opposite);
-        backward_fraction = tex_div(1.0, 1.0 + md_exp(tex_div(opposite - 2.0 * x, (*guide).diffusion)));
-    }
-    var backward = false;
-    if (has_opposite) {
-        backward = sampler_next_unstructured(s) < backward_fraction;
+        across_coin = sampler_next_unstructured(s);
     }
     let u0 = sampler_next_unstructured(s);
     let u1 = sampler_next_unstructured(s);
-    let v = (*guide).diffusion;
-    var next: vec3<f32>;
-    var cos_theta: f32;
+    let x = clamp(md_dot(at - (*guide).entry, -(*guide).normal), 0.0, opposite);
+    // e^((d - 2x) / v) for the share across, e^(-u0 ln((v + 1) / (v - 1)))
+    // for the guided cosine.
+    var e = vec2<f32>(0.0);
+    for (var k = 0u; k < 2u; k++) {
+        let across = k == 0u;
+        let r = md_exp(select(cy_exact(-u0 * (*guide).phase_log), tex_div(opposite - 2.0 * x, v), across));
+        e = select(vec2<f32>(e.x, r), vec2<f32>(r, e.y), across);
+    }
+    var backward_fraction = 0.0;
+    var backward = false;
+    if (has_opposite) {
+        backward_fraction = tex_div(1.0, 1.0 + e.x);
+        backward = across_coin < backward_fraction;
+    }
+    let guided = guided_coin < (*guide).share;
+    var cos_theta = 0.0;
     if (guided) {
-        cos_theta = clamp(v - cy_exact((v + 1.0) * md_exp(cy_exact(-u0 * (*guide).phase_log))), -1.0, 1.0);
+        cos_theta = clamp(v - cy_exact((v + 1.0) * e.y), -1.0, 1.0);
         if (backward) {
             cos_theta = -cos_theta;
         }
-        next = md_turned((*guide).normal, cos_theta, u1);
-    } else {
-        next = md_sample_phase(forward, g, vec2<f32>(u0, u1));
-        cos_theta = md_dot(next, (*guide).normal);
     }
-    let phase = max(md_phase(md_dot(forward, next), g), 1e-12);
-    (*guide).turned = true;
     (*guide).guided = guided;
     (*guide).backward = backward;
     (*guide).backward_fraction = backward_fraction;
-    (*guide).forward_factor = tex_div(md_dwivedi(*guide, cos_theta), phase);
-    (*guide).backward_factor = tex_div(md_dwivedi(*guide, -cos_theta), phase);
-    (*guide).forward_stretch = 1.0 - tex_div(cos_theta, v);
-    (*guide).backward_stretch = 1.0 + tex_div(cos_theta, v);
+    return vec3<f32>(u0, u1, cos_theta);
+}
+
+// The second half: the turn to `next` kept for the flight after it, by its
+// cosine to the entry's normal and the phase function's density for the
+// turn (`density`, henyey_greenstein of the way the path was going and
+// `next`, which the walk keeps too). Out and across by one loop.
+fn md_guide_keep(guide: ptr<function, WalkGuide>, next: vec3<f32>, density: f32, guided_cos: f32) {
+    let v = (*guide).diffusion;
+    let cos_theta = select(md_dot(next, (*guide).normal), guided_cos, (*guide).guided);
+    let phase = max(density, 1e-12);
+    (*guide).turned = true;
+    for (var k = 0u; k < 2u; k++) {
+        let across = k == 1u;
+        // Dwivedi's density at the cosine, out or mirrored across, against
+        // the phase function's; the flight's extinction stretched by it
+        // (-x / v is x / v negated exactly).
+        let mu = select(cos_theta, -cos_theta, across);
+        let factor = tex_div(md_dwivedi(*guide, mu), phase);
+        let stretch = 1.0 - tex_div(mu, v);
+        if (across) {
+            (*guide).backward_factor = factor;
+            (*guide).backward_stretch = stretch;
+        } else {
+            (*guide).forward_factor = factor;
+            (*guide).forward_stretch = stretch;
+        }
+    }
+}
+
+// WalkGuide::turn whole (for the tests): the way on, the turn kept.
+fn md_guide_turn(guide: ptr<function, WalkGuide>, at: vec3<f32>, forward: vec3<f32>, g: f32, s: ptr<function, Sampler>) -> vec3<f32> {
+    let pick = md_guide_pick(guide, at, s);
+    var next: vec3<f32>;
+    if ((*guide).guided) {
+        next = md_turned((*guide).normal, pick.z, pick.y);
+    } else {
+        next = md_turned(forward, md_phase_cosine(g, pick.x), pick.y);
+    }
+    md_guide_keep(guide, next, md_phase(md_dot(forward, next), g), pick.z);
     return next;
 }
 
-// A flight's own density at `t` in one channel of extinction `s`: of a
-// collision there, or of flying past it.
-fn md_flight(s: f32, t: f32, collided: bool) -> f32 {
-    let past = md_exp(cy_exact(-s * t));
+// A flight's own density in one channel of extinction `s`, from what
+// survives it (`past`): of a collision at its end, or of flying past it.
+fn md_flight(s: f32, past: f32, collided: bool) -> f32 {
     return select(past, cy_exact(s * past), collided);
 }
 
 // GuidedTurn::density: the density with which the flight after the turn
 // ends at `t`, by every way it could have been drawn - the phase function
-// and the extinction as it is, or guided out or across with the extinction
-// stretched - in each channel, over the channels' chances.
-fn md_guided_density(guide: WalkGuide, chance: vec3<f32>, sigma: vec3<f32>, t: f32, collided: bool) -> f32 {
+// and the extinction as it is (`kept`, what survives `t` of it), or guided
+// out or across with the extinction stretched - in each channel, over the
+// channels' chances (md_walk_end has the kernel's).
+fn md_guided_density(guide: WalkGuide, chance: vec3<f32>, sigma: vec3<f32>, kept: vec3<f32>, t: f32, collided: bool) -> f32 {
+    return md_walk_end(guide, true, chance, sigma, t, collided).w;
+}
+
+// Where a flight ends, at `t`: what survives it in each channel (xyz), and
+// the density of ending there (w) - a collision (`collided`) or the surface
+// reached - after a plain turn (the phase function's, the extinction as it
+// is) or a guided one (`turned`, GuidedTurn::density). Every exponential
+// by one call, in one loop: each channel's flight as it is, then
+// stretched out and across.
+fn md_walk_end(guide: WalkGuide, turned: bool, chance: vec3<f32>, sigma: vec3<f32>, t: f32, collided: bool) -> vec4<f32> {
+    let across_too = turned && guide.backward_fraction > 0.0;
+    var kept = vec3<f32>(0.0);
     var total = 0.0;
-    for (var c = 0u; c < 3u; c++) {
-        let s = select(select(sigma.z, sigma.y, c == 1u), sigma.x, c == 0u);
-        let p = select(select(chance.z, chance.y, c == 1u), chance.x, c == 0u);
-        var guided = cy_exact(guide.forward_factor * md_flight(cy_exact(s * guide.forward_stretch), t, collided));
-        if (guide.backward_fraction > 0.0) {
-            guided = cy_exact(guided * (1.0 - guide.backward_fraction))
-                + cy_exact(cy_exact(guide.backward_fraction * guide.backward_factor) * md_flight(cy_exact(s * guide.backward_stretch), t, collided));
+    var out_flight = 0.0;
+    for (var k = 0u; k < 9u; k++) {
+        let c = k / 3u;
+        let kind = k - 3u * c;
+        if ((kind == 1u && !turned) || (kind == 2u && !across_too)) {
+            continue;
         }
-        total += cy_exact(p * (cy_exact((1.0 - guide.share) * md_flight(s, t, collided)) + cy_exact(guide.share * guided)));
+        let s = select(select(sigma.z, sigma.y, c == 1u), sigma.x, c == 0u);
+        let stretched = select(cy_exact(s * select(guide.forward_stretch, guide.backward_stretch, kind == 2u)), s, kind == 0u);
+        let past = md_exp(cy_exact(-stretched * t));
+        if (kind == 0u) {
+            kept = select(kept, vec3<f32>(past), vec3<bool>(c == 0u, c == 1u, c == 2u));
+            if (turned) {
+                continue;
+            }
+        } else if (kind == 1u) {
+            out_flight = md_flight(stretched, past, collided);
+            if (across_too) {
+                continue;
+            }
+        }
+        let p = select(select(chance.z, chance.y, c == 1u), chance.x, c == 0u);
+        let plain = select(select(kept.z, kept.y, c == 1u), kept.x, c == 0u);
+        if (!turned) {
+            // The plain density, a channel at a time.
+            total += select(cy_exact(p * plain), cy_exact(cy_exact(p * s) * plain), collided);
+            continue;
+        }
+        var guided = cy_exact(guide.forward_factor * out_flight);
+        if (across_too) {
+            guided = cy_exact(guided * (1.0 - guide.backward_fraction)) + cy_exact(cy_exact(guide.backward_fraction * guide.backward_factor) * md_flight(stretched, past, collided));
+        }
+        total += cy_exact(p * (cy_exact((1.0 - guide.share) * md_flight(s, plain, collided)) + cy_exact(guide.share * guided)));
     }
-    return total;
+    return vec4<f32>(kept, total);
 }

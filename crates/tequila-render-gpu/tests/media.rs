@@ -3,9 +3,11 @@
 //! (`integrator::walk_twins`) - the exponential and logarithm it reads,
 //! Henyey-Greenstein's phase function and a turn drawn by it, a flight
 //! drawn in a channel, what survives a flight and its density - and
-//! `transport.wgsl`'s `medium_transmittance` and `medium_light` against the
-//! processor's on `scattering_volumes`, at points inside its two volumes,
-//! on the scene's own acceleration structure.
+//! `transport.wgsl`'s medium transmittance (`shadow_walk` in a medium) and
+//! a collision's light sample (`direct_light` at a collision) against the
+//! processor's `medium_transmittance` and `medium_direct_light` on
+//! `scattering_volumes`, at points inside its two volumes, on the scene's
+//! own acceleration structure.
 //!
 //! The two draw the same numbers in the same order and do the same
 //! arithmetic, its products rounded as Rust rounds them, its quotients,
@@ -252,8 +254,9 @@ fn a_walks_flight_is_the_processors() {
         outf(0u, fl.chance.x); outf(1u, fl.chance.y); outf(2u, fl.chance.z); outf(3u, fl.depth);
         let kept = md_survive(sigma, inf(12u));
         outf(4u, kept.x); outf(5u, kept.y); outf(6u, kept.z);
-        outf(7u, md_plain_density(fl.chance, sigma, kept, true));
-        outf(8u, md_plain_density(fl.chance, sigma, kept, false));";
+        // The density of ending there, by the walk's own end (no guide).
+        outf(7u, md_walk_end(md_no_guide(), false, fl.chance, sigma, inf(12u), true).w);
+        outf(8u, md_walk_end(md_no_guide(), false, fl.chance, sigma, inf(12u), false).w);";
     let card = run_media(&h, body, &inputs, 13, 9);
     let (mut outside, mut chances_apart) = (0usize, 0usize);
     let mut cases = Vec::new();
@@ -341,8 +344,9 @@ fn a_guided_walk_is_the_processors() {
             outf(5u, next.x); outf(6u, next.y); outf(7u, next.z);
             outf(8u, md_guide_stretch(guide));
             let chance = vec3<f32>(inf(24u), inf(25u), inf(26u));
-            outf(9u, md_guided_density(guide, chance, sigma, inf(27u), true));
-            outf(10u, md_guided_density(guide, chance, sigma, inf(27u), false));
+            let kept = md_survive(sigma, inf(27u));
+            outf(9u, md_guided_density(guide, chance, sigma, kept, inf(27u), true));
+            outf(10u, md_guided_density(guide, chance, sigma, kept, inf(27u), false));
             outf(11u, select(0.0, 1.0, guide.guided));
             outf(12u, select(0.0, 1.0, guide.backward));
             outf(13u, sampler_next_unstructured(&s));
@@ -399,14 +403,16 @@ fn a_walks_albedo_for_a_colour_is_the_processors() {
     let mut rng = Pcg32::new(43, 47);
     let mut inputs = Vec::new();
     let mut items = Vec::new();
+    let colour_of = |i: usize, rng: &mut Pcg32| match i % 10 {
+        0 => 0.0,
+        1 => 1.0,
+        2 => 1.0 + rng.next_f32(),
+        3 => rng.next_f32() * 1e-3,
+        _ => rng.next_f32(),
+    };
     for i in 0..N {
-        let colour = match i % 10 {
-            0 => 0.0,
-            1 => 1.0,
-            2 => 1.0 + rng.next_f32(),
-            3 => rng.next_f32() * 1e-3,
-            _ => rng.next_f32(),
-        };
+        // A colour a channel, each its own kind.
+        let colour = [colour_of(i, &mut rng), colour_of(i + 3, &mut rng), colour_of(i + 7, &mut rng)];
         let g = match i % 3 {
             0 => 0.0,
             1 => 0.95 * (2.0 * rng.next_f32() - 1.0),
@@ -415,27 +421,30 @@ fn a_walks_albedo_for_a_colour_is_the_processors() {
         let radius = 0.001 + 0.1 * rng.next_f32();
         let fit = tequila_render_gpu::material::walk_fit(g);
         items.push((colour, g, radius));
-        inputs.extend(bits(&[colour, fit[0], fit[1], fit[2], fit[3], fit[4], fit[5]]));
+        inputs.extend(bits(&[colour[0], colour[1], colour[2], fit[0], fit[1], fit[2], fit[3], fit[4], fit[5]]));
     }
-    let body = "outf(0u, md_walk_albedo(inf(0u), vec4<f32>(inf(1u), inf(2u), inf(3u), inf(4u)), inf(5u), inf(6u)));";
-    let card = run_media(&h, body, &inputs, 7, 1);
+    let body = "let a = md_walk_albedo(vec3<f32>(inf(0u), inf(1u), inf(2u)), vec4<f32>(inf(3u), inf(4u), inf(5u), inf(6u)), inf(7u), inf(8u));
+        outf(0u, a.x); outf(1u, a.y); outf(2u, a.z);";
+    let card = run_media(&h, body, &inputs, 9, 3);
     let (mut outside, mut apart, mut worst) = (0usize, 0usize, 0.0f32);
     let mut cases = Vec::new();
     for (k, (colour, g, radius)) in items.iter().enumerate() {
-        let (_, albedo) = tequila_materials::openpbr::walk_coefficients(colour.clamp(0.0, 1.0), *radius, *g);
-        let got = f(&card, k);
-        if got.to_bits() != albedo.to_bits() {
-            apart += 1;
-        }
-        let d = (got - albedo).abs();
-        worst = worst.max(d);
-        if !(d <= 1e-5) {
-            outside += 1;
-            cases.push(format!("{k}: colour {colour} g {g}: card {got} cpu {albedo}"));
+        for (c, colour) in colour.iter().enumerate() {
+            let (_, albedo) = tequila_materials::openpbr::walk_coefficients(colour.clamp(0.0, 1.0), *radius, *g);
+            let got = f(&card, 3 * k + c);
+            if got.to_bits() != albedo.to_bits() {
+                apart += 1;
+            }
+            let d = (got - albedo).abs();
+            worst = worst.max(d);
+            if !(d <= 1e-5) {
+                outside += 1;
+                cases.push(format!("{k}.{c}: colour {colour} g {g}: card {got} cpu {albedo}"));
+            }
         }
     }
-    eprintln!("walk albedos: {apart} of {N} not the processor's bits, worst {worst:.2e}");
-    report("a walk's albedo within 1e-5", outside, N, &cases);
+    eprintln!("walk albedos: {apart} of {} not the processor's bits, worst {worst:.2e}", 3 * N);
+    report("a walk's albedo within 1e-5", outside, 3 * N, &cases);
 }
 
 /// What `scattering_volumes` puts in a test kernel's way: the renderer,
@@ -494,7 +503,7 @@ fn transmittance_test(@builtin(global_invocation_id) id: vec3<u32>) {
     let b = frame_samples[3u * k + 1u];
     let c = frame_samples[3u * k + 2u];
     cy_zero = bitcast<u32>(c.w);
-    let through = medium_transmittance(a.xyz, b.xyz, a.w, bitcast<u32>(b.w), c.xyz);
+    let through = shadow_walk(GLASS_SOLID, ShadowRay(a.xyz, b.xyz, a.w), true, bitcast<u32>(b.w), c.xyz, NO_LIGHT).through;
     frame_samples[3u * k] = vec4<f32>(through, 0.0);
 }
 "#;
@@ -553,17 +562,28 @@ fn medium_light_test(@builtin(global_invocation_id) id: vec3<u32>) {
     let d = bitcast<vec4<u32>>(frame_samples[4u * k + 3u]);
     var s = sampler_new(d.x, d.y, d.z, d.w & 0xFFFFu);
     sampler_begin_bounce(&s, d.w >> 16u);
-    let lit = medium_light(&s, a.xyz, b.xyz, c.xyz, a.w, bitcast<u32>(b.w));
+    // A collision's light sample, after a throughput of one and unclamped:
+    // the sky's and the lamp's summed.
+    var here: LightSampleAt;
+    here.wanted = true;
+    here.medium = true;
+    here.surf.position = a.xyz;
+    here.wo = b.xyz;
+    here.instance = bitcast<u32>(b.w);
+    here.throughput = vec3<f32>(1.0);
+    here.ceiling = 0.0;
+    here.sigma = c.xyz;
+    here.g = a.w;
+    let lit = direct_light(&s, here).total;
     let next = sampler_next_unstructured(&s);
-    frame_samples[4u * k] = vec4<f32>(lit.sky, next);
-    frame_samples[4u * k + 1u] = vec4<f32>(lit.lights, 0.0);
+    frame_samples[4u * k] = vec4<f32>(lit, next);
 }
 "#;
 
 /// The lights a collision samples directly, in a medium whose surface bends
 /// nothing: the whole sky's draw and a lamp chosen by power, each weighed
-/// by the phase function and what of the medium lies between; on the
-/// bounces' dimensions, past the Sobol' limit the open stream's.
+/// by the phase function and what of the medium lies between, summed; on
+/// the bounces' dimensions, past the Sobol' limit the open stream's.
 #[test]
 fn the_lights_a_collision_samples_are_the_processors() {
     let Some(v) = volumes() else { return };
@@ -592,19 +612,18 @@ fn the_lights_a_collision_samples_are_the_processors() {
         sampler.begin_bounce(*bounce);
         let (sky, lights) = walk_twins::medium_direct_light(&v.intersector, &config, *at, *forward, walk, *slot, &mut sampler);
         let next = sampler.next_unstructured();
-        let got_sky = Spectrum { r: f(&card, 16 * k), g: f(&card, 16 * k + 1), b: f(&card, 16 * k + 2) };
-        let got_lights = Spectrum { r: f(&card, 16 * k + 4), g: f(&card, 16 * k + 5), b: f(&card, 16 * k + 6) };
+        let got = Spectrum { r: f(&card, 16 * k), g: f(&card, 16 * k + 1), b: f(&card, 16 * k + 2) };
         if f(&card, 16 * k + 3).to_bits() != next.to_bits() {
             draws_apart += 1;
         }
         lit_sky += (!sky.is_black()) as usize;
         lit_lamps += (!lights.is_black()) as usize;
-        let rel = |a: Spectrum, b: Spectrum| apart(a, b) / b.max_component().max(1e-6);
-        let d = rel(got_sky, sky).max(rel(got_lights, lights));
+        let want = sky + lights;
+        let d = apart(got, want) / want.max_component().max(1e-6);
         worst = worst.max(d);
         if !(d <= 1e-4) {
             outside += 1;
-            cases.push(format!("{k}: at {at:?} bounce {bounce}: sky card {got_sky:?} cpu {sky:?}; lamps card {got_lights:?} cpu {lights:?}"));
+            cases.push(format!("{k}: at {at:?} bounce {bounce}: card {got:?} cpu {want:?} (sky {sky:?}, lamps {lights:?})"));
         }
     }
     eprintln!("medium light: {lit_sky} lit by the sky, {lit_lamps} by a lamp, of {N}; worst {worst:.2e}; {draws_apart} left the sampler elsewhere");
