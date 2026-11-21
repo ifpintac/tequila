@@ -129,9 +129,12 @@ impl KernelFeatures {
     /// Glass that disperses light: a wavelength drawn at it, its index at
     /// that wavelength.
     pub const DISPERSION: KernelFeatures = part(28);
+    /// Paths that carry four wavelengths (a frame's part: its render's
+    /// spectral mode, `GpuRenderer::frame_features`).
+    pub const SPECTRAL: KernelFeatures = part(29);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 29] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 30] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -161,6 +164,7 @@ impl KernelFeatures {
         (Self::FLAKES, "FEATURE_FLAKES"),
         (Self::FILM, "FEATURE_FILM"),
         (Self::DISPERSION, "FEATURE_DISPERSION"),
+        (Self::SPECTRAL, "FEATURE_SPECTRAL"),
     ];
 
     /// The instructions' constant in `features.wgsl`.

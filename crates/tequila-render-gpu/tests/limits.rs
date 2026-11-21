@@ -98,11 +98,11 @@ fn a_background_colour_or_backplate_is_not_said() {
     assert!(floor_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &plate.lighting.config()));
 }
 
-/// Glass that disperses light is the card's as the processor's in an RGB
-/// render (`dispersion.wgsl`); rendered by wavelength, the card still traces
-/// red, green and blue, and says so.
+/// Glass that disperses light is the card's as the processor's, in an RGB
+/// render (`dispersion.wgsl`) and by wavelength (`spectral.wgsl`), and so
+/// is a render by wavelength of a scene that disperses nothing.
 #[test]
-fn dispersion_is_said_only_by_wavelength() {
+fn dispersion_and_wavelengths_are_not_said() {
     use tequila_render_core::settings::SpectralMode;
     let document = with_material(grey(), "Body", &|m| {
         m.transmission_weight = 1.0;
@@ -112,7 +112,10 @@ fn dispersion_is_said_only_by_wavelength() {
     let rgb = IntegratorConfig { spectral: SpectralMode::Off, ..document.lighting.config() };
     assert!(glass_limits(&scene, &rgb).is_empty(), "{:?}", glass_limits(&scene, &rgb));
     let auto = IntegratorConfig { spectral: SpectralMode::Auto, ..document.lighting.config() };
-    assert_eq!(glass_limits(&scene, &auto), vec!["the picture is traced in red, green and blue rather than by wavelength"]);
+    assert!(glass_limits(&scene, &auto).is_empty(), "{:?}", glass_limits(&scene, &auto));
+    let grey = grey();
+    let on = IntegratorConfig { spectral: SpectralMode::On, ..grey.lighting.config() };
+    assert!(glass_limits(&snapped(&grey), &on).is_empty(), "{:?}", glass_limits(&snapped(&grey), &on));
 }
 
 /// A thin film is the card's as the processor's (`film.wgsl`): no limit.

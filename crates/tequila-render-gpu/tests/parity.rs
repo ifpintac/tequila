@@ -361,6 +361,60 @@ fn dispersion_in_rgb_is_the_processors_picture() {
     same_picture("dispersion_rgb");
 }
 
+/// Dispersive glass rendered by wavelength, as Auto renders it: four
+/// wavelengths a path, the hero alone through the glass.
+#[test]
+fn dispersion_by_wavelength_is_the_processors_picture() {
+    same_picture("dispersion_spectral");
+}
+
+/// A floor, the sky, the split at plain glass, all by wavelength.
+#[test]
+fn a_spectral_floor_is_the_processors_picture() {
+    same_picture("spectral_floor");
+}
+
+/// A render by wavelength of a scene that disperses nothing: the spectral
+/// tables put on the card at the first frame that asks for them.
+#[test]
+fn spectral_lamps_are_the_processors_picture() {
+    same_picture("spectral_lamps");
+}
+
+/// The library's presets of glass that disperses light, every one of them,
+/// on the Headphones' parts, rendered by wavelength as Auto renders them.
+#[test]
+fn a_wall_of_dispersive_presets_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let dispersive: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.transmission_weight > 0.0
+                && m.transmission_dispersion_abbe > 0.0
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(!dispersive.is_empty() && dispersive.len() <= keys.len(), "{} dispersive presets for {} parts", dispersive.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &dispersive[j % dispersive.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("dispersive wall ({} presets): {}", dispersive.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "dispersive_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// The library's presets with metallic flakes (`flakes.rs`) on the
 /// Headphones' parts, every one of them, as the presets have them - their
 /// programs' bumps and rounded edges kept: the flake field in each part's

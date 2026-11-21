@@ -22,9 +22,6 @@ fn surface_refusals(m: &Material, rounding: bool) -> Vec<&'static str> {
     if glass && m.volume_scattering().is_some() {
         why.push("a volume that scatters");
     }
-    if glass && m.transmission_dispersion_abbe > 0.0 {
-        why.push("dispersion");
-    }
     if m.fuzz_density > 0.0 {
         why.push("fibres");
     }

@@ -374,6 +374,36 @@ pub fn prewarm() {
     let _ = table();
 }
 
+/// The film's response at its nodes, [`SHORTEST`] to [`LONGEST`] 5 nm
+/// apart, as [`Wavelengths`] reads it between them: read-only, for a
+/// renderer that traces wavelengths elsewhere (Tequila's on the graphics
+/// card) to read the same numbers.
+pub fn response_nodes() -> &'static [[f32; 3]] {
+    &response().nodes
+}
+
+/// The wavelength distribution's cumulative distribution at its 1 nm bins'
+/// edges (401 of them) and each bin's density, as [`sample_wavelength`]
+/// reads them: read-only, as [`response_nodes`].
+pub fn sampling_tables() -> (&'static [f64], &'static [f32]) {
+    let sampling = sampling();
+    (&sampling.cdf, &sampling.density)
+}
+
+impl Table {
+    /// The brightness each slice along the third axis stands for:
+    /// read-only, as [`response_nodes`].
+    pub fn scale(&self) -> &[f32; RESOLUTION] {
+        &self.scale
+    }
+
+    /// The `3 × RESOLUTION³` coefficient triples as [`Table::sigmoid`]
+    /// reads them: read-only, as [`response_nodes`].
+    pub fn coefficients(&self) -> &[[f32; 3]] {
+        &self.coefficients
+    }
+}
+
 /// `smoothstep(smoothstep(t))`: the brightness axis, crowded at both ends,
 /// where colours change fastest with brightness.
 fn brightness(t: f64) -> f64 {

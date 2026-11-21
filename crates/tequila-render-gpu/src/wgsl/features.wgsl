@@ -101,3 +101,7 @@ override FEATURE_FILM: bool = true;
 // Glass that disperses light, in an RGB render: a wavelength drawn at the
 // first such glass a path meets, the index at it (dispersion.wgsl).
 override FEATURE_DISPERSION: bool = true;
+// Paths that carry four wavelengths rather than three channels (a frame's
+// part: its spectral mode), every colour read at them by the spectral
+// tables (spectral.wgsl).
+override FEATURE_SPECTRAL: bool = true;

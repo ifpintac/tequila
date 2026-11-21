@@ -629,6 +629,45 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: dispersion_rgb,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_spectral",
+    covers: "R3 tier B, spectral mode: dispersion_rgb's balls rendered by wavelength, as Auto renders a scene that \
+             disperses - four wavelengths a path from the sample's wavelength dimension (the hero and three spaced \
+             evenly in the sampling distribution's measure), every colour read at them by the processor's \
+             Jakob-Hanika table, the hero's index at a dispersive surface, the hero alone through it (and for the \
+             light sampled through the rough one), the film's response at the end, the firefly rejection judging \
+             a path by how luminous its wavelengths are",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_spectral,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_floor",
+    covers: "R3 tier B, spectral mode on the floor: glass_ball_floor and a small dispersive gem beside the ball, so \
+             the picture is traced by wavelength - the sky at an escape and in light samples, the floor's shadow \
+             and its reflection (a path of its own on the same wavelengths), the split at the plain glass ball \
+             (its reflection filtered by the weight the wavelengths share), Beer-Lambert inside it, the clamps \
+             judged by the colour the wavelengths register as",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_floor,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_lamps",
+    covers: "R3 tier B, spectral mode on: lamps_in_view rendered by wavelength though nothing in it disperses, as              the render's Spectral On renders it - the spectral tables put on the card at the first frame that asks              for them; the lamps met along the way and their stand-ins, the sky, the lamps' and the sky's light              samples summed as one colour and read at the four wavelengths, plastics, metals and the ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_lamps,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2114,6 +2153,35 @@ fn dispersive_balls(spectral: tequila_render_core::settings::SpectralMode) -> Sc
 /// The dispersive balls in an RGB render.
 fn dispersion_rgb() -> SceneDocument {
     dispersive_balls(tequila_render_core::settings::SpectralMode::Off)
+}
+
+/// lamps_in_view rendered by wavelength, though nothing in it disperses.
+fn spectral_lamps() -> SceneDocument {
+    let mut document = lamps_in_view();
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// The dispersive balls rendered by wavelength.
+fn dispersion_spectral() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Auto)
+}
+
+/// glass_ball_floor and a small dispersive gem beside the ball, so the
+/// picture is traced by wavelength.
+fn spectral_floor() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let gem = Material {
+        transmission_depth: 0.2,
+        transmission_color: Spectrum { r: 0.9, g: 0.95, b: 1.0 },
+        specular_ior: 2.0,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 25.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Gem", ball(0.05), MaterialType::GlassSolid, gem, Transform::translation(vec3(-0.1, 0.051, 0.95)))]);
+    document
 }
 
 /// `simple_product` on its modelled ground, bumped by pictures every way:

@@ -74,7 +74,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
         assert_eq!(features.contains(F::DOME), *name == "finite_dome", "{name}: {}", features.names());
         assert_eq!(features.contains(F::FLAKES), *name == "metallic_paint", "{name}: {}", features.names());
         assert_eq!(features.contains(F::FILM), *name == "thin_film", "{name}: {}", features.names());
-        assert_eq!(features.contains(F::DISPERSION), name.starts_with("dispersion"), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::DISPERSION), name.starts_with("dispersion") || *name == "spectral_floor", "{name}: {}", features.names());
         let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
         assert!(F::of_frame(u32::MAX).contains(frame_parts) && !F::of_frame(u32::MAX).contains(F::DOME));
         assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
@@ -106,7 +106,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
@@ -136,6 +136,7 @@ fn frame_parts_are_the_cameras() {
             "all_round" => F::EQUIRECTANGULAR,
             "shifted_lens" => F::SHIFT,
             "soft_filter" | "wide_box" => F::FILTER,
+            "dispersion_spectral" | "spectral_floor" | "spectral_lamps" => F::SPECTRAL,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());

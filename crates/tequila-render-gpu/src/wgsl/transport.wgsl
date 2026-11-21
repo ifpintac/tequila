@@ -28,6 +28,7 @@
 //#include program
 //#include flakes
 //#include dispersion
+//#include spectral
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 // The shadow catchers (scene.rs's GpuCatcher), by an instance's `catcher`.
@@ -178,6 +179,24 @@ fn clamp_light(c: vec3<f32>, ceiling: f32) -> vec3<f32> {
     return c;
 }
 
+// clamp_light for a path carrying wavelengths (clamp_share): the share
+// that brings the red, green and blue they register as down to the ceiling.
+fn clamp_light4(c: vec4<f32>, ceiling: f32) -> vec4<f32> {
+    if (!(ceiling > 0.0)) {
+        return c;
+    }
+    let rgb = spectral_rgb(c);
+    let sum = abs(rgb.x) + abs(rgb.y) + abs(rgb.z);
+    if (sum > ceiling) {
+        return c * (ceiling / sum);
+    }
+    return c;
+}
+
+// Whether the sample being traced carries wavelengths (frame.mode's
+// MODE_SPECTRAL), set at its start.
+var<private> spectral_on: bool;
+
 // light_ceiling.
 fn light_ceiling(specular_chain: bool, found_at: u32) -> f32 {
     if (found_at == 0u || specular_chain) {
@@ -238,10 +257,23 @@ struct PathOut {
     // The one wavelength the camera's path carried from a dispersive
     // surface on (PathResult::wavelength), nought for none.
     wavelength: f32,
+    // Carrying wavelengths, how luminous the film finds the camera path's
+    // light (PathResult::hue).
+    hue: f32,
 };
 
 fn is_finite(x: f32) -> bool {
     return (bitcast<u32>(x) & 0x7f800000u) != 0x7f800000u;
+}
+
+// PathColour::finish: an RGB path's radiance made safe (sanitized); a
+// spectral one's only its non-finite values dropped, a negative channel
+// kept, as one path's estimate of a saturated colour can be.
+fn finished(c: vec3<f32>) -> vec3<f32> {
+    if (FEATURE_SPECTRAL && spectral_on) {
+        return select(vec3<f32>(0.0), c, abs(c) <= vec3<f32>(3.40282347e38));
+    }
+    return sanitized(c);
 }
 
 fn sanitized(c: vec3<f32>) -> vec3<f32> {
@@ -1138,6 +1170,12 @@ struct PathState {
     // The one wavelength the path carries from the first dispersive glass
     // it met on (ic:833-836), nought before.
     wavelength: f32,
+    // Carrying wavelengths (spectral_on), the throughput and the radiance
+    // at each of the four in place of the three channels, and whether the
+    // hero carries on alone (ic:786-793).
+    tp4: vec4<f32>,
+    rad4: vec4<f32>,
+    alone: bool,
 };
 
 // A path from `origin` along `direction` (trace's set-up): the camera's, a
@@ -1174,6 +1212,14 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.fresh = true;
     st.receiver = false;
     st.wavelength = 0.0;
+    st.tp4 = vec4<f32>(1.0);
+    st.rad4 = vec4<f32>(0.0);
+    st.alone = false;
+    // Measuring what the companions buy, the hero alone from the start.
+    if (FEATURE_SPECTRAL && spectral_on && (frame.mode & MODE_ALONE) != 0u) {
+        st.tp4 = spectral_hero_alone(st.tp4);
+        st.alone = true;
+    }
     return st;
 }
 
@@ -1439,10 +1485,20 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection) -> vec3<f
         if (weigh) {
             weight = seen_weight(seen, straight, along);
         }
-        let contribution = clamp_light((*st).throughput * lobes * emitted * weight, ceiling);
-        (*st).radiance += contribution;
-        if (is_sky) {
-            sky = contribution;
+        if (FEATURE_SPECTRAL && spectral_on) {
+            // Every product an add reads through cy_exact4, so a variant
+            // rounds as the whole kernel does.
+            let contribution = cy_exact4(clamp_light4((*st).tp4 * spectral_reflectance(lobes) * spectral_unbounded(emitted) * weight, ceiling));
+            (*st).rad4 += contribution;
+            if (is_sky) {
+                sky = spectral_rgb(contribution);
+            }
+        } else {
+            let contribution = clamp_light((*st).throughput * lobes * emitted * weight, ceiling);
+            (*st).radiance += contribution;
+            if (is_sky) {
+                sky = contribution;
+            }
         }
     }
     return sky;
@@ -1519,8 +1575,23 @@ fn left_to_bounces(pdf: f32, seen_in: f32) -> vec3<f32> {
 // side the light is on; the light through clear glass is tinted, and
 // through glass that bends light the sky's and the glowing triangles' is
 // shared with the bounces that see it.
-fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool) -> vec3<f32> {
+// The light samples' sum, and each source's apart - the sky's, the lamp's,
+// the glowing triangle's, as the stack's value and what scales it, whose
+// product is the source's light - with whether it came through the surface
+// (bit `source`), which a spectral path through dispersive glass reads
+// (ic:2172-2193). The factors rather than their product: an extra reader
+// of the product changed how the driver rounded the sum in the kernels
+// that have one.
+struct Direct {
+    total: vec3<f32>,
+    values: array<vec3<f32>, 3>,
+    scales: array<vec3<f32>, 3>,
+    through: u32,
+};
+
+fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool) -> Direct {
     var direct = vec3<f32>(0.0);
+    var parts: Direct;
     for (var source = 0u; source < 3u; source++) {
         let sky = source == 0u;
         let glow = source == 2u;
@@ -1686,8 +1757,25 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             scale = draw.radiance * ((abs(wi.z) * share) / density);
         }
         direct += value * (scale * visibility);
+        if (FEATURE_SPECTRAL) {
+            let lit = scale * visibility;
+            if (source == 0u) {
+                parts.values[0] = value;
+                parts.scales[0] = lit;
+            } else if (source == 1u) {
+                parts.values[1] = value;
+                parts.scales[1] = lit;
+            } else {
+                parts.values[2] = value;
+                parts.scales[2] = lit;
+            }
+            if (wi.z < 0.0) {
+                parts.through |= 1u << source;
+            }
+        }
     }
-    return direct;
+    parts.total = direct;
+    return parts;
 }
 
 // ---- The material at a point -------------------------------------------
@@ -2052,6 +2140,15 @@ struct SplitOff {
 // Russian roulette, reading the vertex just left (ic:2556-2562), the
 // relative indices crossed squared taken in: false where the path ends.
 fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> bool {
+    if (FEATURE_SPECTRAL && spectral_on) {
+        let tp4 = (*st).tp4;
+        let q4 = clamp(max(max(max(tp4.x, tp4.y), tp4.z), tp4.w) * (*st).eta_scale, 0.0, 0.95);
+        if (sampler_russian_roulette(s) >= q4) {
+            return false;
+        }
+        (*st).tp4 = tp4 * (1.0 / q4);
+        return true;
+    }
     let throughput = (*st).throughput;
     let q = clamp(max(max(throughput.x, throughput.y), throughput.z) * (*st).eta_scale, 0.0, 0.95);
     if (sampler_russian_roulette(s) >= q) {
@@ -2102,12 +2199,19 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // draw of the open stream), the path weighed by the colour it stands
     // for, and kept from there on, entering and leaving alike, so a medium
     // is left by the index it was entered with.
-    if (FEATURE_DISPERSION && material.transmission_color.w > 0.0 && material.film.w > 0.0) {
-        if ((*st).wavelength <= 0.0) {
+    // A path carrying wavelengths bends by its hero's; it keeps all four
+    // off the surface, and only the hero goes on through it (below).
+    let disperses = FEATURE_DISPERSION && material.transmission_color.w > 0.0 && material.film.w > 0.0;
+    if (disperses) {
+        var lambda = (*st).wavelength;
+        if (FEATURE_SPECTRAL && spectral_on) {
+            lambda = spectral_lambda.x;
+        } else if (lambda <= 0.0) {
             (*st).wavelength = dispersion_sample(sampler_next_unstructured(s));
             (*st).throughput = (*st).throughput * dispersion_weight((*st).wavelength);
+            lambda = (*st).wavelength;
         }
-        material.specular_ior = dispersion_ior_at(material.specular_ior, material.film.w, (*st).wavelength);
+        material.specular_ior = dispersion_ior_at(material.specular_ior, material.film.w, lambda);
     }
     // Which side of the surface the path is on, read from the media it has
     // crossed into rather than from the winding, and the index between the
@@ -2200,7 +2304,25 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             (*st).receiver_two_sided = transmissive;
         }
         let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);
-        (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce));
+        if (FEATURE_SPECTRAL && spectral_on) {
+            // Through a dispersive surface the light came by the hero's
+            // index, and is the hero's alone (ic:2172-2193).
+            var contribution: vec4<f32>;
+            if (disperses && !(*st).alone) {
+                let alone = spectral_hero_alone((*st).tp4);
+                let sky = cy_exact3(direct.values[0] * direct.scales[0]);
+                let lamp = cy_exact3(direct.values[1] * direct.scales[1]);
+                let glow = cy_exact3(direct.values[2] * direct.scales[2]);
+                contribution = cy_exact4(select((*st).tp4, alone, (direct.through & 1u) != 0u) * spectral_unbounded(sky))
+                    + cy_exact4(select((*st).tp4, alone, (direct.through & 2u) != 0u) * spectral_unbounded(lamp))
+                    + cy_exact4(select((*st).tp4, alone, (direct.through & 4u) != 0u) * spectral_unbounded(glow));
+            } else {
+                contribution = (*st).tp4 * spectral_unbounded(direct.total);
+            }
+            (*st).rad4 += cy_exact4(clamp_light4(contribution, light_ceiling((*st).specular_chain, bounce)));
+        } else {
+            (*st).radiance += clamp_light((*st).throughput * direct.total, light_ceiling((*st).specular_chain, bounce));
+        }
     }
 
     // The split (ic:2267-2318): at the first plain glass the camera ray
@@ -2213,7 +2335,10 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     chosen.roughness = -1.0;
     var splits = false;
     var share = 0.0;
-    if (FEATURE_PANES && bounce == 0u && !(*st).reflected && !(*st).in_floor && (material.glass & (GLASS_PANE | GLASS_PLAIN)) == (GLASS_PANE | GLASS_PLAIN)) {
+    // Carrying wavelengths, only while they all share one weight, which the
+    // reflection's own wavelengths are filtered by (ic:2277-2286).
+    let shares = !(FEATURE_SPECTRAL && spectral_on) || all((*st).tp4 == vec4<f32>((*st).tp4.x));
+    if (FEATURE_PANES && shares && bounce == 0u && !(*st).reflected && !(*st).in_floor && (material.glass & (GLASS_PANE | GLASS_PLAIN)) == (GLASS_PANE | GLASS_PLAIN)) {
         let eta = select(relative, cy_div(1.0, relative), from_inside);
         let reflected = fresnel_dielectric(wo.z, eta);
         if (reflected < 1.0) {
@@ -2242,7 +2367,11 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     if (splits) {
         let mirrored = to_world(f, vec3<f32>(-wo.x, -wo.y, wo.z));
         if (share > 0.0 && dot(mirrored, surf.geometric) > 0.0) {
-            *split = SplitOff(offset_at(surf.position, surf.geometric, surf.magnitude), mirrored, share, (*st).throughput, false);
+            var carried = (*st).throughput;
+            if (FEATURE_SPECTRAL && spectral_on) {
+                carried = vec3<f32>((*st).tp4.x);
+            }
+            *split = SplitOff(offset_at(surf.position, surf.geometric, surf.magnitude), mirrored, share, carried, false);
             splitting = true;
         }
     } else {
@@ -2259,6 +2388,16 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         return shade_ends(split, splitting);
     }
     let throughput = (*st).throughput * (sample.f * (abs(sample.wi.z) / sample.pdf));
+    var tp4 = (*st).tp4;
+    if (FEATURE_SPECTRAL && spectral_on) {
+        tp4 = tp4 * spectral_reflectance(sample.f * (abs(sample.wi.z) / sample.pdf));
+        // Through a dispersive surface each wavelength leaves its own way:
+        // the hero goes on for all four (ic:2356-2363).
+        if (disperses && sample.is_transmission && !(*st).alone) {
+            tp4 = spectral_hero_alone(tp4);
+            (*st).alone = true;
+        }
+    }
     // Through the surface: counted against the transmissions, the relative
     // index squared kept for Russian roulette, and a medium's boundary
     // entered or left, recorded with the surface's own index (ic:2373-2399).
@@ -2276,10 +2415,17 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             (*st).media = media;
         }
     }
-    if (!(is_finite(throughput.x) && is_finite(throughput.y) && is_finite(throughput.z)) || all(throughput == vec3<f32>(0.0))) {
-        return shade_ends(split, splitting);
+    if (FEATURE_SPECTRAL && spectral_on) {
+        if (!(is_finite(tp4.x) && is_finite(tp4.y) && is_finite(tp4.z) && is_finite(tp4.w)) || all(tp4 == vec4<f32>(0.0))) {
+            return shade_ends(split, splitting);
+        }
+        (*st).tp4 = tp4;
+    } else {
+        if (!(is_finite(throughput.x) && is_finite(throughput.y) && is_finite(throughput.z)) || all(throughput == vec3<f32>(0.0))) {
+            return shade_ends(split, splitting);
+        }
+        (*st).throughput = throughput;
     }
-    (*st).throughput = throughput;
     // Straight on through glass passed, the last light sample's weighting
     // carries over (ic:2404). Whether this bounce sees (ic:2413): off a
     // reflection sharp enough to show what it is turned to, it meets the
@@ -2594,7 +2740,11 @@ fn floor_met(st: ptr<function, PathState>, s: ptr<function, Sampler>, c: GpuCatc
         if (c.bounce_falloff > 0.0) {
             open = 1.0 - occlusion_at(raw.position, raw.magnitude, towards, c.bounce_falloff, s);
         }
-        (*st).radiance += (*st).throughput * c.bounce.xyz * open;
+        if (FEATURE_SPECTRAL && spectral_on) {
+            (*st).rad4 += cy_exact4((*st).tp4 * spectral_unbounded(c.bounce.xyz) * open);
+        } else {
+            (*st).radiance += (*st).throughput * c.bounce.xyz * open;
+        }
         return MET_END;
     }
     // Ground illumination shades the floor as its material.
@@ -2694,6 +2844,11 @@ fn mirror_ray(c: GpuCatcher, raw: Surface, normal: vec3<f32>, view: vec3<f32>, s
 struct FloorSeen {
     radiance: vec3<f32>,
     throughput: vec3<f32>,
+    // The same at four wavelengths, carrying them, and whether the hero
+    // went on alone.
+    rad4: vec4<f32>,
+    tp4: vec4<f32>,
+    alone: bool,
     bounce: u32,
     behind: vec3<f32>,
     caught: Caught,
@@ -2888,6 +3043,15 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     // arithmetic would fuse there as it does not in the whole kernel.
     cy_zero = frame.mode & 0x80000000u;
     let ray = camera_ray(film, &s);
+    // A spectral render's four wavelengths, one set for every path this
+    // sample traces: the camera's, the split's reflection, the floor's
+    // (each a trace of its own on the processor, drawing the same
+    // wavelength dimension).
+    spectral_on = FEATURE_SPECTRAL && (frame.mode & MODE_SPECTRAL) != 0u;
+    if (spectral_on) {
+        spectral_base = frame.spectral_base;
+        spectral_begin(sampler_wavelength(&s));
+    }
 
     var st = path_start(ray.origin, ray.direction, frame.max_bounces, false, false);
     var background = vec3<f32>(0.0);
@@ -2923,6 +3087,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     // The camera's wavelength, where its path ended on a floor whose
     // reflection then took its place.
     var floor_wavelength = 0.0;
+    var floor_alone = false;
     var out: PathOut;
     loop {
         if (st.fresh) {
@@ -3080,7 +3245,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             want = WANT_CROSSING;
                             continue;
                         }
-                        floor = FloorSeen(st.radiance, st.throughput, st.bounce, behind, caught, c, normal, view, 0.0, 1.0, !st.reflected);
+                        floor = FloorSeen(st.radiance, st.throughput, st.rad4, st.tp4, st.alone, st.bounce, behind, caught, c, normal, view, 0.0, 1.0, !st.reflected);
                         on_floor = true;
                         if (c.reflections > 0.0) {
                             let ray = mirror_ray(c, raw, normal, view, &s);
@@ -3103,6 +3268,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                                     floor.rise = ray.rise;
                                     floor.near = ray.near;
                                     floor_wavelength = st.wavelength;
+                                    floor_alone = st.alone;
                                     st = path_start(ray.origin, ray.direction, min(st.max_bounces, 3u), st.reflected, true);
                                     mirror = true;
                                     next = first;
@@ -3144,12 +3310,26 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);
                         if (any(glow != vec3<f32>(0.0))) {
                             let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                            if (FEATURE_SPECTRAL && spectral_on) {
+                                st.rad4 += cy_exact4(clamp_light4(st.tp4 * spectral_unbounded(glow), light_ceiling(st.specular_chain, found_at)));
+                            } else {
+                                st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                            }
                         }
-                        let t = st.throughput * transmittance_over(medium, hit.t);
-                        st.throughput = t;
-                        if (!(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {
-                            break;
+                        if (FEATURE_SPECTRAL && spectral_on) {
+                            // The spectrum of what RGB lets through over the
+                            // stretch (ic:1545-1552).
+                            let t4 = st.tp4 * spectral_reflectance(transmittance_over(medium, hit.t));
+                            st.tp4 = t4;
+                            if (!(is_finite(t4.x) && is_finite(t4.y) && is_finite(t4.z) && is_finite(t4.w)) || all(t4 == vec4<f32>(0.0))) {
+                                break;
+                            }
+                        } else {
+                            let t = st.throughput * transmittance_over(medium, hit.t);
+                            st.throughput = t;
+                            if (!(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -3304,7 +3484,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     }
                 }
                 let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
+                if (FEATURE_SPECTRAL && spectral_on) {
+                    st.rad4 += cy_exact4(clamp_light4(st.tp4 * spectral_unbounded(material_emission(material.material)) * (weight * face), light_ceiling(st.specular_chain, found_at)));
+                } else {
+                    st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
+                }
             }
             var off: SplitOff;
             let shaded = shade_vertex(&st, &s, hit, surf, material, &off);
@@ -3337,15 +3521,28 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         // backdrop it leaves showing and the coverage.
         var result = st.radiance;
         var wavelength = st.wavelength;
+        var alone = st.alone;
+        if (FEATURE_SPECTRAL && spectral_on) {
+            result = spectral_rgb(st.rad4);
+        }
         if (on_floor) {
             var caught = floor.caught;
             if (mirror) {
-                caught = reflected_on(floor, sanitized(st.radiance), escaped, depth);
+                caught = reflected_on(floor, finished(result), escaped, depth);
                 wavelength = floor_wavelength;
+                alone = floor_alone;
             }
-            result = floor.radiance + floor.throughput * caught.radiance;
+            if (FEATURE_SPECTRAL && spectral_on) {
+                result = spectral_rgb(floor.rad4 + cy_exact4(floor.tp4 * spectral_unbounded(caught.radiance)));
+            } else {
+                result = floor.radiance + floor.throughput * caught.radiance;
+            }
             if (floor.bounce == 0u && floor.camera) {
-                background = floor.throughput * floor.behind * (1.0 - caught.coverage);
+                if (FEATURE_SPECTRAL && spectral_on) {
+                    background = spectral_rgb(floor.tp4 * spectral_unbounded(floor.behind) * (1.0 - caught.coverage));
+                } else {
+                    background = floor.throughput * floor.behind * (1.0 - caught.coverage);
+                }
                 // Through cutouts, whose share is settled: the floor adds its
                 // shadow's on the paths that reach it (ic:1452).
                 coverage = select(caught.coverage, settled + caught.coverage, settled >= 0.0 && catcher_behind);
@@ -3357,16 +3554,20 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         // The split's reflection: what it saw, times its share, joins the
         // camera's light; the camera's path goes on, or ends there.
         if (reflecting) {
-            split_light += carried * sanitized(result) * split_share;
+            split_light += carried * finished(result) * split_share;
             st = parked;
             reflecting = false;
             if (parked_ends || (parked_roulette && !russian_roulette(&st, &s))) {
-                out = PathOut(sanitized(st.radiance + split_light), background, coverage, st.wavelength);
+                var parked_result = st.radiance;
+                if (FEATURE_SPECTRAL && spectral_on) {
+                    parked_result = spectral_rgb(st.rad4);
+                }
+                out = PathOut(finished(parked_result + split_light), background, coverage, st.wavelength, spectral_hue(st.alone));
                 break;
             }
             continue;
         }
-        out = PathOut(sanitized(result + split_light), background, coverage, wavelength);
+        out = PathOut(finished(result + split_light), background, coverage, wavelength, spectral_hue(alone));
         break;
     }
     return out;
@@ -3386,14 +3587,17 @@ fn transport_main(@builtin(global_invocation_id) id: vec3<u32>) {
             // How luminous the film finds the light a dispersed path
             // carries (Pixel::accumulate_with's hue), 1 for any other.
             var hue = 1.0;
-            if (FEATURE_DISPERSION && out.wavelength > 0.0) {
+            if (FEATURE_SPECTRAL && spectral_on) {
+                hue = max(out.hue, 1e-3);
+            } else if (FEATURE_DISPERSION && out.wavelength > 0.0) {
                 hue = max(luminance(dispersion_weight(out.wavelength)), 1e-3);
             }
-            accumulate(pixel, out.radiance, out.background, out.coverage, hue);
+            accumulate(pixel, out.radiance, out.background, out.coverage, hue, FEATURE_SPECTRAL && spectral_on);
         } else {
             let at = (i * pixels + pixel) * 2u;
             frame_samples[at] = vec4<f32>(out.radiance, out.coverage);
-            frame_samples[at + 1u] = vec4<f32>(out.background, out.wavelength);
+            // A spectral sample's hue, else its wavelength.
+            frame_samples[at + 1u] = vec4<f32>(out.background, select(out.wavelength, out.hue, FEATURE_SPECTRAL && spectral_on));
         }
     }
 }
