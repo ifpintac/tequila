@@ -393,60 +393,6 @@ fn a_guided_walk_is_the_processors() {
     report("guides, turns and their densities within 1e-4", outside, N, &cases);
 }
 
-/// The albedo a walk under a surface needs to give a colour back
-/// (`walk_coefficients`), worked out on the card for a colour a program
-/// drives, from the fit the processor worked out for the material's
-/// anisotropy (`material::walk_fit`).
-#[test]
-fn a_walks_albedo_for_a_colour_is_the_processors() {
-    let Some(h) = Harness::for_test() else { return };
-    let mut rng = Pcg32::new(43, 47);
-    let mut inputs = Vec::new();
-    let mut items = Vec::new();
-    let colour_of = |i: usize, rng: &mut Pcg32| match i % 10 {
-        0 => 0.0,
-        1 => 1.0,
-        2 => 1.0 + rng.next_f32(),
-        3 => rng.next_f32() * 1e-3,
-        _ => rng.next_f32(),
-    };
-    for i in 0..N {
-        // A colour a channel, each its own kind.
-        let colour = [colour_of(i, &mut rng), colour_of(i + 3, &mut rng), colour_of(i + 7, &mut rng)];
-        let g = match i % 3 {
-            0 => 0.0,
-            1 => 0.95 * (2.0 * rng.next_f32() - 1.0),
-            _ => 0.3 * (2.0 * rng.next_f32() - 1.0),
-        };
-        let radius = 0.001 + 0.1 * rng.next_f32();
-        let fit = tequila_render_gpu::material::walk_fit(g);
-        items.push((colour, g, radius));
-        inputs.extend(bits(&[colour[0], colour[1], colour[2], fit[0], fit[1], fit[2], fit[3], fit[4], fit[5]]));
-    }
-    let body = "let a = md_walk_albedo(vec3<f32>(inf(0u), inf(1u), inf(2u)), vec4<f32>(inf(3u), inf(4u), inf(5u), inf(6u)), inf(7u), inf(8u));
-        outf(0u, a.x); outf(1u, a.y); outf(2u, a.z);";
-    let card = run_media(&h, body, &inputs, 9, 3);
-    let (mut outside, mut apart, mut worst) = (0usize, 0usize, 0.0f32);
-    let mut cases = Vec::new();
-    for (k, (colour, g, radius)) in items.iter().enumerate() {
-        for (c, colour) in colour.iter().enumerate() {
-            let (_, albedo) = tequila_materials::openpbr::walk_coefficients(colour.clamp(0.0, 1.0), *radius, *g);
-            let got = f(&card, 3 * k + c);
-            if got.to_bits() != albedo.to_bits() {
-                apart += 1;
-            }
-            let d = (got - albedo).abs();
-            worst = worst.max(d);
-            if !(d <= 1e-5) {
-                outside += 1;
-                cases.push(format!("{k}.{c}: colour {colour} g {g}: card {got} cpu {albedo}"));
-            }
-        }
-    }
-    eprintln!("walk albedos: {apart} of {} not the processor's bits, worst {worst:.2e}", 3 * N);
-    report("a walk's albedo within 1e-5", outside, 3 * N, &cases);
-}
-
 /// What `scattering_volumes` puts in a test kernel's way: the renderer,
 /// the processor's intersector over the same snapshot, its two volumes
 /// (each a centre, a radius and its slot), the frame's settings.

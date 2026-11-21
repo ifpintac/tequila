@@ -347,8 +347,8 @@ fn material_from_words() -> String {
     // The glow behind, then the flakes: colour and weight, size, spread,
     // roughness and coverage, normal; then the film and the dispersion;
     // then a scattering volume's extinction and albedo; the subsurface
-    // colour, and a walk's extinction and albedo, and the walk's fit.
-    for v in [64, 68, 72, 76, 80, 84, 88, 92, 96, 100, 104, 108] {
+    // colour, and a walk's extinction and albedo.
+    for v in [64, 68, 72, 76, 80, 84, 88, 92, 96, 100] {
         parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
     }
     format!("GpuMaterial({})", parts.join(", "))
@@ -361,7 +361,7 @@ fn the_stack(seed: u64, aimed: bool) {
 /// The stack's test over materials `make` makes, its name ending `kind`.
 fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: &str) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 112);
+    assert_eq!(MATERIAL_WORDS, 104);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut misses, mut floored) = (0, 0, 0);

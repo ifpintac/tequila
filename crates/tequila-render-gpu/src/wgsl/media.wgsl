@@ -285,36 +285,6 @@ fn md_survive(sigma: vec3<f32>, t: f32) -> vec3<f32> {
     return kept;
 }
 
-// walk_coefficients' albedo for one channel's colour, the walk's fit at
-// its anisotropy worked out on the processor (GpuMaterial's walk_fit: a, b,
-// c, d, and in walk_fit_ef e and f): the single-scattering albedo a walk
-// needs to give `colour` back (Chiang, Kutz and Burley's fit, as Cycles'
-// subsurface_random_walk_remap has it). The three channels, and each one's
-// three powers, by one call of the power and one of the arctangent, for
-// the kernel's size.
-fn md_walk_albedo(colour: vec3<f32>, fit: vec4<f32>, e: f32, f: f32) -> vec3<f32> {
-    var out = vec3<f32>(0.0);
-    var blend = 0.0;
-    var near = 0.0;
-    for (var k = 0u; k < 9u; k++) {
-        let c = k / 3u;
-        let term = k - 3u * c;
-        let albedo = clamp(select(select(colour.z, colour.y, c == 1u), colour.x, c == 0u), 0.0, 1.0);
-        // blend = albedo^0.25; then atan(b albedo)^c and atan(e albedo)^f.
-        let turned = md_atan(cy_exact(select(fit.y, e, term == 2u) * albedo));
-        let raised = md_pow(select(turned, albedo, term == 0u), select(select(f, fit.z, term == 1u), 0.25, term == 0u));
-        if (term == 0u) {
-            blend = raised;
-        } else if (term == 1u) {
-            near = cy_exact(cy_exact((1.0 - blend) * fit.x) * raised);
-        } else {
-            let far = cy_exact(cy_exact(blend * fit.w) * raised);
-            out = select(out, vec3<f32>(clamp(near + far, 0.0, 0.999999)), vec3<bool>(c == 0u, c == 1u, c == 2u));
-        }
-    }
-    return out;
-}
-
 // ---- The guided walk (WalkGuide) -----------------------------------------
 
 // A walk under a surface guided back towards where it came in: the solid

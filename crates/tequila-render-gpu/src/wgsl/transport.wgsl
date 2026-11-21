@@ -2701,18 +2701,8 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         // crossing of the stack for both.
         let walking = FEATURE_SUBSURFACE && chosen.slot == LOBE_SUBSURFACE && bsdf.subsurface_walk;
         if (walking || boundary) {
-            // The walk's medium's albedo the shaded material's: worked out
-            // again where a program changed its colour (walk_coefficients).
-            var albedo = vec3<f32>(0.0);
-            if (walking) {
-                albedo = material.subsurface_albedo.xyz;
-                let c = material.subsurface_color.xyz;
-                if (any(c != scene_materials[inst.material].subsurface_color.xyz)) {
-                    let fit = material.walk_fit;
-                    let ef = material.walk_fit_ef;
-                    albedo = md_walk_albedo(c, fit, ef.x, ef.y);
-                }
-            }
+            // The walk's medium's albedo: the shaded material's.
+            let albedo = select(vec3<f32>(0.0), material.subsurface_albedo.xyz, walking);
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
