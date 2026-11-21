@@ -199,9 +199,9 @@ fn what_emission_and_cutouts_cost_to_compile() {
     };
     let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
         ("everything", Box::new(|s| s)),
-        ("no light sample of the glowing triangles", Box::new(replace(&[("            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no glow at a hit", Box::new(replace(&[("if (FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
-        ("no cutout at a hit", Box::new(replace(&[("if (FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
+        ("no light sample of the glowing triangles", Box::new(replace(&[("            if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no glow at a hit", Box::new(replace(&[("if (!colliding && FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
+        ("no cutout at a hit", Box::new(replace(&[("if (!colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
         (
             "no cutouts in the walks",
             Box::new(replace(&[
@@ -423,9 +423,9 @@ fn what_every_variant_keeps_costs_to_compile() {
         ("no sheen arms", Box::new(arms("0u"))),
         ("no coat arms", Box::new(arms("1u"))),
         ("no metal arms", Box::new(arms("2u"))),
-        ("no sky sample", Box::new(replace(&[("            if (frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no light sample at all", Box::new(replace(&[("        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing);", "        let direct = vec3<f32>(0.0);")]))),
-        ("no meeting and escaping", Box::new(replace(&[("                let sky = meet_and_escape(&st, hit);", "                let sky = vec3<f32>(0.0);")]))),
+        ("no sky sample", Box::new(replace(&[("            if (!medium && frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no light sample at all", Box::new(replace(&[("                let direct = direct_light(&s, light);", "                let direct = Direct();")]))),
+        ("no meeting and escaping", Box::new(replace(&[("                    sky = meet_and_escape(&st, hit);", "                    sky = vec3<f32>(0.0);")]))),
         ("no Filter Glossy rebuild", Box::new(replace(&[("        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {", "        if (false) {")]))),
         ("no aiming", Box::new(replace(&[("        bsdf = openpbr_aim(openpbr_build(lobes, roughness_floor, true, from_inside), wo);", "        bsdf = openpbr_build(lobes, roughness_floor, false, from_inside);")]))),
     ];
@@ -757,6 +757,53 @@ fn what_cutting_the_layers_saves_to_compile() {
                 None => cold_compile_time_edited_of(&renderer, s, &|s| s, *kernel),
             }
             .as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What the media's port costs the kernel's cold compile (`docs/07` R3) -
+/// volumes that scatter and subsurface scattering, the walk through both:
+/// the whole kernel as it is and as it was before the port (the joined
+/// source in `TEQUILA_KERNEL_BEFORE`, when given), the grey product's
+/// variant both ways, the whole kernel with each part left out, and the
+/// variants of `subsurface_product` and `scattering_volumes`; interleaved so
+/// the card's other work falls on all alike, `TEQUILA_COMPILE_ROUNDS` rounds
+/// (3 by default), the medians at the end. Run by hand: `cargo test --test
+/// compile_time -- --ignored --nocapture media`.
+#[test]
+#[ignore]
+fn what_the_media_cost_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let variant_of = |name: &str| renderer_for(name).map(|r| r.features).unwrap_or(KernelFeatures::ALL);
+    let subsurface = variant_of("subsurface_product");
+    let volumes = variant_of("scattering_volumes");
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("the whole kernel as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+        ("the whole kernel without scattering volumes".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING), Box::new(|s| s)),
+        ("the whole kernel without subsurface".to_string(), KernelFeatures::ALL.without(KernelFeatures::SUBSURFACE), Box::new(|s| s)),
+        ("the whole kernel without either".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING | KernelFeatures::SUBSURFACE), Box::new(|s| s)),
+        (format!("subsurface_product's variant ({})", subsurface.names()), subsurface, Box::new(|s| s)),
+        (format!("scattering_volumes' variant ({})", volumes.names()), volumes, Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("the whole kernel before the port".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING | KernelFeatures::SUBSURFACE), Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
             eprintln!("round {round}, {name}: {t:.2} s");
             times[k].push(t);
         }
