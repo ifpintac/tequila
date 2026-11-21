@@ -14,16 +14,57 @@ use tequila_render_core::scheduler::ProgressiveSchedule;
 use tequila_render_cpu::{render_pass, Device, EmbreeIntersector, RenderContext};
 use tequila_render_gpu::device::{self, Needs};
 use tequila_render_gpu::transport::{FrameSettings, GpuRenderer};
+use tequila_render_gpu::variants::KernelFeatures;
 use tequila_scene::parity;
 use tequila_scene::snapshot::{snapshot, MeshCache};
 
 /// The card's renderer for a scene, one built at a time. Each build compiles
 /// the transport kernel; when it has changed, that compile is cold and takes
-/// gigabytes, and the suite has died with a dozen of them at once.
+/// gigabytes, and the suite has died with a dozen of them at once. Its
+/// kernel is the scene's own variant (`tequila_render_gpu::variants`).
 fn renderer(gpu: tequila_render_gpu::GpuDevice, snapshot: &tequila_render_core::scene::SceneSnapshot) -> GpuRenderer {
-    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     GpuRenderer::new(gpu, snapshot)
+}
+
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The picture the scene's variant of the kernel gave, `card`, against the
+/// whole kernel's: the variant leaves out only what the scene never
+/// reaches, so both draw the same samples in the same order, and the two
+/// should be one picture to the bit. How many pixels are apart, and by how
+/// much; asserted at the end of the shot, once its parity is said.
+fn same_as_the_whole_kernel(name: &str, renderer: &mut GpuRenderer, card: &Framebuffer, settings: &FrameSettings, samples: u32) -> usize {
+    let variant = renderer.kernel;
+    {
+        let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        renderer.set_kernel(KernelFeatures::ALL);
+    }
+    let mut whole = Framebuffer::new(card.width, card.height);
+    renderer.render_pass(&mut whole, settings, samples);
+    let bits = |p: &tequila_render_core::framebuffer::Pixel| {
+        [p.sum.r.to_bits(), p.sum.g.to_bits(), p.sum.b.to_bits(), p.background_sum.r.to_bits(), p.background_sum.g.to_bits(), p.background_sum.b.to_bits(), p.coverage_sum.to_bits(), p.clamped_energy.to_bits(), p.samples]
+    };
+    let differing = card.pixels().iter().zip(whole.pixels()).filter(|(a, b)| bits(a) != bits(b) || a.sum_squared_luminance.to_bits() != b.sum_squared_luminance.to_bits()).count();
+    let (mut sum, mut worst, mut mean_variant, mut mean_whole) = (0.0f64, 0.0f32, 0.0f64, 0.0f64);
+    for (a, b) in card.pixels().iter().zip(whole.pixels()) {
+        let (a, b) = (a.mean(), b.mean());
+        let d = (a.r - b.r).abs().max((a.g - b.g).abs()).max((a.b - b.b).abs());
+        sum += d as f64;
+        worst = worst.max(d);
+        mean_variant += (a.r + a.g + a.b) as f64;
+        mean_whole += (b.r + b.g + b.b) as f64;
+    }
+    let n = card.pixels().len() as f64;
+    eprintln!(
+        "{name}: its kernel keeps {}; {differing} pixels apart from the whole kernel's picture (mean {:.6} against {:.6}, mean |difference| {:.2e}, worst {:.2e})",
+        variant.names(),
+        mean_variant / (3.0 * n),
+        mean_whole / (3.0 * n),
+        sum / n,
+        worst
+    );
+    differing
 }
 
 #[test]
@@ -301,6 +342,7 @@ fn same_shot(mut scene: Shot) {
     };
     renderer.render_pass(&mut card, &settings, scene.samples);
     let card_time = started.elapsed();
+    let apart = same_as_the_whole_kernel(name, &mut renderer, &card, &settings, scene.samples);
 
     let started = std::time::Instant::now();
     let intersector = EmbreeIntersector::build(&Device::shared().expect("an Embree device"), snapshot).expect("builds");
@@ -417,6 +459,7 @@ fn same_shot(mut scene: Shot) {
     // drawing the shadow from another bounce's dimensions, statistically
     // the same shadow, is 0.0015 here and passes the colour's bar.
     assert!(alpha_mean < 1e-4, "{name}: the alpha's mean absolute difference is {alpha_mean:.6}, not under 0.0001");
+    assert_eq!(apart, 0, "{name}: the scene's variant of the kernel is not the whole kernel's picture at {apart} pixels");
 }
 
 /// The card adding its samples up, firefly rejection and all, gives the
