@@ -26,6 +26,29 @@ fn flake_unit(bits: u32, stream: u32) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
+// noise.rs's worley, Euclidean, as procedural.wgsl's tq_worley finds it -
+// the nearest feature point of the 27 cells round `p`, the same cells in the
+// same order - and of it only the nearest one's id: the flake's. Its own
+// copy, its count opaque to the compiler so it keeps one copy of the cell's
+// arithmetic rather than 27.
+fn flake_cell(p: vec3<f32>, seed: u32) -> f32 {
+    let base = floor(p);
+    var f1 = CY_F32_MAX;
+    var id = 0.0;
+    for (var k = 0u; k < (27u | cy_zero); k++) {
+        let o = vec3<f32>(f32(k % 3u) - 1.0, f32((k / 3u) % 3u) - 1.0, f32(k / 9u) - 1.0);
+        let cell = base + o;
+        let c = vec3<i32>(cy_to_i32(cell.x), cy_to_i32(cell.y), cy_to_i32(cell.z));
+        let point = cell + vec3<f32>(tq_hash01(c, seed), tq_hash01(c, seed ^ 0x5bf03635u), tq_hash01(c, seed ^ 0x1b873593u));
+        let d = tq_distance(point - p, 0u);
+        if (d < f1) {
+            f1 = d;
+            id = tq_hash01(c, seed ^ 0x68bc21ebu);
+        }
+    }
+    return id;
+}
+
 // flakes::apply at a point `object` of a part of scale `scale`, for a flake
 // of `size` covering `weight` of the surface and leaning up to `spread` of
 // sixty degrees: the flake's normal in the shading frame and, in w, the
@@ -33,9 +56,9 @@ fn flake_unit(bits: u32, stream: u32) -> f32 {
 // material's own, straight up).
 fn flake_at(object: vec3<f32>, scale: f32, size_in: f32, weight: f32, spread: f32) -> vec4<f32> {
     let size = max(size_in, 1e-7);
-    let cell = tq_worley(cy_exact3(object * cy_div(scale, size)), FLAKE_SEED, 0u);
+    let cell = flake_cell(cy_exact3(object * cy_div(scale, size)), FLAKE_SEED);
     // Three numbers per cell, from the one the lookup gives.
-    let seed = bitcast<u32>(cell.z);
+    let seed = bitcast<u32>(cell);
     if (flake_unit(seed, 1u) >= weight) {
         return vec4<f32>(0.0, 0.0, 1.0, 0.0);
     }
