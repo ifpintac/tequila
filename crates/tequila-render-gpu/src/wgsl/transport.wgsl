@@ -163,15 +163,15 @@ fn mis_power(a: f32, b: f32) -> f32 {
     return a2 / denom;
 }
 
-// clamp_light: a contribution's summed red, green and blue brought down to
-// the ceiling; a ceiling at or below zero is none.
+// clamp_light: the mean of a contribution's red, green and blue brought
+// down to the ceiling, as Cycles clamps; a ceiling at or below zero is none.
 fn clamp_light(c: vec3<f32>, ceiling: f32) -> vec3<f32> {
     if (!(ceiling > 0.0)) {
         return c;
     }
-    let sum = abs(c.x) + abs(c.y) + abs(c.z);
-    if (sum > ceiling) {
-        return c * (ceiling / sum);
+    let mean = (abs(c.x) + abs(c.y) + abs(c.z)) / 3.0;
+    if (mean > ceiling) {
+        return c * (ceiling / mean);
     }
     return c;
 }

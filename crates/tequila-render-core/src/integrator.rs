@@ -3791,16 +3791,21 @@ fn light_ceiling(config: &IntegratorConfig, specular_chain: bool, found_at: u32,
 }
 
 /// What of `contribution` a ceiling keeps: all of it, or the share that
-/// brings its red, green and blue down to the ceiling, as Cycles clamps.
+/// brings the mean of its red, green and blue down to the ceiling, as
+/// Cycles clamps. Cycles' kernel compares their sum with three times the
+/// setting (`film_clamp_light`, given `sample_clamp_indirect * 3` by its
+/// scene/integrator.cpp), which is the same. Compared with the setting
+/// itself, the sum was clamped three times as hard as Cycles clamps under
+/// the same settings, firefly rejection's 10 among them.
 #[inline]
 fn clamp_share<C: PathColour>(colour: &C, contribution: C::Value, ceiling: Option<f32>) -> f32 {
     let Some(ceiling) = ceiling.filter(|c| *c > 0.0) else {
         return 1.0;
     };
     let rgb = colour.rgb(contribution);
-    let sum = rgb.r.abs() + rgb.g.abs() + rgb.b.abs();
-    if sum > ceiling {
-        ceiling / sum
+    let mean = (rgb.r.abs() + rgb.g.abs() + rgb.b.abs()) / 3.0;
+    if mean > ceiling {
+        ceiling / mean
     } else {
         1.0
     }
@@ -4912,18 +4917,23 @@ mod tests {
     }
 
     /// Cycles' clamping (`IntegratorConfig::clamp_indirect`): light found
-    /// past the first surface is brought down to the ceiling, its red, green
-    /// and blue summed, keeping its colour; light found at the first surface,
+    /// past the first surface is brought down to the ceiling, the mean of
+    /// its red, green and blue, keeping its colour - in Cycles' kernel their
+    /// sum, at three times the setting; light found at the first surface,
     /// or past the camera's mirrors and clear glass alone, is under the
     /// direct ceiling instead; and what is taken off is counted.
     #[test]
     fn indirect_light_is_clamped_as_cycles_clamps_it() {
         use crate::spectral::Rgb;
         let config = IntegratorConfig { clamp_indirect: Some(10.0), clamp_direct: None, ..IntegratorConfig::default() };
-        let bright = Spectrum { r: 12.0, g: 6.0, b: 2.0 };
+        let bright = Spectrum { r: 36.0, g: 18.0, b: 6.0 };
         let mut clamped = 0.0;
         let kept = clamp_light(&Rgb, bright, light_ceiling(&config, false, 1, 1.0), &mut clamped);
-        assert!((kept.r + kept.g + kept.b - 10.0).abs() < 1e-4, "{kept:?} sums to more than the ceiling");
+        assert!((kept.r + kept.g + kept.b - 30.0).abs() < 1e-4, "{kept:?} sums to more than three times the ceiling");
+        // A sum over the ceiling and under three times it: Cycles keeps it.
+        let mut none = 0.0;
+        let under = Spectrum { r: 12.0, g: 6.0, b: 2.0 };
+        assert_eq!(clamp_light(&Rgb, under, light_ceiling(&config, false, 1, 1.0), &mut none), under);
         assert!((kept.r / kept.g - 2.0).abs() < 1e-4 && (kept.g / kept.b - 3.0).abs() < 1e-4, "{kept:?} changed colour");
         assert!((clamped - (bright.luminance() - kept.luminance())).abs() < 1e-4, "counted {clamped}");
         for (chain, found_at) in [(false, 0), (true, 3)] {

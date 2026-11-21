@@ -41,8 +41,9 @@ pub struct RenderContext {
 }
 
 /// Where firefly rejection clamps light found past the first surface, as
-/// Cycles' does (Tequila's `Quality::with_clamping`): each contribution's
-/// red, green and blue summed, at most this.
+/// Cycles' does (Tequila's `Quality::with_clamping`): the mean of each
+/// contribution's red, green and blue at most this, their sum at most three
+/// times it.
 pub const FIREFLY_CLAMP: f32 = 10.0;
 
 /// The ceilings a render's paths clamp their light to, direct and indirect

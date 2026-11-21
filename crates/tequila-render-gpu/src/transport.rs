@@ -270,7 +270,8 @@ pub struct FrameSettings {
     pub clamp_indirect: Option<f32>,
 }
 
-/// Firefly rejection's ceiling on indirect light (`tequila-render-cpu`'s
+/// Firefly rejection's ceiling on indirect light, the mean of a
+/// contribution's red, green and blue (`tequila-render-cpu`'s
 /// `FIREFLY_CLAMP`).
 pub const FIREFLY_CLAMP: f32 = 10.0;
 

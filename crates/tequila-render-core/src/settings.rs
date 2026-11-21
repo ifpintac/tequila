@@ -83,9 +83,10 @@ pub struct IntegratorConfig {
     /// throughout is what it was always told.
     pub cycles: CyclesTransport,
     /// A ceiling on each contribution of light a path finds past the first
-    /// surface - its red, green and blue summed, scaled down to this where
-    /// they come to more - as Cycles' Clamp Indirect clamps
-    /// (`kernel_accum_clamp`), which firefly rejection sets to 10. Light seen
+    /// surface - the mean of its red, green and blue, scaled down to this
+    /// where it comes to more - as Cycles' Clamp Indirect clamps (its
+    /// kernel's `film_clamp_light`, their sum at three times the setting),
+    /// which firefly rejection sets to 10. Light seen
     /// through mirrors and clear glass from the camera is not past it, as it
     /// is to Cycles: a lamp in a mirror is the lamp. `None` clamps nothing.
     /// Set per render from its settings, never saved here.
