@@ -19,9 +19,6 @@ fn surface_refusals(m: &Material, rounding: bool) -> Vec<&'static str> {
     if m.subsurface_weight != 0.0 {
         why.push("subsurface");
     }
-    if m.thin_film_weight > 1e-4 {
-        why.push("thin film");
-    }
     if glass && m.volume_scattering().is_some() {
         why.push("a volume that scatters");
     }

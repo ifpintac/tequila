@@ -73,6 +73,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
         assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
         assert_eq!(features.contains(F::DOME), *name == "finite_dome", "{name}: {}", features.names());
         assert_eq!(features.contains(F::FLAKES), *name == "metallic_paint", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::FILM), *name == "thin_film", "{name}: {}", features.names());
         let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
         assert!(F::of_frame(u32::MAX).contains(frame_parts) && !F::of_frame(u32::MAX).contains(F::DOME));
         assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());

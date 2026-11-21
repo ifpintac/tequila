@@ -8,7 +8,9 @@
 // by flake_color, in the flake's own tilted frame, standing in for the
 // point's flake_coverage of the base, whose response it shares), the metal
 // (Conductor with metal_ior, tinted by base_color, anisotropic), the
-// dielectric specular interface, the transmission lobe (glass, solid or
+// dielectric specular interface - the metal and the interface each under
+// the material's thin film where it has one (film.wgsl's Airy sum, which
+// stands in for their Fresnel) - the transmission lobe (glass, solid or
 // thin-walled, its reflect-or-refract choice the stack's rescaled lobe
 // variate) and the diffuse substrate (EON), with base_weight and
 // geometry_occlusion in the lobes' scales; the interface and the diffuse
@@ -21,8 +23,6 @@
 // (GpuMaterial::supports refuses a material that has them):
 // - subsurface: subsurface_weight = 0, no walk doorway, and the diffuse
 //   albedo the trapped light bounces against is base_color's alone;
-// - thin film: no film over the metal or the interface (thin_film_weight at
-//   or below the 1e-4 the processor ignores);
 // - emission and geometry_opacity: not the BSDF's at all (the integrator's;
 //   GpuMaterial carries both for it).
 //
@@ -135,6 +135,10 @@ struct GpuMaterial {
     flake_color: vec4<f32>,
     flake: vec4<f32>,
     flake_normal: vec4<f32>,
+    // The thin film over the metal and the interface: its weight, its
+    // thickness in nanometres and its index; and in w the glass's Abbe
+    // number, its dispersion (none at 0).
+    film: vec4<f32>,
 };
 
 // Material::emission, in nits: the colour times the luminance.
@@ -487,8 +491,16 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
     let base_scale = vec3<f32>(m.base_weight * (1.0 - flake));
     if (FEATURE_FLAKES && flake > 1e-4) {
         b.flake_frame = frame_of(m.flake_normal.xyz);
-        b.flake = Conductor(ggx_from_roughness(openpbr_rough(m.flake.z, roughness_floor), 0.0), FLAKE_N, FLAKE_K, m.flake_color.xyz);
+        b.flake = Conductor(ggx_from_roughness(openpbr_rough(m.flake.z, roughness_floor), 0.0), FLAKE_N, FLAKE_K, m.flake_color.xyz, vec4<f32>(0.0));
         openpbr_push(&b, LOBE_FLAKE, vec3<f32>(m.base_weight), flake, occlusion);
+    }
+    // §2.2's thin film, over the metal of a metallic base and over the
+    // dielectric interface (not over the coat, a layer of its own, nor a
+    // flake): its weight, thickness and index, none at a weight of 1e-4 or
+    // less.
+    var film = vec4<f32>(0.0);
+    if (FEATURE_FILM && m.film.x > 1e-4) {
+        film = vec4<f32>(m.film.xyz, 0.0);
     }
     var specular_scale = 0.0;
     var diffuse_albedo = 0.0;
@@ -500,6 +512,7 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
                 m.metal_n.xyz,
                 m.metal_k.xyz,
                 m.base_color.xyz,
+                film,
             );
             openpbr_push(&b, LOBE_METAL, base_scale, metalness, occlusion);
         }
@@ -514,6 +527,7 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
             if (specular_weight > 1e-4) {
                 b.specular = specular_new(openpbr_rough(m.specular_roughness, roughness_floor), m.specular_ior);
                 b.specular.tint = m.specular_color.xyz;
+                b.specular.film = film;
                 b.has_specular = true;
                 specular_scale = specular_weight;
                 openpbr_push(&b, LOBE_SPECULAR, base_scale, dielectric * specular_weight, occlusion);

@@ -98,6 +98,17 @@ fn a_background_colour_or_backplate_is_not_said() {
     assert!(floor_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &plate.lighting.config()));
 }
 
+/// A thin film is the card's as the processor's (`film.wgsl`): no limit.
+#[test]
+fn a_thin_film_is_not_said() {
+    let document = with_material(grey(), "Body", &|m| {
+        m.thin_film_weight = 1.0;
+        m.thin_film_thickness = 400.0;
+    });
+    let scene = snapped(&document);
+    assert!(glass_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", glass_limits(&scene, &document.lighting.config()));
+}
+
 /// Flakes are the card's as the processor's (`flakes.wgsl`): no limit.
 #[test]
 fn flakes_are_not_said() {

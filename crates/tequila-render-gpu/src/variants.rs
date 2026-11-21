@@ -124,9 +124,11 @@ impl KernelFeatures {
     /// Metallic paint's flakes: the flake field at a point and the metal
     /// lobe under the coat in the flake's frame.
     pub const FLAKES: KernelFeatures = part(26);
+    /// A thin film over the metal and the dielectric interface.
+    pub const FILM: KernelFeatures = part(27);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 27] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 28] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -154,6 +156,7 @@ impl KernelFeatures {
         (Self::PASSES_PARTS, "FEATURE_PASSES_PARTS"),
         (Self::IES, "FEATURE_IES"),
         (Self::FLAKES, "FEATURE_FLAKES"),
+        (Self::FILM, "FEATURE_FILM"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -283,6 +286,9 @@ impl KernelFeatures {
         // The flake field and the flake's lobe (shade_vertex, openpbr_build:
         // a material record's flake weight, which no program drives).
         keep(any_material(&|m| m.flake_color[3] > 1e-4), Self::FLAKES);
+        // The film over the metal and the interface (openpbr_build: a
+        // material record's film weight, which no program drives).
+        keep(any_material(&|m| m.film[0] > 1e-4), Self::FILM);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of

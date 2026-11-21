@@ -287,6 +287,21 @@ fn flaked(rng: &mut Pcg32) -> Material {
     m
 }
 
+/// [`flaked`] under a thin film over the metal and the interface, its
+/// weight, thickness and index over their ranges (now and then none).
+fn filmed(rng: &mut Pcg32) -> Material {
+    let mut m = flaked(rng);
+    m.thin_film_weight = match rng.next_f32() {
+        x if x < 0.1 => rng.next_f32() * 2e-4,
+        x if x < 0.5 => 1.0,
+        _ => rng.next_f32(),
+    };
+    m.thin_film_thickness = if rng.next_f32() < 0.05 { 0.0 } else { rng.next_f32() * 2000.0 };
+    m.thin_film_ior = 1.0 + rng.next_f32() * 2.0;
+    assert!(GpuMaterial::supports(&m));
+    m
+}
+
 /// The stack's words: eval rgb, pdf, sampled, wi, f, pdf, delta, the
 /// reflection's roughness (-1 for none), albedo rgb.
 const STACK_WORDS: [Word; 17] = [
@@ -330,8 +345,8 @@ fn material_from_words() -> String {
     parts.push(at(62));
     parts.push("inp(63u)".into());
     // The glow behind, then the flakes: colour and weight, size, spread,
-    // roughness and coverage, normal.
-    for v in [64, 68, 72, 76] {
+    // roughness and coverage, normal; then the film and the dispersion.
+    for v in [64, 68, 72, 76, 80] {
         parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
     }
     format!("GpuMaterial({})", parts.join(", "))
@@ -344,7 +359,7 @@ fn the_stack(seed: u64, aimed: bool) {
 /// The stack's test over materials `make` makes, its name ending `kind`.
 fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: &str) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 80);
+    assert_eq!(MATERIAL_WORDS, 84);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut misses, mut floored) = (0, 0, 0);
@@ -448,6 +463,18 @@ fn the_aimed_stack_on_a_flake_is_the_processors() {
     the_stack_of(35, true, flaked, " on flakes");
 }
 
+/// Under a thin film: the metal's and the interface's Fresnel the film's
+/// Airy sum, the coat's and a flake's bare.
+#[test]
+fn the_stack_under_a_film_is_the_processors() {
+    the_stack_of(37, false, filmed, " under films");
+}
+
+#[test]
+fn the_aimed_stack_under_a_film_is_the_processors() {
+    the_stack_of(38, true, filmed, " under films");
+}
+
 /// integrator.rs's `seeing_share` with its thresholds as parameters: 1 up
 /// to `up_to`, 0 from `passed_from`, smoothstepped between.
 fn seeing_share(roughness: f32, up_to: f32, passed_from: f32) -> f32 {
@@ -480,6 +507,12 @@ const SELECTIVE_WORDS: [Word; 12] = [
 #[test]
 fn the_stacks_reflection_density_and_selective_values_are_the_processors() {
     reflection_density_and_selective_values(33, material, "");
+}
+
+/// The same under thin films.
+#[test]
+fn the_stacks_reflection_density_and_selective_values_under_a_film_are_the_processors() {
+    reflection_density_and_selective_values(39, filmed, " under films");
 }
 
 /// The same on metallic paint, where a flake is a reflection of its own.

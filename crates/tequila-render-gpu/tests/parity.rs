@@ -347,6 +347,13 @@ fn metallic_paint_is_the_processors_picture() {
     same_picture("metallic_paint");
 }
 
+/// Thin films over a rough and a smooth dielectric, a rough and a smooth
+/// metal, a half metal under a coat.
+#[test]
+fn thin_films_are_the_processors_picture() {
+    same_picture("thin_film");
+}
+
 /// The library's presets with metallic flakes (`flakes.rs`) on the
 /// Headphones' parts, every one of them, as the presets have them - their
 /// programs' bumps and rounded edges kept: the flake field in each part's

@@ -95,3 +95,6 @@ override FEATURE_IES: bool = true;
 // Metallic paint's flakes: the flake field at a point (flakes.wgsl) and
 // the metal lobe under the coat in the flake's frame (openpbr.wgsl).
 override FEATURE_FLAKES: bool = true;
+// A thin film over the metal and the dielectric interface: the Airy sum in
+// place of their Fresnel (film.wgsl).
+override FEATURE_FILM: bool = true;

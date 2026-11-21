@@ -1,8 +1,9 @@
 // The lobes: tequila_materials::lobes' OrenNayarDiffuse (EON),
-// DielectricSpecular and Conductor, without thin films (thin_film.wgsl, to
-// come), and DielectricTransmission, glass. Shading frame, z along the
-// normal.
+// DielectricSpecular and Conductor, each with the thin film over it its
+// `film` holds (film.wgsl; none on a coat or a flake), and
+// DielectricTransmission, glass. Shading frame, z along the normal.
 //#include energy
+//#include film
 
 const L_FRAC_1_PI: f32 = 0.318309886183790671538;
 const FUJII_A: f32 = 0.5 - 2.0 / (3.0 * 3.14159265358979323846);
@@ -131,21 +132,29 @@ fn diffuse_sample(l: Diffuse, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
     return LobeSample(true, s.wi, diffuse_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
-// --- DielectricSpecular (no film) --------------------------------------
+// --- DielectricSpecular --------------------------------------------------
 
 struct Specular {
     distribution: Ggx,
     ior: f32,
     tint: vec3<f32>,
     weight: f32,
+    // The thin film over the interface (film.wgsl): none where its weight
+    // is nought, as specular_new makes it.
+    film: vec4<f32>,
 };
 
 fn specular_new(roughness: f32, ior: f32) -> Specular {
-    return Specular(ggx_from_roughness(roughness, 0.0), max(ior, 1.0), vec3<f32>(1.0), 1.0);
+    return Specular(ggx_from_roughness(roughness, 0.0), max(ior, 1.0), vec3<f32>(1.0), 1.0, vec4<f32>(0.0));
 }
 
+// The reflectance at a microfacet, bare or under the film.
 fn specular_reflectance(l: Specular, cos_theta: f32) -> vec3<f32> {
-    return vec3<f32>(fresnel_dielectric(cos_theta, l.ior));
+    let bare = vec3<f32>(fresnel_dielectric(cos_theta, l.ior));
+    if (FEATURE_FILM && film_on(l.film)) {
+        return film_over(bare, cos_theta, l.film, vec3<f32>(max(l.ior, 1.0)), vec3<f32>(0.0));
+    }
+    return bare;
 }
 
 fn specular_compensation_probability(l: Specular, wo: vec3<f32>) -> f32 {
@@ -240,17 +249,26 @@ fn specular_sample(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSam
     return LobeSample(true, s.wi, specular_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
-// --- Conductor (no film) -----------------------------------------------
+// --- Conductor -----------------------------------------------------------
 
 struct Conductor {
     distribution: Ggx,
     n: vec3<f32>,
     k: vec3<f32>,
     tint: vec3<f32>,
+    // The thin film over the metal (film.wgsl), none where its weight is
+    // nought.
+    film: vec4<f32>,
 };
 
+// The reflectance at a microfacet, bare or under the film, over the metal's
+// complex index n - ik.
 fn conductor_reflectance(l: Conductor, cos_theta: f32) -> vec3<f32> {
-    return fresnel_conductor(cos_theta, l.n, l.k);
+    let bare = fresnel_conductor(cos_theta, l.n, l.k);
+    if (FEATURE_FILM && film_on(l.film)) {
+        return film_over(bare, cos_theta, l.film, l.n, -l.k);
+    }
+    return bare;
 }
 
 fn conductor_compensation_probability(l: Conductor, wo: vec3<f32>) -> f32 {

@@ -598,6 +598,22 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: metallic_paint,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "thin_film",
+    covers: "R3 tier A, thin film: the product under the environment, films over every kind of interface - a \
+             rough plastic body under a film 450 nm thick, an aluminium bezel anodised under one 320 nm thick of \
+             index 2, a mirror-smooth lens coated against reflection (110 nm of index 1.38), the trim mirror-smooth \
+             gold under a thick film (1.2 um) at seven tenths, the buttons half metal half plastic under a film \
+             at half its weight and a coat with none - the Airy sum at 600, 550 and 450 nm over a dielectric and \
+             over a metal's complex index, both polarizations, blended with the bare interface by the film's weight, \
+             on rough and mirror-smooth lobes",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: thin_film,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2016,6 +2032,41 @@ fn metallic_paint() -> SceneDocument {
         m.flake_color = Spectrum { r: 0.8, g: 0.85, b: 0.9 };
     });
     document
+}
+
+/// `simple_product` with thin films over its interfaces (`thin_film.rs`):
+/// over a rough dielectric, a rough metal, a smooth dielectric, a smooth
+/// metal and a half metal under a coat.
+fn thin_film() -> SceneDocument {
+    use tequila_materials::fresnel::metals;
+    let film = |m: &mut Material, weight: f32, thickness: f32, ior: f32| {
+        m.thin_film_weight = weight;
+        m.thin_film_thickness = thickness;
+        m.thin_film_ior = ior;
+    };
+    simple_product_mapped(&|(name, material_type, mut m)| {
+        match name {
+            "Body" => film(&mut m, 1.0, 450.0, 1.45),
+            "Bezel" => film(&mut m, 1.0, 320.0, 2.0),
+            "Lens" => {
+                m.specular_roughness = 0.0;
+                film(&mut m, 1.0, 110.0, 1.38);
+            }
+            "Trim" => {
+                m = Material::metal(metals::GOLD, 0.0);
+                film(&mut m, 0.7, 1200.0, 1.6);
+            }
+            "Button" => {
+                m.base_metalness = 0.5;
+                m.coat_weight = 1.0;
+                m.coat_roughness = 0.1;
+                film(&mut m, 0.5, 600.0, 1.33);
+            }
+            _ => {}
+        }
+        (name, material_type, m)
+    })
+    .0
 }
 
 /// `simple_product` on its modelled ground, bumped by pictures every way:
