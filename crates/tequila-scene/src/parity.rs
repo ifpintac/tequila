@@ -727,6 +727,19 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: backlit_translucency,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "driven_subsurface",
+    covers: "R3 tier B, a subsurface colour a program drives: subsurface_product with a checker drawing its body's \
+             subsurface colour, warm or cool - the stack's doorway and the diffuse's trapped light at each hit by the \
+             program's colour, and the walk's medium made from it where the path goes in (walk_coefficients' albedo \
+             worked out on the card), its guide from that medium",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: driven_subsurface,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2427,5 +2440,22 @@ fn backlit_translucency() -> SceneDocument {
             ("Sheet", crate::bench::rounded_box(vec3(0.35 * radius, 0.5 * radius, 0.002), 0.0008, 8), MaterialType::Translucent, sheet, placed(sheet_at, eye - sheet_at)),
         ],
     );
+    document
+}
+
+/// subsurface_product with a checker drawing its body's subsurface colour.
+fn driven_subsurface() -> SceneDocument {
+    let mut document = subsurface_product();
+    let key = document.materials.iter().find(|(_, m)| m.name == "Body").map(|(k, _)| k).expect("the body");
+    let graph = &mut document.materials.get_mut(key).expect("the body").graph;
+    let output = graph.output();
+    let planar = Mapping { projection: Projection::Planar, axis: Axis::Z, real_world_units: true, scale: vec3(0.08, 0.08, 1.0), ..Mapping::default() };
+    let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+    let mut checker = Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker));
+    checker.literals.insert(Socket::Input(1), Value::Color(Spectrum { r: 0.95, g: 0.55, b: 0.3 }));
+    checker.literals.insert(Socket::Input(2), Value::Color(Spectrum { r: 0.45, g: 0.75, b: 0.95 }));
+    let checker = graph.add_node(checker);
+    graph.connect(m, checker, Socket::Input(0));
+    graph.connect(checker, output, Socket::Param(Param::SubsurfaceColor));
     document
 }

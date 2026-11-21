@@ -2717,12 +2717,21 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             // (of the shaded material), guided back towards this point and
             // out through this surface; or the one the path was on ends
             // (ic:2388-2395).
+            // Its medium's albedo the shaded material's: worked out again
+            // where a program changed its colour (walk_coefficients).
+            var albedo = material.subsurface_albedo.xyz;
+            let c = material.subsurface_color.xyz;
+            if (any(c != scene_materials[inst.material].subsurface_color.xyz)) {
+                let fit = material.walk_fit;
+                let ef = material.walk_fit_ef;
+                albedo = vec3<f32>(md_walk_albedo(c.x, fit, ef.x, ef.y), md_walk_albedo(c.y, fit, ef.x, ef.y), md_walk_albedo(c.z, fit, ef.x, ef.y));
+            }
             var media = (*st).media;
-            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, material.subsurface_albedo.xyz);
+            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, albedo);
             (*st).media = media;
             (*st).guide = md_no_guide();
             if (media_walking_in(media, inst.solid)) {
-                (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), material.subsurface_albedo.xyz, material.subsurface_extinction.w);
+                (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
             }
         } else if (boundary) {
             // Through a local: naga's SPIR-V writer cannot pass a pointer

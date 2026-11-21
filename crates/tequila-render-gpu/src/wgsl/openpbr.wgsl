@@ -153,6 +153,10 @@ struct GpuMaterial {
     subsurface_color: vec4<f32>,
     subsurface_extinction: vec4<f32>,
     subsurface_albedo: vec4<f32>,
+    // walk_coefficients' fit at the walk's anisotropy - a, b, c and d, and
+    // e and f - for an albedo a program's subsurface colour asks for.
+    walk_fit: vec4<f32>,
+    walk_fit_ef: vec4<f32>,
 };
 
 // Material::emission, in nits: the colour times the luminance.

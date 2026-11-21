@@ -403,19 +403,25 @@ fn prog_material_from(f: array<f32, 48>, base: GpuMaterial) -> GpuMaterial {
         vec4<f32>(f[44], f[45], f[46], f[47]), base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
         base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base.edge_radius, base.edge_samples,
         base.volume_glow, base.flake_color, base.flake, base.flake_normal, base.film, base.volume_extinction, base.volume_albedo,
-        base.subsurface_color, base.subsurface_extinction, base.subsurface_albedo,
+        base.subsurface_color, base.subsurface_extinction, base.subsurface_albedo, base.walk_fit, base.walk_fit_ef,
     );
 }
 
 // write_param for every driven parameter of `p`: a colour as a colour, a
-// number as a number (a colour's luminance), over `base`.
+// number as a number (a colour's luminance), over `base`; past the floats,
+// the subsurface colour (program.rs's WRITE_BACK_FLOATS), its weight kept.
 fn prog_write_back(p: GpuProgram, base: GpuMaterial) -> GpuMaterial {
     var f = prog_material_floats(base);
+    var subsurface = base.subsurface_color;
     for (var k = 0u; k < p.writes_count; k++) {
         let slot = program_words[p.writes_start + 2u * k];
         let v = prog_value(program_words[p.writes_start + 2u * k + 1u]);
         let at = slot & 0xFFu;
-        if ((slot & 0x100u) != 0u) {
+        if (at >= 48u) {
+            if (FEATURE_SUBSURFACE) {
+                subsurface = vec4<f32>(v.xyz, subsurface.w);
+            }
+        } else if ((slot & 0x100u) != 0u) {
             f[at] = v.x;
             f[at + 1u] = v.y;
             f[at + 2u] = v.z;
@@ -423,7 +429,9 @@ fn prog_write_back(p: GpuProgram, base: GpuMaterial) -> GpuMaterial {
             f[at] = v.x;
         }
     }
-    return prog_material_from(f, base);
+    var m = prog_material_from(f, base);
+    m.subsurface_color = subsurface;
+    return m;
 }
 
 // Vec3 / f32 as tequila-core has it: times the reciprocal.

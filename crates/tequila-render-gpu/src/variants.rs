@@ -316,7 +316,7 @@ impl KernelFeatures {
         keep(any_material(&|m| m.glass & GLASS_SCATTERS != 0), Self::SCATTERING);
         // The subsurface lobe (openpbr_build, a material's subsurface
         // weight) and the walk it opens.
-        keep(any_material(&|m| m.subsurface_color[3] != 0.0), Self::SUBSURFACE);
+        keep(any_material(&|m| m.subsurface_color[3] != 0.0) || ops.writes_past, Self::SUBSURFACE);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -408,14 +408,24 @@ pub struct SceneRecords<'a> {
 }
 
 /// Which instructions the programs hold, a bit each by opcode, walked as
-/// `prog_run` walks them.
+/// `prog_run` walks them; and whether any writes the subsurface colour (a
+/// write past the write-back's floats).
 struct ProgramOps {
     seen: u64,
+    writes_past: bool,
 }
 
 impl ProgramOps {
     fn of(table: &ProgramTable) -> ProgramOps {
-        let mut ops = ProgramOps { seen: 0 };
+        let mut ops = ProgramOps { seen: 0, writes_past: false };
+        for h in &table.headers {
+            for k in 0..h.writes_count as usize {
+                let at = h.writes_start as usize + 2 * k;
+                if table.words.get(at).is_some_and(|slot| slot & 0xFF >= crate::program::WRITE_BACK_FLOATS) {
+                    ops.writes_past = true;
+                }
+            }
+        }
         for h in &table.headers {
             for (start, end) in [(h.main_start, h.main_end), (h.bump_start, h.bump_end)] {
                 let mut pc = start as usize;

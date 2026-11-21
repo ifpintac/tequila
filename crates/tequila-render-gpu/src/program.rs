@@ -1391,6 +1391,10 @@ impl Builder<'_> {
     }
 }
 
+/// How many of `GpuMaterial`'s floats the write-back holds (`program.wgsl`'s
+/// `prog_material_floats`): a parameter past them is the subsurface colour.
+pub const WRITE_BACK_FLOATS: u32 = 48;
+
 /// Where in `GpuMaterial` a parameter the card's stack reads is, as a float
 /// offset, and whether it is a colour (three floats).
 pub fn material_slot(param: Param) -> Option<(u32, bool)> {
@@ -1430,6 +1434,11 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
         // shadow ray passes stay the scene's own material's, as the
         // processor keeps them (`is_boundary`, `Pane::of_program`).
         Param::TransmissionWeight => (at(offset_of!(M, transmission_color)) + 3, false),
+        // The colour a walk under the surface gives back, which the stack
+        // reads and a walk's medium is made from: past the write-back's
+        // floats (`WRITE_BACK_FLOATS`), where the write-back takes it as
+        // the subsurface colour.
+        Param::SubsurfaceColor => (at(offset_of!(M, subsurface_color)), true),
         _ => return None,
     })
 }

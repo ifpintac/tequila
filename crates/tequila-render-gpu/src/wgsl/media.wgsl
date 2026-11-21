@@ -279,6 +279,19 @@ fn md_plain_density(chance: vec3<f32>, sigma: vec3<f32>, kept: vec3<f32>, collid
     return (cy_exact(chance.x * kept.x) + cy_exact(chance.y * kept.y)) + cy_exact(chance.z * kept.z);
 }
 
+// walk_coefficients' albedo for one channel's colour, the walk's fit at
+// its anisotropy worked out on the processor (GpuMaterial's walk_fit: a, b,
+// c, d, and in walk_fit_ef e and f): the single-scattering albedo a walk
+// needs to give `colour` back (Chiang, Kutz and Burley's fit, as Cycles'
+// subsurface_random_walk_remap has it).
+fn md_walk_albedo(colour: f32, fit: vec4<f32>, e: f32, f: f32) -> f32 {
+    let albedo = clamp(colour, 0.0, 1.0);
+    let blend = md_pow(albedo, 0.25);
+    let near = cy_exact(cy_exact((1.0 - blend) * fit.x) * md_pow(md_atan(cy_exact(fit.y * albedo)), fit.z));
+    let far = cy_exact(cy_exact(blend * fit.w) * md_pow(md_atan(cy_exact(e * albedo)), f));
+    return clamp(near + far, 0.0, 0.999999);
+}
+
 // ---- The guided walk (WalkGuide) -----------------------------------------
 
 // A walk under a surface guided back towards where it came in: the solid

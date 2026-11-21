@@ -616,6 +616,48 @@ fn a_third_subsurface_wall_is_the_processors_picture() {
     subsurface_wall(2);
 }
 
+/// A subsurface colour a program drives: a checker over a translucent
+/// body, the walk's medium made from it where the path goes in.
+#[test]
+fn a_subsurface_colour_a_program_drives_is_the_processors_picture() {
+    same_picture("driven_subsurface");
+}
+
+/// The library's presets whose programs drive their subsurface colour, on
+/// the Headphones' parts in turn.
+#[test]
+fn a_wall_of_driven_subsurface_colours_is_the_processors_picture() {
+    use tequila_materials::material_type::Param;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let driven: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            program.driven.iter().any(|(param, _)| *param == Param::SubsurfaceColor)
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+                && m.flake_weight <= 1e-4
+        })
+        .collect();
+    assert!(!driven.is_empty(), "no preset drives its subsurface colour");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &driven[j % driven.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("driven subsurface wall ({} presets): {}", driven.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "driven_subsurface_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {

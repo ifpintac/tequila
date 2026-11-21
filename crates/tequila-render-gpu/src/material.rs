@@ -129,6 +129,11 @@ pub struct GpuMaterial {
     /// albedo.
     pub subsurface_extinction: [f32; 4],
     pub subsurface_albedo: [f32; 4],
+    /// `walk_coefficients`' fit at the walk's anisotropy, for the albedo
+    /// a program's subsurface colour asks for: its `a`, `b`, `c` and `d`,
+    /// and in `walk_fit_ef` its `e` and `f`.
+    pub walk_fit: [f32; 4],
+    pub walk_fit_ef: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -151,6 +156,34 @@ pub const GLASS_PANE_VOLUME: u32 = 64;
 /// The medium behind the surface scatters as well as absorbs
 /// (`Material::volume_scattering`): a path in it walks.
 pub const GLASS_SCATTERS: u32 = 128;
+
+/// `tequila_materials::openpbr::walk_coefficients`' fit at anisotropy `g`,
+/// its `a` to `f`, written as it writes them, so that the card's albedo for
+/// a colour is the processor's (`media.wgsl`'s `md_walk_albedo`).
+pub fn walk_fit(g: f32) -> [f32; 6] {
+    let (g2, g3, g4, g5, g6, g7) = (g * g, g * g * g, g.powi(4), g.powi(5), g.powi(6), g.powi(7));
+    let a = 1.8260523782 - 1.28451056436 * g - 1.79904629312 * g2 + 9.19393289202 * g3 - 22.8215585862 * g4
+        + 32.0234874259 * g5 - 23.6264803333 * g6 + 7.21067002658 * g7;
+    let b = 4.98511194385
+        + 0.127355959438
+            * (31.1491581433 * g - 201.847017512 * g2 + 841.576016723 * g3 - 2018.09288505 * g4 + 2731.71560286 * g5
+                - 1935.41424244 * g6
+                + 559.009054474 * g7)
+                .exp();
+    let c = 1.09686102424 - 0.394704063468 * g + 1.05258115941 * g2 - 8.83963712726 * g3 + 28.8643230661 * g4
+        - 46.8802913581 * g5 + 38.5402837518 * g6 - 12.7181042538 * g7;
+    let d = 0.496310210422 + 0.360146581622 * g - 2.15139309747 * g2 + 17.8896899217 * g3 - 55.2984010333 * g4
+        + 82.065982243 * g5 - 58.5106008578 * g6 + 15.8478295021 * g7;
+    let e = 4.23190299701
+        + 0.00310603949088
+            * (76.7316253952 * g - 594.356773233 * g2 + 2448.8834203 * g3 - 5576.68528998 * g4 + 7116.60171912 * g5
+                - 4763.54467887 * g6
+                + 1303.5318055 * g7)
+                .exp();
+    let f = 2.40602999408 - 2.51814844609 * g + 9.18494908356 * g2 - 79.2191708682 * g3 + 259.082868209 * g4
+        - 403.613804597 * g5 + 302.85712436 * g6 - 87.4370473567 * g7;
+    [a, b, c, d, e, f]
+}
 
 fn colour(s: Spectrum) -> [f32; 4] {
     [s.r, s.g, s.b, 0.0]
@@ -248,6 +281,14 @@ impl GpuMaterial {
             subsurface_color: [m.subsurface_color.r, m.subsurface_color.g, m.subsurface_color.b, m.subsurface_weight],
             subsurface_extinction: walk.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
             subsurface_albedo: walk.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
+            walk_fit: {
+                let [a, b, c, d, _, _] = walk_fit(m.subsurface_scatter_anisotropy.clamp(-0.95, 0.95));
+                [a, b, c, d]
+            },
+            walk_fit_ef: {
+                let [_, _, _, _, e, f] = walk_fit(m.subsurface_scatter_anisotropy.clamp(-0.95, 0.95));
+                [e, f, 0.0, 0.0]
+            },
         }
     }
 

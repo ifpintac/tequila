@@ -42,11 +42,11 @@ use tequila_texture::projection::{PointWorld, RayKind, SurfacePoint};
 /// here, the Tangent drawn (world space), the shading normal, the bump's
 /// heights a step along, and the material's glow and transmission colour
 /// and weight (8 floats).
-const OUT: usize = 57;
+const OUT: usize = 60;
 /// Words an item takes: the program's header, the point, the surface, the
 /// material it is written over, the point's footprints, the mesh's tangent,
 /// and the glow and transmission it is written over.
-const IN: usize = 139;
+const IN: usize = 143;
 
 /// Everything the card needs of a point beyond the program.
 #[derive(Clone, Copy)]
@@ -117,7 +117,9 @@ fn kernel_body() -> String {
     pt.uv_footprint = vec2<f32>(inf(124u), inf(125u));
     pt.has_uv_footprint = inp(126u);
     s.mesh_tangent = vec4<f32>(inf(127u), inf(128u), inf(129u), inf(130u));
-    let r = prog_shade(p, pt, prog_material_from(b, GpuMaterial()), s);
+    var base = prog_material_from(b, GpuMaterial());
+    base.subsurface_color = vec4<f32>(inf(139u), inf(140u), inf(141u), inf(142u));
+    let r = prog_shade(p, pt, base, s);
     let f = prog_material_floats(r.material);
     for (var k = 0u; k < 40u; k++) {{
         outf(k, f[k]);
@@ -128,7 +130,10 @@ fn kernel_body() -> String {
     outf(47u, r.heights.x); outf(48u, r.heights.y);
     for (var k = 0u; k < 8u; k++) {{
         outf(49u + k, f[40u + k]);
-    }}",
+    }}
+    outf(57u, r.material.subsurface_color.x);
+    outf(58u, r.material.subsurface_color.y);
+    outf(59u, r.material.subsurface_color.z);",
         v3(11),
         v3(15),
         v3(23),
@@ -196,6 +201,7 @@ fn processor(case: &Case, textures: &TextureTable) -> [f32; OUT] {
     let mut out = [0.0f32; OUT];
     out[..40].copy_from_slice(&floats(&GpuMaterial::from_material(&material)));
     out[49..57].copy_from_slice(&glow(&GpuMaterial::from_material(&material)));
+    out[57..60].copy_from_slice(&GpuMaterial::from_material(&material).subsurface_color[..3]);
     let register = |p: Param| case.program.driven.iter().find(|(q, _)| *q == p).map(|(_, r)| *r);
     if let Some(r) = bump_param(&case.program).and_then(register) {
         out[40] = registers.value(r).as_float();
@@ -267,6 +273,7 @@ fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram], pictures: &C
         let t = s.tangent.map_or([0.0; 4], |(t, sign)| [t.x, t.y, t.z, sign]);
         inputs.extend(t.iter().map(|v| v.to_bits()));
         inputs.extend(glow(&GpuMaterial::from_material(&case.program.constants)).iter().map(|v| v.to_bits()));
+        inputs.extend(GpuMaterial::from_material(&case.program.constants).subsurface_color.iter().map(|v| v.to_bits()));
     }
     assert_eq!(inputs.len(), cases.len() * IN);
     let words = harness.run_wgsl_with(
@@ -901,6 +908,33 @@ fn transmission_a_program_drives_is_the_processors() {
         }
     }
     compare_all(&h, "transmission", &cases, ARITHMETIC);
+}
+
+/// Programs driving the colour a walk under the surface gives back
+/// (Subsurface Color), over constants of every subsurface colour and
+/// weight.
+#[test]
+fn subsurface_colours_a_program_drives_are_the_processors() {
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(14, 1);
+    let mut cases = Vec::new();
+    let nodes: [(ShaderNode, u8); 4] = [(ShaderNode::Checker, 0), (ShaderNode::Checker, 1), (ShaderNode::GradientTexture { kind: GradientKind::Linear }, 1), (ShaderNode::WhiteNoise { dims: 3 }, 1)];
+    for _ in 0..900 {
+        for (node, output) in nodes {
+            let kind = NodeKind::Node(node);
+            let inputs: Vec<Value> = node.inputs().iter().map(|spec| random_value(&mut rng, spec)).collect();
+            let mut program = single_node(&kind, &inputs, &[output]);
+            program.driven[0].0 = Param::SubsurfaceColor;
+            program.constants = Material {
+                subsurface_color: Spectrum { r: rng.next_f32(), g: rng.next_f32(), b: rng.next_f32() },
+                subsurface_weight: rng.next_f32(),
+                ..Material::default()
+            };
+            let point = random_point(&mut rng, 1.0);
+            cases.push(Case { label: format!("{node:?} output {output} into the subsurface colour"), program, surface: flat_surface(&point), point, normal: None, heights: None });
+        }
+    }
+    compare_all(&h, "subsurface colour", &cases, ARITHMETIC);
 }
 
 // ---- The bump ------------------------------------------------------------
