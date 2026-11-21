@@ -104,10 +104,11 @@ fn film_on(film: vec4<f32>) -> bool {
 // reflectance at `cos_theta`, blended by the film's weight towards the
 // coated one over a base of index `base_re` - i `base_im` per channel
 // (a dielectric's index and nought, or a conductor's n and -k). Each
-// channel's Airy sum from one place.
+// channel's Airy sum from one place, the count opaque to the compiler so it
+// keeps one copy.
 fn film_over(bare: vec3<f32>, cos_theta: f32, film: vec4<f32>, base_re: vec3<f32>, base_im: vec3<f32>) -> vec3<f32> {
     var coated = vec3<f32>(0.0);
-    for (var c = 0u; c < 3u; c++) {
+    for (var c = 0u; c < (3u | cy_zero); c++) {
         let r = film_airy(cos_theta, film.z, vec2<f32>(base_re[c], base_im[c]), film.y, FILM_WAVELENGTHS[c]);
         coated = select(coated, vec3<f32>(r), vec3<u32>(0u, 1u, 2u) == vec3<u32>(c));
     }

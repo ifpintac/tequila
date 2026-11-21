@@ -292,13 +292,10 @@ fn openpbr_stack_transmittance(b: OpenPbr, coat_average: f32, coat_weight: f32, 
     return clamp(total / 16.0, 0.0, 1.0);
 }
 
-// The coat and a flake wear no film (OpenPbrBsdf::build): their lobes as
-// read with the film a constant nought, so the film's arithmetic is built
-// only into the metal's and the interface's arms.
-fn openpbr_bare_specular(l: Specular) -> Specular {
-    return Specular(l.distribution, l.ior, l.tint, l.weight, vec4<f32>(0.0));
-}
-
+// A flake wears no film (OpenPbrBsdf::build): its metal as read with the
+// film a constant nought, so the film's arithmetic is not built into its
+// albedo's arm. (The coat's and a flake's evaluations and draws are handed
+// no film: openpbr_lobe_eval, openpbr_lobe_draw.)
 fn openpbr_bare_conductor(l: Conductor) -> Conductor {
     return Conductor(l.distribution, l.n, l.k, l.tint, vec4<f32>(0.0));
 }
@@ -340,7 +337,7 @@ fn openpbr_flake_eval(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
     if (!(o.z > 0.0 && i.z > 0.0) || wi.z <= 1e-6) {
         return vec3<f32>(0.0);
     }
-    return conductor_eval(openpbr_bare_conductor(b.flake), o, i) * (i.z / wi.z);
+    return conductor_eval_given(b.flake, o, i, vec4<f32>(0.0)) * (i.z / wi.z);
 }
 
 fn openpbr_flake_pdf(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
@@ -361,7 +358,7 @@ fn openpbr_flake_draw(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeS
     if (local.z <= 0.0) {
         return no_sample();
     }
-    var s = conductor_draw(openpbr_bare_conductor(b.flake), local, u, uc);
+    var s = conductor_draw_given(b.flake, local, u, uc, vec4<f32>(0.0));
     if (!s.ok) {
         return s;
     }
@@ -376,18 +373,53 @@ fn openpbr_flake_draw(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeS
     return s;
 }
 
+// The film over the metal or the interface - whichever `slot` is - at a
+// microfacet seen at `cos_theta` (specular_film, conductor_film), from one
+// place: the coat and a flake wear none.
+fn openpbr_film(b: OpenPbr, slot: u32, cos_theta: f32) -> vec4<f32> {
+    let metal = slot == LOBE_METAL;
+    let film = select(b.specular.film, b.metal.film, metal);
+    if (!film_on(film)) {
+        return vec4<f32>(0.0);
+    }
+    var bare: vec3<f32>;
+    var base_re: vec3<f32>;
+    var base_im: vec3<f32>;
+    if (metal) {
+        bare = fresnel_conductor(cos_theta, b.metal.n, b.metal.k);
+        base_re = b.metal.n;
+        base_im = -b.metal.k;
+    } else {
+        bare = vec3<f32>(fresnel_dielectric(cos_theta, b.specular.ior));
+        base_re = vec3<f32>(max(b.specular.ior, 1.0));
+        base_im = vec3<f32>(0.0);
+    }
+    return vec4<f32>(film_over(bare, cos_theta, film, base_re, base_im), 1.0);
+}
+
 fn openpbr_lobe_eval(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
+    // The metal's or the interface's film at the microfacet, once, where it
+    // is rough and the pair of directions is above it, as its evaluation
+    // reads it then.
+    var filmed = vec4<f32>(0.0);
+    if (FEATURE_FILM && wo.z > 0.0 && wi.z > 0.0
+        && ((slot == LOBE_METAL && !ggx_is_smooth(b.metal.distribution)) || (slot == LOBE_SPECULAR && !ggx_is_smooth(b.specular.distribution) && b.specular.weight > 0.0))) {
+        let cos_theta = lobe_half_cos(wo, wi);
+        if (cos_theta >= 0.0) {
+            filmed = openpbr_film(b, slot, cos_theta);
+        }
+    }
     switch slot {
         case LOBE_FUZZ: { return sheen_eval(b.fuzz, wo, wi); }
-        case LOBE_COAT: { return specular_eval(openpbr_bare_specular(b.coat), wo, wi); }
+        case LOBE_COAT: { return specular_eval_given(b.coat, wo, wi, vec4<f32>(0.0)); }
         case LOBE_FLAKE: {
             if (FEATURE_FLAKES) {
                 return openpbr_flake_eval(b, wo, wi);
             }
             return vec3<f32>(0.0);
         }
-        case LOBE_METAL: { return conductor_eval(b.metal, wo, wi); }
-        case LOBE_SPECULAR: { return specular_eval(b.specular, wo, wi); }
+        case LOBE_METAL: { return conductor_eval_given(b.metal, wo, wi, filmed); }
+        case LOBE_SPECULAR: { return specular_eval_given(b.specular, wo, wi, filmed); }
         case LOBE_TRANSMISSION: { return transmission_eval(b.transmission, wo, wi); }
         default: { return diffuse_eval(b.diffuse, wo, wi); }
     }
@@ -414,17 +446,24 @@ fn openpbr_lobe_pdf(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> f32 
 // of its own density and value, which the stack makes from its own
 // evaluation in the direction drawn.
 fn openpbr_lobe_draw(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    // The metal's or the interface's film seen at wo.z, once, where it is
+    // mirror-smooth and its draw reads it.
+    var filmed = vec4<f32>(0.0);
+    if (FEATURE_FILM && wo.z > 0.0
+        && ((slot == LOBE_METAL && ggx_is_smooth(b.metal.distribution)) || (slot == LOBE_SPECULAR && ggx_is_smooth(b.specular.distribution) && b.specular.weight > 0.0))) {
+        filmed = openpbr_film(b, slot, wo.z);
+    }
     switch slot {
         case LOBE_FUZZ: { return sheen_draw(b.fuzz, wo, u); }
-        case LOBE_COAT: { return specular_draw(openpbr_bare_specular(b.coat), wo, u, uc); }
+        case LOBE_COAT: { return specular_draw_given(b.coat, wo, u, uc, vec4<f32>(0.0)); }
         case LOBE_FLAKE: {
             if (FEATURE_FLAKES) {
                 return openpbr_flake_draw(b, wo, u, uc);
             }
             return no_sample();
         }
-        case LOBE_METAL: { return conductor_draw(b.metal, wo, u, uc); }
-        case LOBE_SPECULAR: { return specular_draw(b.specular, wo, u, uc); }
+        case LOBE_METAL: { return conductor_draw_given(b.metal, wo, u, uc, filmed); }
+        case LOBE_SPECULAR: { return specular_draw_given(b.specular, wo, u, uc, filmed); }
         case LOBE_TRANSMISSION: { return transmission_draw(b.transmission, wo, u, uc); }
         default: { return diffuse_draw(b.diffuse, wo, u); }
     }
@@ -562,8 +601,12 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
     }
 
     // --- selection probabilities (§2.4), face on, unless openpbr_aim is
-    // about to choose them.
-    b.chosen = !(to_aim && b.count >= 2u);
+    // about to choose them. The processor makes the face-on choice here for
+    // a stack to aim with fewer than two lobes, which aim then keeps; aim
+    // makes it itself where it declines, which it does for such a stack, so
+    // a stack built to aim leaves it to aim: the same probabilities, and
+    // the face-on choice in one place in a kernel that aims.
+    b.chosen = !to_aim;
     if (b.chosen) {
         b.probabilities = openpbr_face_on(b);
     }

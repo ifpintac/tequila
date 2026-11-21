@@ -148,13 +148,45 @@ fn specular_new(roughness: f32, ior: f32) -> Specular {
     return Specular(ggx_from_roughness(roughness, 0.0), max(ior, 1.0), vec3<f32>(1.0), 1.0, vec4<f32>(0.0));
 }
 
+// The microfacet a pair of directions reflects off, as the reflections'
+// evaluations find it: |wo . wm|, or -1 where there is none.
+fn lobe_half_cos(wo: vec3<f32>, wi: vec3<f32>) -> f32 {
+    let h = wo + wi;
+    let len2 = dot(h, h);
+    if (!(len2 > 0.0)) {
+        return -1.0;
+    }
+    var wm = h * (1.0 / sqrt(len2));
+    if (wm.z < 0.0) {
+        wm = -wm;
+    }
+    return abs(dot(wo, wm));
+}
+
+// The film's reflectance at a microfacet seen at `cos_theta`, and in w 1;
+// nought, w 0, where the lobe wears none. The stack works it out once in
+// each of its lobe functions, for whichever lobe it reads (openpbr_film),
+// and hands it to the lobe's *_given functions, so the film's arithmetic is
+// built once a place rather than once a lobe.
+fn specular_film(l: Specular, cos_theta: f32) -> vec4<f32> {
+    if (FEATURE_FILM && film_on(l.film)) {
+        return vec4<f32>(film_over(vec3<f32>(fresnel_dielectric(cos_theta, l.ior)), cos_theta, l.film, vec3<f32>(max(l.ior, 1.0)), vec3<f32>(0.0)), 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+
+// The reflectance at a microfacet: the film's, where `filmed` holds it,
+// else the bare interface's.
+fn specular_reflectance_given(l: Specular, cos_theta: f32, filmed: vec4<f32>) -> vec3<f32> {
+    if (filmed.w != 0.0) {
+        return filmed.xyz;
+    }
+    return vec3<f32>(fresnel_dielectric(cos_theta, l.ior));
+}
+
 // The reflectance at a microfacet, bare or under the film.
 fn specular_reflectance(l: Specular, cos_theta: f32) -> vec3<f32> {
-    let bare = vec3<f32>(fresnel_dielectric(cos_theta, l.ior));
-    if (FEATURE_FILM && film_on(l.film)) {
-        return film_over(bare, cos_theta, l.film, vec3<f32>(max(l.ior, 1.0)), vec3<f32>(0.0));
-    }
-    return bare;
+    return specular_reflectance_given(l, cos_theta, specular_film(l, cos_theta));
 }
 
 fn specular_compensation_probability(l: Specular, wo: vec3<f32>) -> f32 {
@@ -183,6 +215,12 @@ fn specular_hemispherical_albedo(l: Specular) -> f32 {
 }
 
 fn specular_eval(l: Specular, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
+    return specular_eval_given(l, wo, wi, specular_film(l, lobe_half_cos(wo, wi)));
+}
+
+// specular_eval with the film's reflectance at the microfacet given
+// (specular_film).
+fn specular_eval_given(l: Specular, wo: vec3<f32>, wi: vec3<f32>, filmed: vec4<f32>) -> vec3<f32> {
     if (wo.z <= 0.0 || wi.z <= 0.0 || ggx_is_smooth(l.distribution) || l.weight <= 0.0) {
         return vec3<f32>(0.0);
     }
@@ -197,7 +235,7 @@ fn specular_eval(l: Specular, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
     }
     let d = ggx_d(l.distribution, wm);
     let g2 = ggx_g2(l.distribution, wo, wi);
-    let single = specular_reflectance(l, abs(dot(wo, wm))) * (d * g2 / (4.0 * wo.z * wi.z));
+    let single = specular_reflectance_given(l, abs(dot(wo, wm)), filmed) * (d * g2 / (4.0 * wo.z * wi.z));
     let alpha = ggx_average_alpha(l.distribution);
     let e_o = energy_white_directional(wo.z, alpha);
     let e_i = energy_white_directional(wi.z, alpha);
@@ -215,12 +253,17 @@ fn specular_pdf(l: Specular, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
 }
 
 fn specular_draw(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    return specular_draw_given(l, wo, u, uc, specular_film(l, wo.z));
+}
+
+// specular_draw with the film's reflectance seen at wo.z given.
+fn specular_draw_given(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32, filmed: vec4<f32>) -> LobeSample {
     if (wo.z <= 0.0 || l.weight <= 0.0) {
         return no_sample();
     }
     if (ggx_is_smooth(l.distribution)) {
         let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
-        let f = specular_reflectance(l, wo.z) * l.weight;
+        let f = specular_reflectance_given(l, wo.z, filmed) * l.weight;
         return LobeSample(true, wi, l.tint * f * (1.0 / abs(wi.z)), 1.0, true, false, 1.0);
     }
     let p_comp = specular_compensation_probability(l, wo);
@@ -261,14 +304,29 @@ struct Conductor {
     film: vec4<f32>,
 };
 
+// The film's reflectance over the metal's complex index n - ik at a
+// microfacet seen at `cos_theta`, and in w 1; nought, w 0, where it wears
+// none (see specular_film).
+fn conductor_film(l: Conductor, cos_theta: f32) -> vec4<f32> {
+    if (FEATURE_FILM && film_on(l.film)) {
+        return vec4<f32>(film_over(fresnel_conductor(cos_theta, l.n, l.k), cos_theta, l.film, l.n, -l.k), 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+
+// The reflectance at a microfacet: the film's, where `filmed` holds it,
+// else the bare metal's.
+fn conductor_reflectance_given(l: Conductor, cos_theta: f32, filmed: vec4<f32>) -> vec3<f32> {
+    if (filmed.w != 0.0) {
+        return filmed.xyz;
+    }
+    return fresnel_conductor(cos_theta, l.n, l.k);
+}
+
 // The reflectance at a microfacet, bare or under the film, over the metal's
 // complex index n - ik.
 fn conductor_reflectance(l: Conductor, cos_theta: f32) -> vec3<f32> {
-    let bare = fresnel_conductor(cos_theta, l.n, l.k);
-    if (FEATURE_FILM && film_on(l.film)) {
-        return film_over(bare, cos_theta, l.film, l.n, -l.k);
-    }
-    return bare;
+    return conductor_reflectance_given(l, cos_theta, conductor_film(l, cos_theta));
 }
 
 fn conductor_compensation_probability(l: Conductor, wo: vec3<f32>) -> f32 {
@@ -282,6 +340,12 @@ fn conductor_compensation_scale(l: Conductor, e_avg: f32) -> vec3<f32> {
 }
 
 fn conductor_eval(l: Conductor, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
+    return conductor_eval_given(l, wo, wi, conductor_film(l, lobe_half_cos(wo, wi)));
+}
+
+// conductor_eval with the film's reflectance at the microfacet given
+// (conductor_film).
+fn conductor_eval_given(l: Conductor, wo: vec3<f32>, wi: vec3<f32>, filmed: vec4<f32>) -> vec3<f32> {
     if (wo.z <= 0.0 || wi.z <= 0.0 || ggx_is_smooth(l.distribution)) {
         return vec3<f32>(0.0);
     }
@@ -296,7 +360,7 @@ fn conductor_eval(l: Conductor, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
     }
     let d = ggx_d(l.distribution, wm);
     let g2 = ggx_g2(l.distribution, wo, wi);
-    let f = conductor_reflectance(l, abs(dot(wo, wm)));
+    let f = conductor_reflectance_given(l, abs(dot(wo, wm)), filmed);
     let single = f * (d * g2 / (4.0 * wo.z * wi.z));
     let alpha = ggx_average_alpha(l.distribution);
     let e_o = energy_white_directional(wo.z, alpha);
@@ -315,12 +379,17 @@ fn conductor_pdf(l: Conductor, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
 }
 
 fn conductor_draw(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    return conductor_draw_given(l, wo, u, uc, conductor_film(l, wo.z));
+}
+
+// conductor_draw with the film's reflectance seen at wo.z given.
+fn conductor_draw_given(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32, filmed: vec4<f32>) -> LobeSample {
     if (wo.z <= 0.0) {
         return no_sample();
     }
     if (ggx_is_smooth(l.distribution)) {
         let wi = vec3<f32>(-wo.x, -wo.y, wo.z);
-        let f = conductor_reflectance(l, wo.z);
+        let f = conductor_reflectance_given(l, wo.z, filmed);
         return LobeSample(true, wi, f * l.tint / abs(wi.z), 1.0, true, false, 1.0);
     }
     let p_comp = conductor_compensation_probability(l, wo);
