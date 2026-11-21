@@ -970,7 +970,9 @@ fn walk_past(glass_in: u32, place: Surface, direction: vec3<f32>, reach: f32, bl
 // shadow ray passes, weighed by the density the bounce left by (that of the
 // lobes that pass glass where it passed glass that bends light). One walk
 // a light, in one loop, the sky's and the glowing parts' last; each clamped
-// as light found past the bounce before.
+// as light found past the bounce before. Carrying wavelengths, a light's
+// colour and its lobes' are read at them from one place at the end of its
+// turn (ic:1775, 1793-1794).
 fn light_past_part(st: ptr<function, PathState>, hit: RayIntersection, place: Surface, material: GpuMaterial) {
     let inst = scene_instances[hit.instance_custom_data];
     let glass = (*st).through_glass;
@@ -1036,6 +1038,11 @@ fn light_past_part(st: ptr<function, PathState>, hit: RayIntersection, place: Su
             continue;
         }
         var weight = 1.0;
+        // Carrying wavelengths: the lobes' colour and the light's, before
+        // the throughput, for the end of this turn.
+        let spectral = FEATURE_SPECTRAL && spectral_on;
+        var lobes4 = vec3<f32>(1.0);
+        var light4 = vec3<f32>(0.0);
         if (!is_sky) {
             // SeenFrom::weight_of_lamp.
             if (seen.density < PDF_INFINITE) {
@@ -1048,29 +1055,51 @@ fn light_past_part(st: ptr<function, PathState>, hit: RayIntersection, place: Su
                     weight = mis_power(seen.density, straight);
                 }
             }
-            (*st).radiance += clamp_light((*st).throughput * lobes * (emitted * through * weight), ceiling);
-            continue;
-        }
-        let pdf = select((*st).prev_pdf, min((*st).prev_pdf, (*st).pass_pdf), walked.bent);
-        if (!walked.stopped) {
-            // Each through cy_exact: the driver otherwise rounds what follows
-            // otherwise where a dome of a size is a part of the kernel than
-            // where it is not (tests/variants.rs's which_part_left_out_...).
-            let sky = cy_exact3(past_the_scene(false, false, false, origin, direction));
-            let pdf_light = cy_exact(env_pdf_from(origin, direction, (*st).sky_facing));
-            (*st).radiance += clamp_light((*st).throughput * (sky * through * mis_power(pdf, pdf_light)), ceiling);
-        } else if (FEATURE_EMITTERS) {
-            let next = walked.stop;
-            let stop = hit_place(next);
-            if (dot(direction, stop.geometric) <= 0.0) {
-                let first = scene_instances[next.instance_custom_data].emitter;
-                let density = emitters_density((*st).receiver_position, (*st).receiver_normal, (*st).receiver_two_sided, first, next.primitive_index);
-                if (density > 0.0) {
-                    let to = stop.position - (*st).receiver_position;
-                    let glow = scene_emitter_nodes[scene_emitter_leaves[first + next.primitive_index]].radiance.xyz;
-                    (*st).radiance += clamp_light((*st).throughput * (glow * through * mis_against_area(pdf, density, dot(to, to), dot(direction, stop.geometric))), ceiling);
+            if (!spectral) {
+                (*st).radiance += clamp_light((*st).throughput * lobes * (emitted * through * weight), ceiling);
+                continue;
+            }
+            lobes4 = lobes;
+            light4 = emitted * through * weight;
+        } else {
+            let pdf = select((*st).prev_pdf, min((*st).prev_pdf, (*st).pass_pdf), walked.bent);
+            if (!walked.stopped) {
+                // Each through cy_exact: the driver otherwise rounds what
+                // follows otherwise where a dome of a size is a part of the
+                // kernel than where it is not (tests/variants.rs's
+                // which_part_left_out_...).
+                let sky = cy_exact3(past_the_scene(false, false, false, origin, direction));
+                let pdf_light = cy_exact(env_pdf_from(origin, direction, (*st).sky_facing));
+                if (!spectral) {
+                    (*st).radiance += clamp_light((*st).throughput * (sky * through * mis_power(pdf, pdf_light)), ceiling);
+                }
+                light4 = sky * through * mis_power(pdf, pdf_light);
+            } else if (FEATURE_EMITTERS) {
+                let next = walked.stop;
+                let stop = hit_place(next);
+                if (dot(direction, stop.geometric) <= 0.0) {
+                    let first = scene_instances[next.instance_custom_data].emitter;
+                    let density = emitters_density((*st).receiver_position, (*st).receiver_normal, (*st).receiver_two_sided, first, next.primitive_index);
+                    if (density > 0.0) {
+                        let to = stop.position - (*st).receiver_position;
+                        let glow = scene_emitter_nodes[scene_emitter_leaves[first + next.primitive_index]].radiance.xyz;
+                        if (!spectral) {
+                            (*st).radiance += clamp_light((*st).throughput * (glow * through * mis_against_area(pdf, density, dot(to, to), dot(direction, stop.geometric))), ceiling);
+                        }
+                        light4 = glow * through * mis_against_area(pdf, density, dot(to, to), dot(direction, stop.geometric));
+                    }
                 }
             }
+        }
+        if (spectral) {
+            // The lobes' colour, then the light's (a lamp's; the sky's or a
+            // glowing part's under no lobes), read at the wavelengths from
+            // one place: throughput * reflectance(lobes) * unbounded(light).
+            var lit = (*st).tp4;
+            for (var k = 0u; k < (2u | cy_zero); k++) {
+                lit = lit * spectral_of(select(lobes4, light4, k == 1u), k == 1u);
+            }
+            (*st).rad4 += cy_exact4(clamp_light4(lit, ceiling));
         }
     }
 }

@@ -668,6 +668,16 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: spectral_lamps,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_options",
+    covers: "R3 tier B with tier A's options, spectral mode on: shadowless_parts rendered by wavelength - the lamps,              the sky and the glowing panel met past the balls and the card that cast no shadow, through a fill disc              that casts none, and the studio floor's nearness measured past them - with an IES downlight over the              floor drawn for its shadows, a ball the camera does not see and one held out; every colour that meets              a path there read at the four wavelengths",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_options,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2158,6 +2168,38 @@ fn dispersion_rgb() -> SceneDocument {
 /// lamps_in_view rendered by wavelength, though nothing in it disperses.
 fn spectral_lamps() -> SceneDocument {
     let mut document = lamps_in_view();
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// shadowless_parts rendered by wavelength (Spectral On), though nothing in
+/// it disperses, with an IES downlight over the floor, a ball the camera
+/// does not see and one held out, standing clear of every other part.
+fn spectral_options() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape, Photometry};
+    use crate::tree::Rays;
+    let mut document = shadowless_parts();
+    let mut bus = crate::command::CommandBus::new();
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Downlight",
+        LightSettings { shape: LightShape::Point { radius: 0.0 }, photometry: Some(Photometry { path: PROFILES[0].to_string() }), intensity: Intensity::Candela(0.02), ..LightSettings::default() },
+        Transform::translation(vec3(0.2, 1.8, 0.4)),
+    );
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Unseen Ball", ball(0.06), MaterialType::Diffuse, Material::diffuse(Spectrum { r: 0.2, g: 0.3, b: 0.85 }), Transform::translation(vec3(0.05, 0.062, 0.95))),
+            ("Held Out", ball(0.07), MaterialType::Plastic, Material::plastic(Spectrum { r: 0.9, g: 0.85, b: 0.2 }, 0.2), Transform::translation(vec3(0.75, 0.072, 0.95))),
+        ],
+    );
+    for (name, rays) in [("Unseen Ball", Rays { camera: false, ..Rays::default() }), ("Held Out", Rays { holdout: true, ..Rays::default() })] {
+        for id in parts_named(&document, name) {
+            bus.apply(&mut document, Command::set_rays(id, rays)).expect("the part's rays are set");
+        }
+    }
     document.render.spectral = tequila_render_core::settings::SpectralMode::On;
     document
 }

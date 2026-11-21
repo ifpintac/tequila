@@ -99,10 +99,10 @@ fn each_scene_keeps_the_parts_it_reaches() {
     // Only the scenes with hidden parts, shadow links, parts that cast no
     // shadow or IES lamps keep those parts.
     for (name, features) in &chosen {
-        assert_eq!(features.contains(F::UNSEEN), *name == "hidden_parts", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::UNSEEN), ["hidden_parts", "spectral_options"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::SHADOW_LINKS), ["shadow_links", "floor_lamps"].contains(name), "{name}: {}", features.names());
-        assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts"].contains(name), "{name}: {}", features.names());
-        assert_eq!(features.contains(F::IES), *name == "ies_lamps", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts", "spectral_options"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::IES), ["ies_lamps", "spectral_options"].contains(name), "{name}: {}", features.names());
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
@@ -139,7 +139,7 @@ fn frame_parts_are_the_cameras() {
             // A render by wavelength: Spectral On whatever the scene; Auto
             // only where it disperses, which the grey product's renderer,
             // the one asked here, does not.
-            "spectral_lamps" => F::SPECTRAL,
+            "spectral_lamps" | "spectral_options" => F::SPECTRAL,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());

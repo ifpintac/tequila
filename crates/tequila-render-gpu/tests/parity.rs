@@ -381,6 +381,14 @@ fn spectral_lamps_are_the_processors_picture() {
     same_picture("spectral_lamps");
 }
 
+/// Spectral On with the options: the light past parts that cast no shadow,
+/// the floor's nearness past them, an IES downlight over the floor, a part
+/// the camera does not see and one held out, all read at the wavelengths.
+#[test]
+fn the_options_by_wavelength_are_the_processors_picture() {
+    same_picture("spectral_options");
+}
+
 /// The library's presets of glass that disperses light, every one of them,
 /// on the Headphones' parts, rendered by wavelength as Auto renders them.
 #[test]
