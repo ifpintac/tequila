@@ -864,6 +864,30 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     return st;
 }
 
+// Where on the film the camera's sample is, which a backplate is mapped to
+// (Background::Backplate): set where the camera's ray is made.
+var<private> camera_film: vec2<f32>;
+
+// past_the_scene (ic:2831): what a path sees past the scene along
+// `direction` - where it escapes, and behind a shadow catcher it meets as
+// the camera would see it. Along a specular chain a background colour or a
+// backplate replaces the view (SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE),
+// the plate at the film point the path set out from: the camera's sample's,
+// and its first glass's reflection's; a floor's reflection traces its path
+// from the film's corner (floor_reflection's Vec2::ZERO). Else what the
+// camera sees of the environment on its own first segment, else the
+// environment.
+fn past_the_scene(specular_chain: bool, camera_view: bool, in_floor: bool, direction: vec3<f32>) -> vec3<f32> {
+    let background = frame.glass_flags & (SCENE_BACKGROUND_COLOUR | SCENE_BACKPLATE);
+    if (specular_chain && background != 0u) {
+        if ((background & SCENE_BACKPLATE) != 0u) {
+            return plate_bilinear(select(camera_film, vec2<f32>(0.0), in_floor));
+        }
+        return frame.background;
+    }
+    return env_radiance(camera_view, direction);
+}
+
 // What the path meets along the segment just traced: the lamps the surface
 // a seeing bounce, a mirror's view or the camera's view through glass left
 // looks for (ic:1017-1048), each as far as what the ray hit - a little past
@@ -900,7 +924,7 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection) -> vec3<f
             if (!open) {
                 break;
             }
-            emitted = env_radiance(bounce == 0u && !(*st).reflected, (*st).direction);
+            emitted = past_the_scene((*st).specular_chain, bounce == 0u && !(*st).reflected, (*st).in_floor, (*st).direction);
             if (all(emitted == vec3<f32>(0.0))) {
                 break;
             }
@@ -2115,6 +2139,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var s = sampler_new(x, y, sample_index, frame.scene_seed);
     let j = sampler_pixel_jitter(&s);
     let film = vec2<f32>((f32(x) + j.x) / f32(frame.width), (f32(y) + j.y) / f32(frame.height));
+    camera_film = film;
     let sx = 2.0 * film.x - 1.0;
     let sy = 1.0 - 2.0 * film.y;
     let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
@@ -2278,7 +2303,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         // whose catcher_view is false.
                         let view = st.direction;
                         let normal = select(-raw.geometric, raw.geometric, dot(raw.geometric, -view) > 0.0);
-                        let behind = env_radiance(st.bounce == 0u && !st.reflected, view);
+                        let behind = past_the_scene(st.specular_chain, st.bounce == 0u && !st.reflected, st.in_floor, view);
                         let caught = catch_shadow(c, raw, normal, behind, st.bounce, &s);
                         if (cut_wanted) {
                             st = seg_st;

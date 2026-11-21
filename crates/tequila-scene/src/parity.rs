@@ -351,7 +351,57 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: driven_film,
     pictures: no_pictures,
+}, ParityScene {
+    name: "background_colour",
+    covers: "R3 tier A, a background colour: glass_ball_floor and a mirror-smooth chrome ball beside the glass, the              camera seeing a flat blue past the parts where its ray escapes, through the glass and in the chrome              (the specular chain), the floor standing in front of the colour with its shadow and its reflection on              it, the floor's reflection seeing the colour through the glass; every other path still lit by the              environment (past_the_scene)",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: background_colour,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "backplate",
+    covers: "R3 tier A, a backplate: background_colour's parts in front of a picture made here (a gradient under a              grid, 96 by 54 texels, stretched over the frame and read bilinearly at each sample's film point), seen              past the parts, through the glass and in the chrome at the film point the camera's sample set out from,              behind the floor, and through the glass in the floor's reflection at the film's corner, as the              processor's floor reflection traces it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: backplate,
+    pictures: no_pictures,
 }];
+
+/// The path [`background`] takes for the set's own backplate
+/// ([`backplate_picture`]) rather than a file's.
+pub const BACKPLATE: &str = "parity:backplate";
+
+/// What a snapshot of `document` shows past its parts, as the command line
+/// sets it (`EnvironmentCache::background`), with [`BACKPLATE`] the set's
+/// own picture: the parity tests set it on their snapshots.
+pub fn background(document: &SceneDocument) -> tequila_render_core::environment::Background {
+    let settings = &document.environment;
+    if settings.background == crate::document::BackgroundMode::Backplate && settings.backplate.as_deref() == Some(BACKPLATE) {
+        return tequila_render_core::environment::Background::Backplate { image: Arc::new(backplate_picture()) };
+    }
+    crate::environment::EnvironmentCache::new().background(settings)
+}
+
+/// The set's backplate: a warm-to-cool gradient under a grid of lighter
+/// lines, linear values, 96 by 54 texels - coarser than the frame, so a
+/// sample reads between texels.
+pub fn backplate_picture() -> Image {
+    let (width, height) = (96usize, 54usize);
+    let mut data = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let u = x as f32 / (width - 1) as f32;
+            let v = y as f32 / (height - 1) as f32;
+            let line = if x % 12 == 0 || y % 9 == 0 { 0.25 } else { 0.0 };
+            data.extend_from_slice(&[0.15 + 0.6 * u + line, 0.2 + 0.3 * v + line, 0.65 - 0.45 * u + line]);
+        }
+    }
+    Image { width, height, channels: 3, data, color_space: ColorSpace::LinearSrgb }
+}
 
 /// The scene of the set by `name`.
 pub fn scene(name: &str) -> Option<&'static ParityScene> {
@@ -602,6 +652,35 @@ fn glass_ball_floor() -> SceneDocument {
         ..MaterialType::GlassSolid.defaults()
     };
     add_parts(&mut document, &mut bus, vec![("Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// glass_ball_floor, a mirror-smooth chrome ball beside the glass, and a
+/// flat blue past the parts.
+fn background_colour() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    add_parts(&mut document, &mut bus, vec![("Chrome Ball", ball(0.1), MaterialType::Metal, chrome, Transform::translation(vec3(-0.35, 0.101, 0.8)))]);
+    for parameter in [
+        EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(crate::document::BackgroundMode::Color)),
+        EnvironmentParameter::color(EnvParam::BackgroundColor, Spectrum { r: 0.18, g: 0.32, b: 0.62 }),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the background is set");
+    }
+    document
+}
+
+/// background_colour's parts in front of the set's backplate.
+fn backplate() -> SceneDocument {
+    let mut document = background_colour();
+    let mut bus = crate::command::CommandBus::new();
+    for parameter in [
+        EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(crate::document::BackgroundMode::Backplate)),
+        EnvironmentParameter::new(EnvParam::Backplate, EnvValue::Path(Some(BACKPLATE.to_string()))),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the backplate is set");
+    }
     document
 }
 

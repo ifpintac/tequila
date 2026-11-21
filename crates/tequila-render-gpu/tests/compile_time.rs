@@ -501,3 +501,59 @@ fn what_naga_costs_of_a_build() {
         );
     }
 }
+
+/// What the camera's port costs the kernel's cold compile (`docs/07` R3):
+/// the kernel as it is, as it was before the port (the joined source in
+/// `TEQUILA_KERNEL_BEFORE`, when given: `shader.rs`'s join of the modules at
+/// that commit), and with each part of the port left out, interleaved so
+/// the card's other work falls on all alike, `TEQUILA_COMPILE_ROUNDS`
+/// rounds (3 by default); the medians at the end. Run by hand:
+/// `cargo test --test compile_time -- --ignored --nocapture camera`.
+#[test]
+#[ignore]
+fn what_the_camera_costs_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    // Each part of the port and what leaves it out.
+    let parts: &[(&str, &[(&str, &str)])] = &[
+        ("no background colour or backplate", &[("if (specular_chain && background != 0u) {", "if (false) {")]),
+    ];
+    let mut cases: Vec<(String, Box<dyn Fn(String) -> String>)> = vec![("as it is".to_string(), Box::new(|s| s))];
+    if let Some(before) = before {
+        cases.push(("before the port".to_string(), Box::new(move |_| before.clone())));
+    }
+    for (name, pairs) in parts {
+        let pairs: Vec<(String, String)> = pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        cases.push((
+            name.to_string(),
+            Box::new(move |s: String| {
+                let mut s = s.replace("\r\n", "\n");
+                for (from, to) in &pairs {
+                    assert!(s.contains(from.as_str()), "no {from:?}");
+                    s = s.replace(from.as_str(), to);
+                }
+                s
+            }),
+        ));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref()).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}

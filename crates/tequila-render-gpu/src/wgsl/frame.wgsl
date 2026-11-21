@@ -79,7 +79,10 @@ struct FrameParams {
     // SCENE_CUT_PROGRAMS: a program on the card drives some opacity;
     // SCENE_EMITTERS: the glowing triangles are lights (emitters.wgsl);
     // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials;
-    // SCENE_BEVEL: some material rounds its edges (edge_radius).
+    // SCENE_BEVEL: some material rounds its edges (edge_radius);
+    // SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE: the camera, and the mirrors
+    // and glass it sees through, see a colour or a backplate's picture past
+    // the parts (integrator.rs's past_the_scene).
     glass_flags: u32,
     // The rows this dispatch draws, row_base and every row_stride-th after
     // it: render_pass draws a big frame in interleaved sets of rows, each
@@ -87,6 +90,15 @@ struct FrameParams {
     // other. A whole frame is row 0 at a stride of 1.
     row_base: u32,
     row_stride: u32,
+    // Background::Color's colour, under SCENE_BACKGROUND_COLOUR; a
+    // backplate's picture under SCENE_BACKPLATE, from plate_offset in
+    // env_camera_image (environment.wgsl's plate_bilinear), and its size.
+    background: vec3<f32>,
+    plate_offset: u32,
+    plate_width: u32,
+    plate_height: u32,
+    _pad0: u32,
+    _pad1: u32,
 };
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).
@@ -102,6 +114,8 @@ const SCENE_EMITTERS: u32 = 8u;
 const SCENE_LIGHT_MATERIALS: u32 = 16u;
 const SCENE_CUT_PROGRAMS: u32 = 32u;
 const SCENE_BEVEL: u32 = 64u;
+const SCENE_BACKGROUND_COLOUR: u32 = 128u;
+const SCENE_BACKPLATE: u32 = 256u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

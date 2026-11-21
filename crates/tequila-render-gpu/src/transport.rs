@@ -19,6 +19,7 @@
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
 use tequila_render_core::camera::Camera;
+use tequila_render_core::environment::Background;
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::integrator::PathResult;
 use tequila_render_core::scene::SceneSnapshot;
@@ -124,12 +125,22 @@ pub struct FrameParams {
     pub shadow_glass: u32,
     /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_CUTOUTS`],
     /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`],
-    /// [`SCENE_CUT_PROGRAMS`] and [`SCENE_BEVEL`].
+    /// [`SCENE_CUT_PROGRAMS`], [`SCENE_BEVEL`], [`SCENE_BACKGROUND_COLOUR`]
+    /// and [`SCENE_BACKPLATE`].
     pub glass_flags: u32,
     /// The rows a dispatch draws: `row_base` and every `row_stride`-th row
     /// after it (`render_pass`); 0 and 1 for the whole frame.
     pub row_base: u32,
     pub row_stride: u32,
+    /// `Background::Color`'s colour, under [`SCENE_BACKGROUND_COLOUR`].
+    pub background: [f32; 3],
+    /// A backplate's picture under [`SCENE_BACKPLATE`]: where it starts in
+    /// the camera's image buffer, and its size (`crate::environment`).
+    pub plate_offset: u32,
+    pub plate_width: u32,
+    pub plate_height: u32,
+    pub _pad0: u32,
+    pub _pad1: u32,
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -160,6 +171,13 @@ pub const SCENE_CUT_PROGRAMS: u32 = 32;
 /// surface a path meets first has its normal rounded by probes
 /// (`transport.wgsl`'s `bevel_normal`, `bevel.rs`).
 pub const SCENE_BEVEL: u32 = 64;
+/// The camera, and the mirrors and glass it sees through, see a colour past
+/// the parts rather than the environment (`Background::Color`,
+/// `integrator.rs`'s `past_the_scene`).
+pub const SCENE_BACKGROUND_COLOUR: u32 = 128;
+/// They see a backplate's picture, at the film point the path set out from
+/// (`Background::Backplate`).
+pub const SCENE_BACKPLATE: u32 = 256;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -361,11 +379,6 @@ pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'s
     if !scene.environment.dome().is_infinite() {
         limits.push("the environment is an infinitely far dome rather than one of its size");
     }
-    // A colour or a backplate replaces what the camera and its mirrors see
-    // past the parts (integrator.rs's past_the_scene).
-    if !scene.background.is_environment() {
-        limits.push("past the parts the camera sees the environment rather than the background colour or backplate");
-    }
     limits
 }
 
@@ -464,6 +477,10 @@ pub struct GpuRenderer {
     bevels: bool,
     /// What [`part_limits`] says of the scene.
     part_limits: Vec<&'static str>,
+    /// What the camera sees past the parts: [`SCENE_BACKGROUND_COLOUR`] or
+    /// [`SCENE_BACKPLATE`] (none for the environment), and the colour.
+    background_flags: u32,
+    background: [f32; 3],
     /// The parts of the kernel the scene reaches ([`KernelFeatures::of`]),
     /// and the parts of the one `pipeline` was built with, which holds
     /// them all.
@@ -543,7 +560,6 @@ struct FloorScene {
     lamps: bool,
     finite_dome: bool,
     shadowless_parts: bool,
-    background: bool,
 }
 
 impl FloorScene {
@@ -554,7 +570,6 @@ impl FloorScene {
             lamps: !scene.lights.lights().is_empty(),
             finite_dome: !scene.environment.dome().is_infinite(),
             shadowless_parts: scene.has_shadowless_parts(),
-            background: !scene.background.is_environment(),
         }
     }
 
@@ -575,9 +590,6 @@ impl FloorScene {
         }
         if config.caustics && shadows {
             limits.push("no caustics on the floor");
-        }
-        if self.background {
-            limits.push("the floor stands in front of the environment rather than the background colour or backplate");
         }
         limits
     }
@@ -708,7 +720,7 @@ impl GpuRenderer {
         let device = &gpu.device;
         let tables = Tables::new(device);
         let uploaded = GpuScene::upload(device, &gpu.queue, scene);
-        let environment = GpuEnvironment::upload(device, &scene.environment);
+        let environment = GpuEnvironment::upload(device, &scene.environment, &scene.background);
         let shadow_far = scene.bounds().bounding_radius().max(1.0) * 1e4;
         // The materials as data: a material with a program has the constants
         // its graph folded to (`CompiledGraph::constants`), which the
@@ -918,6 +930,15 @@ impl GpuRenderer {
             kernel,
             kernel_seconds,
             aside,
+            background_flags: match &scene.background {
+                Background::Environment => 0,
+                Background::Color(_) => SCENE_BACKGROUND_COLOUR,
+                Background::Backplate { .. } => SCENE_BACKPLATE,
+            },
+            background: match &scene.background {
+                Background::Color(c) => [c.r, c.g, c.b],
+                _ => [0.0; 3],
+            },
         }
     }
 
@@ -1062,9 +1083,16 @@ impl GpuRenderer {
                 | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
                 | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
                 | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 }
-                | if self.bevels { SCENE_BEVEL } else { 0 },
+                | if self.bevels { SCENE_BEVEL } else { 0 }
+                | self.background_flags,
             row_base: 0,
             row_stride: 1,
+            background: self.background,
+            plate_offset: e.plate_offset,
+            plate_width: e.plate_width,
+            plate_height: e.plate_height,
+            _pad0: 0,
+            _pad1: 0,
         }
     }
 

@@ -17,7 +17,8 @@ fn render(scene: &tequila_scene::parity::ParityScene) -> Vec<[f32; 3]> {
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    let (mut snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    snapshot.background = tequila_scene::parity::background(&document);
     let intersector = EmbreeIntersector::build(&Device::shared().expect("an Embree device"), snapshot).expect("builds");
     let context = RenderContext {
         camera: scene.camera(&document),

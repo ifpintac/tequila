@@ -235,6 +235,21 @@ fn the_bevelled_product_is_the_processors_picture() {
     same_picture("bevelled_product");
 }
 
+/// A background colour: seen past the parts, through glass and in chrome,
+/// behind the floor and in its reflection through the glass.
+#[test]
+fn a_background_colour_is_the_processors_picture() {
+    same_picture("background_colour");
+}
+
+/// A backplate: read at each sample's film point past the parts, through
+/// glass and in chrome, behind the floor; at the film's corner through the
+/// glass in the floor's reflection.
+#[test]
+fn a_backplate_is_the_processors_picture() {
+    same_picture("backplate");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]
@@ -306,7 +321,9 @@ fn same_shot(mut scene: Shot) {
     let document = &scene.document;
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache);
+    let (mut snapshot, _) = snapshot(&document, environment, &mut scene.cache);
+    // What the camera sees past the parts, as the command line sets it.
+    snapshot.background = parity::background(document);
     let camera = scene.camera;
     let config = document.lighting.config();
 
