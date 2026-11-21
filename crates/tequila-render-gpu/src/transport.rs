@@ -517,9 +517,9 @@ pub struct GpuRenderer {
     /// [`SCENE_BACKPLATE`] (none for the environment), with
     /// [`SCENE_FINITE_DOME`] for a dome of a size; and the colour.
     background_flags: u32,
+    background: [f32; 3],
     /// The environment's dome.
     dome: tequila_render_core::environment::Dome,
-    background: [f32; 3],
     /// The kernel widened to the frame's parts a frame asked for that it
     /// left out ([`KernelFeatures::of_frame`]), each built once.
     widened: std::sync::Mutex<Vec<(KernelFeatures, wgpu::ComputePipeline)>>,
