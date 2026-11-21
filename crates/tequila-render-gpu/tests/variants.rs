@@ -71,7 +71,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BACKGROUND), ["background_colour", "backplate"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
-        let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR;
+        let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
         assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
     }
     // At least what each is in the set for.
@@ -109,7 +109,7 @@ fn frame_parts_are_the_cameras() {
     let renderer = GpuRenderer::with_kernel(gpu, &snapshot, Some(KernelFeatures::ALL));
     for scene in parity::SET {
         let document = scene.document();
-        let settings = FrameSettings { camera: scene.camera(&document), config: document.lighting.config(), scene_seed: 7, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
+        let settings = FrameSettings { camera: scene.camera(&document), config: parity::config(&document), scene_seed: 7, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
         let parts = renderer.frame_features(&settings, scene.width, scene.height);
         let wanted = match scene.name {
             "shallow_focus" => F::THIN_LENS,
@@ -117,6 +117,7 @@ fn frame_parts_are_the_cameras() {
             "orthographic" => F::ORTHOGRAPHIC,
             "all_round" => F::EQUIRECTANGULAR,
             "shifted_lens" => F::SHIFT,
+            "soft_filter" | "wide_box" => F::FILTER,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());

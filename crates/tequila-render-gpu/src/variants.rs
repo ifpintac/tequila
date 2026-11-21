@@ -39,7 +39,7 @@
 //! which place of it, moves a picture.
 //!
 //! Some parts are a frame's, not a scene's: the camera's lens, its blades
-//! and its projections.
+//! and its projections, and the film's pixel filter.
 //! The records cannot say which camera will look at a scene, so
 //! [`KernelFeatures::of`] keeps none of them, and a renderer widens its
 //! kernel to the ones a frame reaches ([`KernelFeatures::of_frame`]) at the
@@ -108,9 +108,11 @@ impl KernelFeatures {
     pub const ORTHOGRAPHIC: KernelFeatures = part(18);
     /// Every direction round the camera (a frame's part).
     pub const EQUIRECTANGULAR: KernelFeatures = part(19);
+    /// A pixel filter other than one pixel's box (a frame's part).
+    pub const FILTER: KernelFeatures = part(20);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 20] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 21] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -131,6 +133,7 @@ impl KernelFeatures {
         (Self::SHIFT, "FEATURE_SHIFT"),
         (Self::ORTHOGRAPHIC, "FEATURE_ORTHOGRAPHIC"),
         (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
+        (Self::FILTER, "FEATURE_FILTER"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -245,18 +248,20 @@ impl KernelFeatures {
 
     /// The parts a frame reaches through its camera and film, from the
     /// frame's `camera_flags` as the kernel reads them: the thin lens, its
-    /// blades, a shifted film, the orthographic and 360-degree projections. A scene's records cannot say which camera will look at it,
+    /// blades, a shifted film, the orthographic and 360-degree projections,
+    /// a pixel filter other than one pixel's box. A scene's records cannot say which camera will look at it,
     /// so [`KernelFeatures::of`] keeps none of these, and a renderer widens
     /// its kernel to them at the first frame that asks for one it left out
     /// (`GpuRenderer::render_pass`).
     pub fn of_frame(camera_flags: u32) -> KernelFeatures {
-        use crate::transport::{CAMERA_BLADED, CAMERA_EQUIRECTANGULAR, CAMERA_ORTHOGRAPHIC, CAMERA_SHIFT, CAMERA_THIN_LENS};
+        use crate::transport::{CAMERA_BLADED, CAMERA_EQUIRECTANGULAR, CAMERA_FILTER_BOX, CAMERA_FILTER_TABLE, CAMERA_ORTHOGRAPHIC, CAMERA_SHIFT, CAMERA_THIN_LENS};
         [
             (CAMERA_THIN_LENS, Self::THIN_LENS),
             (CAMERA_BLADED, Self::BLADES),
             (CAMERA_SHIFT, Self::SHIFT),
             (CAMERA_ORTHOGRAPHIC, Self::ORTHOGRAPHIC),
             (CAMERA_EQUIRECTANGULAR, Self::EQUIRECTANGULAR),
+            (CAMERA_FILTER_BOX | CAMERA_FILTER_TABLE, Self::FILTER),
         ]
         .into_iter()
         .filter(|(flag, _)| camera_flags & flag != 0)

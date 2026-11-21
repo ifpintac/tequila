@@ -28,7 +28,7 @@ fn renderer_for(name: &str) -> Option<(GpuRenderer, FrameSettings, tequila_rende
     let (mut snap, _) = snapshot(&document, environment, &mut MeshCache::new());
     snap.background = parity::background(&document);
     let renderer = GpuRenderer::new(gpu, &snap);
-    let settings = FrameSettings { camera, config: document.lighting.config(), scene_seed: scene.seed, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
+    let settings = FrameSettings { camera, config: parity::config(&document), scene_seed: scene.seed, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
     Some((renderer, settings, snap))
 }
 
@@ -197,4 +197,71 @@ fn camera_rays_are_the_processors() {
         }
     }
     assert!(failed.is_empty(), "rays not the processor's: {failed:?}");
+}
+
+const FILTER_KERNEL: &str = r#"
+@compute @workgroup_size(64)
+fn filter_test(@builtin(global_invocation_id) id: vec3<u32>) {
+    let k = id.x;
+    if (k >= COUNTu) {
+        return;
+    }
+    let a = frame_samples[k];
+    cy_zero = bitcast<u32>(a.z) & 0x80000000u;
+    frame_samples[k] = vec4<f32>(filter_place(a.xy), 0.0, 0.0);
+}
+"#;
+
+/// Where a sample's jitter goes in or around its pixel: one pixel's box,
+/// boxes narrower and wider, Gaussians and Blackman-Harris at several
+/// widths, against `FilterSampler::place` - jitters at nought, the middle
+/// and just short of one, and anywhere.
+#[test]
+fn samples_are_placed_as_the_processor_places_them() {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    let Some((renderer, settings, _)) = renderer_for("soft_filter") else { return };
+    let mut rng = Pcg32::new(23, 5);
+    let mut jitters = vec![vec2(0.0, 0.5), vec2(0.5, 0.0), vec2(0.999_999_9, 0.25), vec2(0.75, 0.999_999_9)];
+    while jitters.len() < 20_000 {
+        jitters.push(vec2(rng.next_f32(), rng.next_f32()));
+    }
+    let count = jitters.len();
+    let words: Vec<u32> = jitters.iter().flat_map(|j| [j.x.to_bits(), j.y.to_bits(), 0, 0]).collect();
+    let kernel = FILTER_KERNEL.replace("COUNTu", &format!("{count}u"));
+    let mut failed = Vec::new();
+    for filter in [
+        PixelFilter::BOX,
+        PixelFilter { kind: PixelFilterKind::Box, width: 0.5 },
+        PixelFilter { kind: PixelFilterKind::Box, width: 2.0 },
+        PixelFilter { kind: PixelFilterKind::Gaussian, width: 0.75 },
+        PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 },
+        PixelFilter { kind: PixelFilterKind::Gaussian, width: 3.0 },
+        PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.0 },
+        PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 },
+        PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 2.5 },
+    ] {
+        let settings = FrameSettings { config: tequila_render_core::settings::IntegratorConfig { pixel_filter: filter, ..settings.config.clone() }, ..settings.clone() };
+        let sampler = filter.sampler();
+        let out = renderer.run_on_scene_at(&settings, (320, 180), &kernel, "filter_test", &words, (count as u32).div_ceil(64));
+        let (mut outside, mut worst, mut exact) = (0, 0.0f32, 0);
+        for (i, j) in jitters.iter().enumerate() {
+            let want = sampler.place(*j);
+            let got = [f32::from_bits(out[4 * i]), f32::from_bits(out[4 * i + 1])];
+            worst = worst.max((got[0] - want.x).abs()).max((got[1] - want.y).abs());
+            if got[0] == want.x && got[1] == want.y {
+                exact += 1;
+            }
+            if !close(got[0], want.x) || !close(got[1], want.y) {
+                if outside < 5 {
+                    eprintln!("{filter:?} jitter {j:?}: card {got:?}, processor {want:?}");
+                }
+                outside += 1;
+            }
+        }
+        eprintln!("{:?} {}: {outside} of {count} placements outside the bound, {exact} to the bit, worst {worst:.2e}", filter.kind, filter.width);
+        if outside * 1000 > count {
+            failed.push(format!("{:?} {}: {outside}", filter.kind, filter.width));
+        }
+    }
+    assert!(failed.is_empty(), "placements not the processor's: {failed:?}");
 }

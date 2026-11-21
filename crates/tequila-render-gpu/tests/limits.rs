@@ -116,8 +116,9 @@ fn the_camera_and_the_film_are_said() {
     assert!(said(Camera { projection: Projection::Equirectangular, ..pinhole }, &config).is_empty());
     assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.1, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
     assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.0, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
+    // And every pixel filter.
     let soft = IntegratorConfig { pixel_filter: PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }, ..config.clone() };
-    assert_eq!(said(pinhole, &soft), vec!["the pixel filter is one pixel's box"]);
+    assert!(said(pinhole, &soft).is_empty());
     let wide = IntegratorConfig { pixel_filter: PixelFilter { kind: PixelFilterKind::Box, width: 2.0 }, ..config.clone() };
-    assert_eq!(said(pinhole, &wide), vec!["the pixel filter is one pixel's box"]);
+    assert!(said(pinhole, &wide).is_empty());
 }

@@ -75,3 +75,5 @@ override FEATURE_SHIFT: bool = true;
 override FEATURE_ORTHOGRAPHIC: bool = true;
 // Every direction round the camera (a frame's part).
 override FEATURE_EQUIRECTANGULAR: bool = true;
+// A pixel filter other than one pixel's box (a frame's part: the film's).
+override FEATURE_FILTER: bool = true;

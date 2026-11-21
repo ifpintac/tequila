@@ -2170,6 +2170,39 @@ struct CameraRay {
     direction: vec3<f32>,
 };
 
+// The filter's table at step i of 1025 (FrameParams::filter_table).
+fn filter_step(i: u32) -> f32 {
+    return select(frame.filter_table[min(i, 1023u) >> 2u][i & 3u], frame.filter_last, i >= 1024u);
+}
+
+// FilterSampler::place's along for a Gaussian or a Blackman-Harris: a
+// draw through the inverse of the filter's distribution over one half,
+// read between its steps, on the side of the centre the draw falls.
+fn filter_along(u: f32) -> f32 {
+    let signed = 2.0 * u - 1.0;
+    let at = abs(signed) * 1024.0;
+    let i = min(u32(at), 1023u);
+    let t = at - f32(i);
+    let a = filter_step(i);
+    let offset = a + cy_exact((filter_step(i + 1u) - a) * t);
+    return 0.5 + bitcast<f32>((bitcast<u32>(offset) & 0x7FFFFFFFu) | (bitcast<u32>(signed) & 0x80000000u));
+}
+
+// FilterSampler::place: where in or around its pixel a sample goes, for its
+// jitter `u` - where the jitter falls for one pixel's box; spread about the
+// centre by a box's width (CAMERA_FILTER_BOX); each axis through the
+// filter's table for a Gaussian or a Blackman-Harris (CAMERA_FILTER_TABLE).
+fn filter_place(u: vec2<f32>) -> vec2<f32> {
+    let flags = frame.camera_flags;
+    if (FEATURE_FILTER && (flags & CAMERA_FILTER_TABLE) != 0u) {
+        return vec2<f32>(filter_along(u.x), filter_along(u.y));
+    }
+    if (FEATURE_FILTER && (flags & CAMERA_FILTER_BOX) != 0u) {
+        return 0.5 + cy_exact2((u - 0.5) * frame.filter_width);
+    }
+    return u;
+}
+
 // Camera::generate_ray (camera.rs) for a point on the film, (0, 0) the
 // picture's top left and (1, 1) its bottom right: through the pinhole, its
 // film shifted (CAMERA_SHIFT) or not; or, through a thin lens
@@ -2233,7 +2266,7 @@ fn camera_ray(film: vec2<f32>, s: ptr<function, Sampler>) -> CameraRay {
 // sampler, each first asking which media it starts in.
 fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var s = sampler_new(x, y, sample_index, frame.scene_seed);
-    let j = sampler_pixel_jitter(&s);
+    let j = filter_place(sampler_pixel_jitter(&s));
     let film = vec2<f32>((f32(x) + j.x) / f32(frame.width), (f32(y) + j.y) / f32(frame.height));
     camera_film = film;
     // cy_exact's zero from a word the compiler cannot see is one (the

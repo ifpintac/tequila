@@ -66,7 +66,7 @@ pub fn pictures_on<'a>(pictures: &'a CardPictures, limits: &wgpu::Limits) -> Pic
 
 /// What a dispatch of `transport.wgsl` is told; `frame.wgsl` is its twin.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct FrameParams {
     pub camera_to_world: [[f32; 4]; 3],
     pub half_height: f32,
@@ -140,7 +140,8 @@ pub struct FrameParams {
     pub plate_width: u32,
     pub plate_height: u32,
     /// [`CAMERA_THIN_LENS`], [`CAMERA_BLADED`], [`CAMERA_SHIFT`],
-    /// [`CAMERA_ORTHOGRAPHIC`] and [`CAMERA_EQUIRECTANGULAR`].
+    /// [`CAMERA_ORTHOGRAPHIC`], [`CAMERA_EQUIRECTANGULAR`],
+    /// [`CAMERA_FILTER_BOX`] and [`CAMERA_FILTER_TABLE`].
     pub camera_flags: u32,
     /// The thin lens (`Camera::generate_ray`): the opening's radius in
     /// scene units (`Camera::aperture_radius`), the focus distance, and a
@@ -153,9 +154,20 @@ pub struct FrameParams {
     /// (`Projection::Shift`), under [`CAMERA_SHIFT`].
     pub shift_x: f32,
     pub shift_y: f32,
-    pub _pad3: u32,
-    pub _pad4: u32,
+    /// The pixel filter (`FilterSampler::place`): a box's width in pixels
+    /// under [`CAMERA_FILTER_BOX`]; under [`CAMERA_FILTER_TABLE`] the
+    /// inverse of its distribution over one half, `filter_table`'s 1024
+    /// values four to a vector and `filter_last` the 1025th.
+    pub filter_width: f32,
+    pub filter_last: f32,
     pub _pad5: u32,
+    pub filter_table: [[f32; 4]; 256],
+}
+
+impl Default for FrameParams {
+    fn default() -> Self {
+        Zeroable::zeroed()
+    }
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -209,6 +221,12 @@ pub const CAMERA_ORTHOGRAPHIC: u32 = 8;
 /// Every direction, the film's width round the horizon and its height
 /// from the zenith down (`Projection::Equirectangular`).
 pub const CAMERA_EQUIRECTANGULAR: u32 = 16;
+/// The pixel filter is a box other than one pixel wide: a sample's jitter
+/// is spread about the pixel's centre by its width.
+pub const CAMERA_FILTER_BOX: u32 = 32;
+/// The pixel filter is a Gaussian or a Blackman-Harris: a sample is placed
+/// by the inverse of its distribution, read from a table.
+pub const CAMERA_FILTER_TABLE: u32 = 64;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -414,20 +432,13 @@ pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'s
 }
 
 /// What of `camera`, and of the film under `config`, the card renders
-/// otherwise than the processor does, one sentence each; empty where they
-/// are the processor's (`transport.wgsl`'s pinhole and one pixel's box).
-/// The renderer says each at its first pass, with the other `*_limits`.
-pub fn camera_limits(_camera: &Camera, config: &IntegratorConfig) -> Vec<&'static str> {
-    use tequila_render_core::settings::PixelFilterKind;
-    let mut limits = Vec::new();
-    // A box of one pixel places a sample where its jitter falls
-    // (FilterSampler::place); any other filter spreads it.
-    let filter = config.pixel_filter;
-    let width = if filter.width.is_finite() && filter.width > 0.0 { filter.width } else { 1.0 };
-    if filter.kind != PixelFilterKind::Box || width != 1.0 {
-        limits.push("the pixel filter is one pixel's box");
-    }
-    limits
+/// otherwise than the processor does, one sentence each: nothing now - its
+/// projections, lens and pixel filter are the processor's
+/// (`transport.wgsl`'s `camera_ray` and `filter_place`). Kept for the
+/// renderer and the command line, which say each of the `*_limits` at the
+/// first pass.
+pub fn camera_limits(_camera: &Camera, _config: &IntegratorConfig) -> Vec<&'static str> {
+    Vec::new()
 }
 
 /// The most samples a dispatch draws: a bounded buffer.
@@ -1086,6 +1097,24 @@ impl GpuRenderer {
         // radius (none for a pinhole, or a projection with no lens), round
         // or of `blades` (at least 3) turned by `rotation`.
         let lens_radius = settings.camera.aperture_radius(aspect);
+        // Where in or around its pixel a sample goes (FilterSampler::place):
+        // one pixel's box where its jitter falls, another box spread by its
+        // width, a Gaussian or Blackman-Harris by its table.
+        let filter = settings.config.pixel_filter.sampler();
+        let mut filter_table = [[0.0f32; 4]; 256];
+        let mut filter_last = 0.0;
+        let filter_flags = match filter.table() {
+            Some(table) => {
+                assert_eq!(table.len(), 1025, "the filter's table has 1025 steps, as the card reads it");
+                for (i, v) in table[..1024].iter().enumerate() {
+                    filter_table[i / 4][i % 4] = *v;
+                }
+                filter_last = table[1024];
+                CAMERA_FILTER_TABLE
+            }
+            None if filter.width() == 1.0 => 0,
+            None => CAMERA_FILTER_BOX,
+        };
         let (blades, rotation) = match settings.camera.aperture {
             tequila_render_core::camera::Aperture::Bladed { blades, rotation } => (blades.max(3), rotation),
             tequila_render_core::camera::Aperture::Circular => (0, 0.0),
@@ -1158,16 +1187,17 @@ impl GpuRenderer {
             plate_offset: e.plate_offset,
             plate_width: e.plate_width,
             plate_height: e.plate_height,
-            camera_flags: projection_flags | if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
+            camera_flags: projection_flags | filter_flags | if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
             lens_radius,
             focus_distance: settings.camera.focus_distance,
             aperture_blades: blades,
             aperture_rotation: rotation,
             shift_x: shift.0,
             shift_y: shift.1,
-            _pad3: 0,
-            _pad4: 0,
+            filter_width: filter.width(),
+            filter_last,
             _pad5: 0,
+            filter_table,
         }
     }
 

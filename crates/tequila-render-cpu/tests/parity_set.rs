@@ -22,7 +22,7 @@ fn render(scene: &tequila_scene::parity::ParityScene) -> Vec<[f32; 3]> {
     let intersector = EmbreeIntersector::build(&Device::shared().expect("an Embree device"), snapshot).expect("builds");
     let context = RenderContext {
         camera: scene.camera(&document),
-        config: document.lighting.config(),
+        config: tequila_scene::parity::config(&document),
         scene_seed: scene.seed,
         ..RenderContext::default()
     };

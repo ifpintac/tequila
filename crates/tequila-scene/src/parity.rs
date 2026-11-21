@@ -458,7 +458,55 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: lamp_lit,
     lens: shifted,
     pictures: no_pictures,
+}, ParityScene {
+    name: "soft_filter",
+    covers: "R3, the pixel filter: product_materials under Blender's own filter, Blackman-Harris 1.5 px - each \
+             sample's jitter placed through the inverse of the filter's distribution over one half, a table of \
+             1025 steps read between them, so samples land up to a pixel and a half from their pixel's centre",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: soft_filter,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "wide_box",
+    covers: "R3, the pixel filter: product_floor under a box two pixels wide - each sample's jitter spread about \
+             its pixel's centre by the width, over the floor's shadow and reflection",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: wide_box,
+    lens: framed,
+    pictures: no_pictures,
 }];
+
+/// `simple_product` under Blackman-Harris 1.5 px, Blender's own filter.
+fn soft_filter() -> SceneDocument {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    let mut document = simple_product();
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 });
+    document
+}
+
+/// product_floor under a box two pixels wide.
+fn wide_box() -> SceneDocument {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    let mut document = product_floor();
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::Box, width: 2.0 });
+    document
+}
+
+/// What a render of `document` runs with, as the application's renders set
+/// it: the lighting's configuration and the render's pixel filter (one
+/// pixel's box where unset).
+pub fn config(document: &SceneDocument) -> IntegratorConfig {
+    let mut config = document.lighting.config();
+    config.pixel_filter = document.render.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    config
+}
 
 /// The product's camera as framed.
 fn framed(camera: Camera) -> Camera {

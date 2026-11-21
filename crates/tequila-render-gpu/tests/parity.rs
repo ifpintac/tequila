@@ -283,6 +283,18 @@ fn a_shifted_lens_is_the_processors_picture() {
     same_picture("shifted_lens");
 }
 
+/// A soft pixel filter: Blackman-Harris 1.5 px, from its table.
+#[test]
+fn a_soft_pixel_filter_is_the_processors_picture() {
+    same_picture("soft_filter");
+}
+
+/// A box two pixels wide.
+#[test]
+fn a_wide_box_filter_is_the_processors_picture() {
+    same_picture("wide_box");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]
@@ -358,7 +370,8 @@ fn same_shot(mut scene: Shot) {
     // What the camera sees past the parts, as the command line sets it.
     snapshot.background = parity::background(document);
     let camera = scene.camera;
-    let config = document.lighting.config();
+    // As the application renders it: the render's pixel filter too.
+    let config = parity::config(document);
 
     // Nothing in the set is a case the card renders otherwise.
     let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);

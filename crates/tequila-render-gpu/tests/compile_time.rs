@@ -525,6 +525,7 @@ fn what_the_camera_costs_to_compile() {
     let parts: &[(&str, &[(&str, &str)])] = &[
         ("no background colour or backplate", &[("if (FEATURE_BACKGROUND && specular_chain && background != 0u) {", "if (false) {")]),
         ("no thin lens", &[("let lens = FEATURE_THIN_LENS && (flags & CAMERA_THIN_LENS) != 0u;", "let lens = false;")]),
+        ("no pixel filter", &[("if (FEATURE_FILTER && (flags & CAMERA_FILTER_TABLE) != 0u) {", "if (false) {"), ("if (FEATURE_FILTER && (flags & CAMERA_FILTER_BOX) != 0u) {", "if (false) {")]),
         (
             "no other projections",
             &[

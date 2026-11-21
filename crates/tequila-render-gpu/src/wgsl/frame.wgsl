@@ -98,7 +98,7 @@ struct FrameParams {
     plate_width: u32,
     plate_height: u32,
     // CAMERA_THIN_LENS, CAMERA_BLADED, CAMERA_SHIFT, CAMERA_ORTHOGRAPHIC,
-    // CAMERA_EQUIRECTANGULAR.
+    // CAMERA_EQUIRECTANGULAR, CAMERA_FILTER_BOX, CAMERA_FILTER_TABLE.
     camera_flags: u32,
     // The thin lens (Camera::generate_ray): the opening's radius in scene
     // units, the focus distance, a bladed opening's blades and turn.
@@ -110,9 +110,14 @@ struct FrameParams {
     // CAMERA_SHIFT.
     shift_x: f32,
     shift_y: f32,
-    _pad3: u32,
-    _pad4: u32,
+    // The pixel filter (FilterSampler::place): a box's width in pixels
+    // (CAMERA_FILTER_BOX), or the inverse of its distribution over one half
+    // (CAMERA_FILTER_TABLE), 1025 values: filter_table's 1024 four to a
+    // vector, and filter_last.
+    filter_width: f32,
+    filter_last: f32,
     _pad5: u32,
+    filter_table: array<vec4<f32>, 256>,
 };
 
 // FrameParams::camera_flags (transport.rs's CAMERA_*): a thin lens with an
@@ -125,6 +130,10 @@ const CAMERA_BLADED: u32 = 2u;
 const CAMERA_SHIFT: u32 = 4u;
 const CAMERA_ORTHOGRAPHIC: u32 = 8u;
 const CAMERA_EQUIRECTANGULAR: u32 = 16u;
+// A pixel filter other than one pixel's box: a box of another width, or a
+// Gaussian or Blackman-Harris read from its table.
+const CAMERA_FILTER_BOX: u32 = 32u;
+const CAMERA_FILTER_TABLE: u32 = 64u;
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).
 const GLASS_SOLID: u32 = 0u;

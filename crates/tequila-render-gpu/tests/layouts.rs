@@ -70,7 +70,8 @@ fn records_have_one_layout_on_both_sides() {
             regularization_start, regularization_roughness, off_marginal, off_upward, env_upward_sum, shadows,
             ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, max_transmission_bounces, shadow_glass,
             glass_flags, row_base, row_stride, background, plate_offset, plate_width, plate_height, camera_flags,
-            lens_radius, focus_distance, aperture_blades, aperture_rotation, shift_x, shift_y, _pad3, _pad4, _pad5,
+            lens_radius, focus_distance, aperture_blades, aperture_rotation, shift_x, shift_y, filter_width, filter_last,
+            _pad5, filter_table,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });
