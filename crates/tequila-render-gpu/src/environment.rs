@@ -1,9 +1,10 @@
 //! The environment light on the card: its images and its sampling tables as
 //! `Environment::tables` hands them over, uploaded unchanged, so the card
 //! draws from the very sky the processor draws from (`environment.wgsl`):
-//! the lights' and, for the shadow catcher, the floor's.
+//! the lights' and, for the shadow catcher, the floor's. And a backplate's
+//! picture, after the camera's image in its buffer.
 
-use tequila_render_core::environment::{Environment, EnvironmentTables};
+use tequila_render_core::environment::{Background, Environment, EnvironmentTables};
 use tequila_texture::Image;
 use wgpu::util::DeviceExt;
 
@@ -34,6 +35,11 @@ pub struct EnvLayout {
     pub off_marginal: u32,
     pub off_upward: u32,
     pub upward_sum: f32,
+    /// A backplate's picture (`Background::Backplate`), one `vec4` a texel
+    /// from `plate_offset` in the camera's image buffer; 0 by 0 for none.
+    pub plate_offset: u32,
+    pub plate_width: u32,
+    pub plate_height: u32,
 }
 
 pub struct GpuEnvironment {
@@ -60,7 +66,9 @@ fn texels(image: &Image) -> Vec<[f32; 4]> {
 }
 
 impl GpuEnvironment {
-    pub fn upload(device: &wgpu::Device, environment: &Environment) -> GpuEnvironment {
+    /// `environment`'s images and tables, and `background`'s backplate if
+    /// it is one.
+    pub fn upload(device: &wgpu::Device, environment: &Environment, background: &Background) -> GpuEnvironment {
         let t: EnvironmentTables = environment.tables();
         let mut floats: Vec<f32> = Vec::new();
         let mut push_f = |values: &[f32]| {
@@ -91,7 +99,7 @@ impl GpuEnvironment {
             ints.push(0);
         }
         let rows = |m: &tequila_core::math::Mat4| [m.m[0], m.m[1], m.m[2]];
-        let layout = EnvLayout {
+        let mut layout = EnvLayout {
             width: t.width as u32,
             height: t.height as u32,
             tiles_x: t.tiles_x as u32,
@@ -112,13 +120,22 @@ impl GpuEnvironment {
             off_marginal,
             off_upward,
             upward_sum: t.upward_sum,
+            plate_offset: 0,
+            plate_width: 0,
+            plate_height: 0,
         };
         let storage = wgpu::BufferUsages::STORAGE;
         let init = |label: &str, contents: &[u8]| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: storage })
         };
         let lit = texels(t.image);
-        let seen = texels(t.camera_image);
+        let mut seen = texels(t.camera_image);
+        if let Background::Backplate { image } = background {
+            layout.plate_offset = seen.len() as u32;
+            layout.plate_width = image.width as u32;
+            layout.plate_height = image.height as u32;
+            seen.extend(texels(image));
+        }
         GpuEnvironment {
             image: init("environment", bytemuck::cast_slice(&lit)),
             camera_image: init("environment, seen", bytemuck::cast_slice(&seen)),

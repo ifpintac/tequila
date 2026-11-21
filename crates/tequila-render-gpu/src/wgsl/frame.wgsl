@@ -79,7 +79,12 @@ struct FrameParams {
     // SCENE_CUT_PROGRAMS: a program on the card drives some opacity;
     // SCENE_EMITTERS: the glowing triangles are lights (emitters.wgsl);
     // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials;
-    // SCENE_BEVEL: some material rounds its edges (edge_radius).
+    // SCENE_BEVEL: some material rounds its edges (edge_radius);
+    // SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE: the camera, and the mirrors
+    // and glass it sees through, see a colour or a backplate's picture past
+    // the parts (integrator.rs's past_the_scene); SCENE_FINITE_DOME: the
+    // environment is a dome of a size (dome_*), looked up from where a path
+    // is.
     glass_flags: u32,
     // The rows this dispatch draws, row_base and every row_stride-th after
     // it: render_pass draws a big frame in interleaved sets of rows, each
@@ -87,7 +92,56 @@ struct FrameParams {
     // other. A whole frame is row 0 at a stride of 1.
     row_base: u32,
     row_stride: u32,
+    // Background::Color's colour, under SCENE_BACKGROUND_COLOUR; a
+    // backplate's picture under SCENE_BACKPLATE, from plate_offset in
+    // env_camera_image (environment.wgsl's plate_bilinear), and its size.
+    background: vec3<f32>,
+    plate_offset: u32,
+    plate_width: u32,
+    plate_height: u32,
+    // CAMERA_THIN_LENS, CAMERA_BLADED, CAMERA_SHIFT, CAMERA_ORTHOGRAPHIC,
+    // CAMERA_EQUIRECTANGULAR, CAMERA_FILTER_BOX, CAMERA_FILTER_TABLE.
+    camera_flags: u32,
+    // The thin lens (Camera::generate_ray): the opening's radius in scene
+    // units, the focus distance, a bladed opening's blades and turn.
+    lens_radius: f32,
+    focus_distance: f32,
+    aperture_blades: u32,
+    aperture_rotation: f32,
+    // A shifted lens's film offset in fractions of the sensor, under
+    // CAMERA_SHIFT.
+    shift_x: f32,
+    shift_y: f32,
+    // The pixel filter (FilterSampler::place): a box's width in pixels
+    // (CAMERA_FILTER_BOX), or the inverse of its distribution over one half
+    // (CAMERA_FILTER_TABLE), 1025 values: filter_table's 1024 four to a
+    // vector, and filter_last.
+    filter_width: f32,
+    filter_last: f32,
+    _pad5: u32,
+    // A dome of a size under SCENE_FINITE_DOME (Dome): its radius, its
+    // centre's height, 1 where its lower cap is the ground plane.
+    dome_radius: f32,
+    dome_height: f32,
+    dome_flatten: u32,
+    _pad6: u32,
+    filter_table: array<vec4<f32>, 256>,
 };
+
+// FrameParams::camera_flags (transport.rs's CAMERA_*): a thin lens with an
+// opening, each ray drawn from a point on it through its pinhole ray's
+// point on the focus plane; an opening of blades rather than a round one;
+// a shifted film; parallel rays from the film plane (the half-height and
+// half-width in scene units); every direction round the camera.
+const CAMERA_THIN_LENS: u32 = 1u;
+const CAMERA_BLADED: u32 = 2u;
+const CAMERA_SHIFT: u32 = 4u;
+const CAMERA_ORTHOGRAPHIC: u32 = 8u;
+const CAMERA_EQUIRECTANGULAR: u32 = 16u;
+// A pixel filter other than one pixel's box: a box of another width, or a
+// Gaussian or Blackman-Harris read from its table.
+const CAMERA_FILTER_BOX: u32 = 32u;
+const CAMERA_FILTER_TABLE: u32 = 64u;
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).
 const GLASS_SOLID: u32 = 0u;
@@ -102,6 +156,9 @@ const SCENE_EMITTERS: u32 = 8u;
 const SCENE_LIGHT_MATERIALS: u32 = 16u;
 const SCENE_CUT_PROGRAMS: u32 = 32u;
 const SCENE_BEVEL: u32 = 64u;
+const SCENE_BACKGROUND_COLOUR: u32 = 128u;
+const SCENE_BACKPLATE: u32 = 256u;
+const SCENE_FINITE_DOME: u32 = 512u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

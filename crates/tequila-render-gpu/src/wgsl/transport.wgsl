@@ -864,6 +864,189 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     return st;
 }
 
+// ---- A dome of a size (environment.rs's Dome) ---------------------------
+// Under FEATURE_DOME, where the frame says the environment is a dome of a
+// size (SCENE_FINITE_DOME): a sphere of dome_radius about (0, dome_height, 0), its
+// lower cap the ground plane where dome_flatten. Every lookup of the sky
+// from a point goes through dome_surface_point, as the processor's does.
+
+fn dome_finite() -> bool {
+    return FEATURE_DOME && (frame.glass_flags & SCENE_FINITE_DOME) != 0u;
+}
+
+fn dome_centre() -> vec3<f32> {
+    return vec3<f32>(0.0, frame.dome_height, 0.0);
+}
+
+// Vec3::dot, summed in order: the card would fuse it otherwise.
+fn dome_dot(a: vec3<f32>, b: vec3<f32>) -> f32 {
+    return cy_exact(cy_exact(a.x * b.x) + cy_exact(a.y * b.y)) + cy_exact(a.z * b.z);
+}
+
+struct DomeHit {
+    ok: bool,
+    point: vec3<f32>,
+    normal: vec3<f32>,
+    distance: f32,
+};
+
+// Dome::surface_point: where the ray (origin, direction) meets the dome -
+// the nearest root past 1e-4 of the sphere, or the ground plane in front
+// of it within the dome's footprint where the dome is flattened.
+fn dome_surface_point(origin: vec3<f32>, direction: vec3<f32>) -> DomeHit {
+    var none: DomeHit;
+    none.ok = false;
+    let radius = frame.dome_radius;
+    let centre = dome_centre();
+    let oc = origin - centre;
+    let b = dome_dot(oc, direction);
+    let c = dome_dot(oc, oc) - cy_exact(radius * radius);
+    let discriminant = cy_exact(b * b) - c;
+    if (discriminant < 0.0) {
+        return none;
+    }
+    let root = cy_sqrt(discriminant);
+    let far = -b + root;
+    let near = -b - root;
+    var t: f32;
+    if (near > 1e-4) {
+        t = near;
+    } else if (far > 1e-4) {
+        t = far;
+    } else {
+        return none;
+    }
+    if (frame.dome_flatten != 0u && direction.y < -1e-6) {
+        let t_plane = cy_div(-origin.y, direction.y);
+        if (t_plane > 1e-4 && t_plane < t) {
+            let point = origin + cy_exact3(direction * t_plane);
+            let offset = point - centre;
+            if (cy_exact(cy_exact(offset.x * offset.x) + cy_exact(offset.z * offset.z)) <= cy_exact(radius * radius)) {
+                return DomeHit(true, point, vec3<f32>(0.0, -1.0, 0.0), t_plane);
+            }
+        }
+    }
+    let point = origin + cy_exact3(direction * t);
+    return DomeHit(true, point, (centre - point) * cy_div(1.0, radius), t);
+}
+
+// try_normalize: the vector over its length, where that is a number over
+// nought; else none (a zero vector).
+fn dome_normalized(v: vec3<f32>) -> vec3<f32> {
+    let length_squared = dome_dot(v, v);
+    if (!(length_squared > 0.0 && length_squared < 3.4e38)) {
+        return vec3<f32>(0.0);
+    }
+    return v * cy_div(1.0, cy_sqrt(length_squared));
+}
+
+// Dome::lookup's direction: the image read towards where the ray meets the
+// dome, from its centre; the ray's own where it meets none.
+fn dome_lookup(origin: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
+    let hit = dome_surface_point(origin, direction);
+    if (!hit.ok) {
+        return direction;
+    }
+    let from_centre = dome_normalized(hit.point - dome_centre());
+    return select(from_centre, direction, all(from_centre == vec3<f32>(0.0)));
+}
+
+struct FromCentre {
+    ok: bool,
+    direction: vec3<f32>,
+    jacobian: f32,
+    distance: f32,
+};
+
+// Dome::from_centre: the point of the dome seen from its centre along
+// `local`, as seen from `origin` - the direction there, the solid angle a
+// patch spans from the centre over what it spans from `origin`, and how far.
+fn dome_from_centre(origin: vec3<f32>, local: vec3<f32>) -> FromCentre {
+    var none: FromCentre;
+    none.ok = false;
+    let hit = dome_surface_point(dome_centre(), local);
+    if (!hit.ok) {
+        return none;
+    }
+    let offset = hit.point - origin;
+    let distance = cy_sqrt(dome_dot(offset, offset));
+    if (distance < 1e-4) {
+        return none;
+    }
+    let direction = offset * cy_div(1.0, distance);
+    let from_centre_distance = max(hit.distance, 1e-6);
+    let cos_centre = max(abs(dome_dot(local, hit.normal)), 1e-6);
+    let cos_surface = max(abs(dome_dot(direction, hit.normal)), 1e-6);
+    let jacobian = cy_exact(cy_div(cos_centre, cy_exact(from_centre_distance * from_centre_distance)) * cy_div(cy_exact(distance * distance), cos_surface));
+    return FromCentre(true, direction, jacobian, distance);
+}
+
+// Dome::spread_bound: the most a patch of sky grows by seen from `origin`
+// rather than the centre, 1 / (1 - off)^2 for `origin` off the centre by
+// `off` of the radius (at most 0.999).
+fn dome_spread_bound(origin: vec3<f32>) -> f32 {
+    let off = min(cy_div(cy_sqrt(dome_dot(origin - dome_centre(), origin - dome_centre())), frame.dome_radius), 0.999);
+    let gap = 1.0 - off;
+    return cy_div(1.0, cy_exact(gap * gap));
+}
+
+// Where on the film the camera's sample is, which a backplate is mapped to
+// (Background::Backplate): set where the camera's ray is made.
+var<private> camera_film: vec2<f32>;
+
+// past_the_scene (ic:2831): what a path sees past the scene along
+// `direction` - where it escapes, and behind a shadow catcher it meets as
+// the camera would see it. Along a specular chain a background colour or a
+// backplate replaces the view (SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE),
+// the plate at the film point the path set out from: the camera's sample's,
+// and its first glass's reflection's; a floor's reflection traces its path
+// from the film's corner (floor_reflection's Vec2::ZERO). Else what the
+// camera sees of the environment on its own first segment, else the
+// environment.
+fn past_the_scene(specular_chain: bool, camera_view: bool, in_floor: bool, origin: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
+    let background = frame.glass_flags & (SCENE_BACKGROUND_COLOUR | SCENE_BACKPLATE);
+    if (FEATURE_BACKGROUND && specular_chain && background != 0u) {
+        if (FEATURE_BACKPLATE && (background & SCENE_BACKPLATE) != 0u) {
+            return plate_bilinear(select(camera_film, vec2<f32>(0.0), in_floor));
+        }
+        return frame.background;
+    }
+    // From the path's origin with a dome of a size (radiance_from,
+    // background_radiance_from): the image read towards where the ray meets
+    // the dome, from its centre.
+    var towards = direction;
+    if (dome_finite()) {
+        towards = dome_lookup(origin, direction);
+    }
+    return env_radiance(camera_view, towards);
+}
+
+// Environment::pdf_facing at `origin`, or with a dome of a size pdf_from:
+// the whole sky's density towards where the ray meets the dome, from its
+// centre, times the patch's jacobian there; nought where it meets none.
+fn env_pdf_from(origin: vec3<f32>, direction: vec3<f32>, facing: vec3<f32>) -> f32 {
+    var towards = direction;
+    var normal = facing;
+    var scale = 1.0;
+    if (dome_finite()) {
+        let hit = dome_surface_point(origin, direction);
+        if (!hit.ok) {
+            return 0.0;
+        }
+        towards = dome_normalized(hit.point - dome_centre());
+        if (all(towards == vec3<f32>(0.0))) {
+            return 0.0;
+        }
+        let seen = dome_from_centre(origin, towards);
+        if (!seen.ok) {
+            return 0.0;
+        }
+        normal = vec3<f32>(0.0);
+        scale = seen.jacobian;
+    }
+    return env_pdf_sky(towards, normal) * scale;
+}
+
 // What the path meets along the segment just traced: the lamps the surface
 // a seeing bounce, a mirror's view or the camera's view through glass left
 // looks for (ic:1017-1048), each as far as what the ray hit - a little past
@@ -900,7 +1083,7 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection) -> vec3<f
             if (!open) {
                 break;
             }
-            emitted = env_radiance(bounce == 0u && !(*st).reflected, (*st).direction);
+            emitted = past_the_scene((*st).specular_chain, bounce == 0u && !(*st).reflected, (*st).in_floor, (*st).origin, (*st).direction);
             if (all(emitted == vec3<f32>(0.0))) {
                 break;
             }
@@ -908,7 +1091,7 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection) -> vec3<f
             // there, straight on the way it left.
             if (!(*st).specular_chain) {
                 let met_glass = seen.valid && seen.met;
-                let pdf = env_pdf_sky(select((*st).direction, seen.direction, met_glass), select((*st).sky_facing, seen.sky_facing, met_glass));
+                let pdf = env_pdf_from(select((*st).origin, seen.position, met_glass), select((*st).direction, seen.direction, met_glass), select((*st).sky_facing, seen.sky_facing, met_glass));
                 if (met_glass) {
                     weigh = true;
                     straight = pdf;
@@ -1070,11 +1253,33 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             if (frame.env_intensity <= 0.0) {
                 continue;
             }
-            let e = env_sample_sky(select(surf.geometric, vec3<f32>(0.0), transmissive), sampler_light_sample(s));
-            if (!e.ok || e.pdf <= 0.0 || all(e.radiance == vec3<f32>(0.0))) {
+            // With a dome of a size, the whole sky drawn from its centre and
+            // seen from here (sample_from): the direction there, the density
+            // times the patch's jacobian, and how far the dome is.
+            let finite = dome_finite();
+            let e = env_sample_sky(select(select(surf.geometric, vec3<f32>(0.0), transmissive), vec3<f32>(0.0), finite), sampler_light_sample(s));
+            if (!e.ok) {
                 continue;
             }
-            draw = LightDraw(true, e.direction, e.radiance, 0.0, true, e.pdf, false);
+            var towards = e.direction;
+            var pdf = e.pdf;
+            var distance = 0.0;
+            if (finite) {
+                let seen = dome_from_centre(surf.position, e.direction);
+                if (!seen.ok) {
+                    continue;
+                }
+                towards = seen.direction;
+                pdf = e.pdf * seen.jacobian;
+                distance = seen.distance;
+                if (!(pdf > 0.0)) {
+                    continue;
+                }
+            }
+            if (pdf <= 0.0 || all(e.radiance == vec3<f32>(0.0))) {
+                continue;
+            }
+            draw = LightDraw(true, towards, e.radiance, distance, !finite, pdf, false);
         } else {
             if (!FEATURE_LAMPS || frame.light_count == 0u) {
                 continue;
@@ -1921,7 +2126,15 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
     if (frame.shadows == 0u) {
         return 0.0;
     }
-    let total = env_irradiance_bound(normal);
+    // With a dome of a size, the sky's light onto a point grows by up to
+    // its spread bound there (irradiance_bound).
+    let finite = dome_finite();
+    var total = env_irradiance_bound(normal);
+    var spread = 1.0;
+    if (finite) {
+        spread = dome_spread_bound(position);
+        total *= spread;
+    }
     if (!(total > 0.0)) {
         return 0.0;
     }
@@ -1938,8 +2151,23 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
         if (!sample.ok) {
             continue;
         }
-        if (chance < sample.keep || (last && sample.keep > 0.0)) {
-            let open = shadow_through(frame.shadow_glass, offset_at(position, normal, magnitude), normal, position + sample.direction * frame.shadow_far, -sample.direction);
+        // Seen from here rather than from the dome's centre, a patch of a
+        // dome of a size spans 1 / jacobian of the solid angle, and the
+        // shadow ray stops at the dome (sample_irradiance).
+        var keep = sample.keep;
+        var towards = sample.direction;
+        var reach = frame.shadow_far;
+        if (finite) {
+            let seen = dome_from_centre(position, sample.direction);
+            if (!seen.ok) {
+                continue;
+            }
+            keep = min(cy_div(max(dot(normal, seen.direction), 0.0), cy_exact(seen.jacobian * spread)), 1.0);
+            towards = seen.direction;
+            reach = seen.distance * (1.0 - 1e-3);
+        }
+        if (chance < keep || (last && keep > 0.0)) {
+            let open = shadow_through(frame.shadow_glass, offset_at(position, normal, magnitude), normal, position + towards * reach, -towards);
             return 1.0 - clamp(luminance(open.through), 0.0, 1.0);
         }
     }
@@ -2098,6 +2326,135 @@ fn reflected_on(floor: FloorSeen, seen: vec3<f32>, escaped: bool, depth: f32) ->
     return Caught(lerp3(caught.radiance, seen, share), caught.coverage + share * (1.0 - caught.coverage));
 }
 
+// cy_exact for a pair: each product rounded as Rust rounds it.
+fn cy_exact2(v: vec2<f32>) -> vec2<f32> {
+    return bitcast<vec2<f32>>(bitcast<vec2<u32>>(v) | vec2<u32>(cy_zero));
+}
+
+// Camera::sample_aperture (camera.rs): a point on the lens's opening, of
+// radius 1, for the lens draw `u` - sample_polygon_aperture for one of
+// blades (a wedge by u.x, then a point in its triangle, folded),
+// sample_uniform_disk_concentric for a round one (sampling.rs).
+fn aperture_point(u: vec2<f32>) -> vec2<f32> {
+    if (FEATURE_BLADES && (frame.camera_flags & CAMERA_BLADED) != 0u) {
+        let blades = f32(frame.aperture_blades);
+        let along = cy_exact(u.x * blades);
+        let wedge = min(floor(along), blades - 1.0);
+        var s = clamp(along - wedge, 0.0, 1.0);
+        var t = u.y;
+        let a0 = cy_div(cy_exact(CY_TAU * wedge), blades) + frame.aperture_rotation;
+        let a1 = cy_div(cy_exact(CY_TAU * (wedge + 1.0)), blades) + frame.aperture_rotation;
+        let v0 = cy_sincos(a0).yx;
+        let v1 = cy_sincos(a1).yx;
+        if (s + t > 1.0) {
+            s = 1.0 - s;
+            t = 1.0 - t;
+        }
+        return cy_exact2(v0 * s) + cy_exact2(v1 * t);
+    }
+    let o = vec2<f32>(2.0 * u.x - 1.0, 2.0 * u.y - 1.0);
+    if (o.x == 0.0 && o.y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    var r: f32;
+    var theta: f32;
+    if (abs(o.x) > abs(o.y)) {
+        r = o.x;
+        theta = cy_exact((CY_PI / 4.0) * cy_div(o.y, o.x));
+    } else {
+        r = o.y;
+        theta = (CY_PI / 2.0) - cy_exact((CY_PI / 4.0) * cy_div(o.x, o.y));
+    }
+    let sc = cy_sincos(theta);
+    return cy_exact2(vec2<f32>(r * sc.y, r * sc.x));
+}
+
+struct CameraRay {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+};
+
+// The filter's table at step i of 1025 (FrameParams::filter_table).
+fn filter_step(i: u32) -> f32 {
+    return select(frame.filter_table[min(i, 1023u) >> 2u][i & 3u], frame.filter_last, i >= 1024u);
+}
+
+// FilterSampler::place's along for a Gaussian or a Blackman-Harris: a
+// draw through the inverse of the filter's distribution over one half,
+// read between its steps, on the side of the centre the draw falls.
+fn filter_along(u: f32) -> f32 {
+    let signed = 2.0 * u - 1.0;
+    let at = abs(signed) * 1024.0;
+    let i = min(u32(at), 1023u);
+    let t = at - f32(i);
+    let a = filter_step(i);
+    let offset = a + cy_exact((filter_step(i + 1u) - a) * t);
+    return 0.5 + bitcast<f32>((bitcast<u32>(offset) & 0x7FFFFFFFu) | (bitcast<u32>(signed) & 0x80000000u));
+}
+
+// FilterSampler::place: where in or around its pixel a sample goes, for its
+// jitter `u` - where the jitter falls for one pixel's box; spread about the
+// centre by a box's width (CAMERA_FILTER_BOX); each axis through the
+// filter's table for a Gaussian or a Blackman-Harris (CAMERA_FILTER_TABLE).
+fn filter_place(u: vec2<f32>) -> vec2<f32> {
+    let flags = frame.camera_flags;
+    if (FEATURE_FILTER && (flags & CAMERA_FILTER_TABLE) != 0u) {
+        return vec2<f32>(filter_along(u.x), filter_along(u.y));
+    }
+    if (FEATURE_FILTER && (flags & CAMERA_FILTER_BOX) != 0u) {
+        return 0.5 + cy_exact2((u - 0.5) * frame.filter_width);
+    }
+    return u;
+}
+
+// Camera::generate_ray (camera.rs) for a point on the film, (0, 0) the
+// picture's top left and (1, 1) its bottom right: through the pinhole, its
+// film shifted (CAMERA_SHIFT) or not; or, through a thin lens
+// (CAMERA_THIN_LENS), from a point on its opening drawn on the lens
+// dimensions (sampler::dim::LENS, after the pixel's jitter) towards where
+// the pinhole's ray meets the focus plane; or parallel, from the film
+// plane (CAMERA_ORTHOGRAPHIC); or every way round, the film's width the
+// horizon and its height from the zenith down (CAMERA_EQUIRECTANGULAR). The time
+// the processor draws with the shutter open (sampler::dim::TIME) is a
+// Sobol' dimension, no state, and nothing reads a ray's time; no camera
+// opens its shutter.
+fn camera_ray(film: vec2<f32>, s: ptr<function, Sampler>) -> CameraRay {
+    let sx = 2.0 * film.x - 1.0;
+    let sy = 1.0 - 2.0 * film.y;
+    let flags = frame.camera_flags;
+    let lens = FEATURE_THIN_LENS && (flags & CAMERA_THIN_LENS) != 0u;
+    let shifted = FEATURE_SHIFT && (flags & CAMERA_SHIFT) != 0u;
+    let parallel = FEATURE_ORTHOGRAPHIC && (flags & CAMERA_ORTHOGRAPHIC) != 0u;
+    let all_round = FEATURE_EQUIRECTANGULAR && (flags & CAMERA_EQUIRECTANGULAR) != 0u;
+    if (lens || shifted || parallel || all_round) {
+        var start = vec3<f32>(0.0);
+        var towards: vec3<f32>;
+        if (parallel) {
+            start = vec3<f32>(cy_exact(sx * frame.half_width), cy_exact(sy * frame.half_height), 0.0);
+            towards = vec3<f32>(0.0, 0.0, -1.0);
+        } else if (all_round) {
+            let phi = cy_sincos(cy_exact(sx * CY_PI));
+            let theta = cy_sincos(cy_exact(film.y * CY_PI));
+            towards = vec3<f32>(cy_exact(theta.x * phi.x), theta.y, -cy_exact(theta.x * phi.y));
+        } else {
+            // Without CAMERA_SHIFT the shift is nought, and sx + 0 is sx.
+            let d = vec3<f32>(cy_exact((sx + 2.0 * frame.shift_x) * frame.half_width), cy_exact((sy + 2.0 * frame.shift_y) * frame.half_height), -1.0);
+            if (lens) {
+                start = vec3<f32>(cy_exact2(aperture_point(sampler_lens(s)) * frame.lens_radius), 0.0);
+                let t_focus = cy_div(frame.focus_distance, -d.z);
+                towards = normalized(cy_exact3(d * t_focus) - start);
+            } else {
+                towards = normalized(d);
+            }
+        }
+        return CameraRay(rows_point(frame.camera_to_world, start), normalized(rows_vector(frame.camera_to_world, towards)));
+    }
+    let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
+    let origin = rows_point(frame.camera_to_world, vec3<f32>(0.0));
+    let direction = normalized(rows_vector(frame.camera_to_world, camera_dir));
+    return CameraRay(origin, direction);
+}
+
 // One camera sample. WGSL has no recursion, so the paths the processor
 // traces from within a path run in this same loop, each when the path that
 // starts it has done what comes before it: the floor's reflection
@@ -2113,15 +2470,17 @@ fn reflected_on(floor: FloorSeen, seen: vec3<f32>, escaped: bool, depth: f32) ->
 // sampler, each first asking which media it starts in.
 fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var s = sampler_new(x, y, sample_index, frame.scene_seed);
-    let j = sampler_pixel_jitter(&s);
+    let j = filter_place(sampler_pixel_jitter(&s));
     let film = vec2<f32>((f32(x) + j.x) / f32(frame.width), (f32(y) + j.y) / f32(frame.height));
-    let sx = 2.0 * film.x - 1.0;
-    let sy = 1.0 - 2.0 * film.y;
-    let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
-    let origin = rows_point(frame.camera_to_world, vec3<f32>(0.0));
-    let direction = normalized(rows_vector(frame.camera_to_world, camera_dir));
+    camera_film = film;
+    // cy_exact's zero from a word the compiler cannot see is one (the
+    // frame's mode never sets its top bit): a program sets it too, but a
+    // variant without programs would otherwise know it, and the camera's
+    // arithmetic would fuse there as it does not in the whole kernel.
+    cy_zero = frame.mode & 0x80000000u;
+    let ray = camera_ray(film, &s);
 
-    var st = path_start(origin, direction, frame.max_bounces, false, false);
+    var st = path_start(ray.origin, ray.direction, frame.max_bounces, false, false);
     var background = vec3<f32>(0.0);
     var coverage = 0.0;
     // The floor a path ended on, and whether there is one.
@@ -2278,7 +2637,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         // whose catcher_view is false.
                         let view = st.direction;
                         let normal = select(-raw.geometric, raw.geometric, dot(raw.geometric, -view) > 0.0);
-                        let behind = env_radiance(st.bounce == 0u && !st.reflected, view);
+                        let behind = past_the_scene(st.specular_chain, st.bounce == 0u && !st.reflected, st.in_floor, st.origin, view);
                         let caught = catch_shadow(c, raw, normal, behind, st.bounce, &s);
                         if (cut_wanted) {
                             st = seg_st;

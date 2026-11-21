@@ -395,6 +395,19 @@ pub struct FilterSampler {
 }
 
 impl FilterSampler {
+    /// The filter's width in pixels, as [`PixelFilter::sampler`] settled
+    /// it (1 for one that was not finite or not over nought).
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// The inverse of the filter's distribution over one half, in pixels
+    /// from the centre at even steps of the draw (1025 of them), which
+    /// [`FilterSampler::place`] reads between; `None` for a box.
+    pub fn table(&self) -> Option<&[f32]> {
+        self.table.as_deref()
+    }
+
     /// Where in (or around) the pixel a sample goes, for `jitter` uniform in
     /// [0, 1)²: the same point a box of one pixel always gave, and otherwise
     /// a point distributed as the filter is, about the pixel's centre.

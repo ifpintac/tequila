@@ -21,7 +21,9 @@ fn features_of(document: &tequila_scene::SceneDocument, mut cache: MeshCache) ->
     let gpu = device::for_test(Needs::RayQueries)?;
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(document, environment, &mut cache);
+    let (mut snapshot, _) = snapshot(document, environment, &mut cache);
+    // What the camera sees past the parts, as the parity test sets it.
+    snapshot.background = parity::background(document);
     let renderer = GpuRenderer::with_kernel(gpu, &snapshot, Some(KernelFeatures::ALL));
     assert_eq!(renderer.kernel, KernelFeatures::ALL);
     Some(renderer.features)
@@ -63,6 +65,17 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BEVEL), name.starts_with("bevel"), "{name}: {}", features.names());
     }
+    // Only a scene with a background colour or a backplate keeps the
+    // background, and only the backplate's its picture; the camera's parts
+    // are a frame's, which no scene keeps (`frame_parts_are_the_cameras`).
+    for (name, features) in &chosen {
+        assert_eq!(features.contains(F::BACKGROUND), ["background_colour", "backplate"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::DOME), *name == "finite_dome", "{name}: {}", features.names());
+        let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
+        assert!(F::of_frame(u32::MAX).contains(frame_parts) && !F::of_frame(u32::MAX).contains(F::DOME));
+        assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
+    }
     // At least what each is in the set for.
     for (name, wanted) in [
         ("bumped_product", F::PROGRAMS | F::TEXTURES | F::op(24)),
@@ -77,9 +90,40 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
+    }
+}
+
+/// The parts a frame reaches through its camera and film, which a renderer
+/// widens its kernel to: each parity scene's camera, as framed and through
+/// its lens.
+#[test]
+fn frame_parts_are_the_cameras() {
+    use KernelFeatures as F;
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    let renderer = GpuRenderer::with_kernel(gpu, &snapshot, Some(KernelFeatures::ALL));
+    for scene in parity::SET {
+        let document = scene.document();
+        let settings = FrameSettings { camera: scene.camera(&document), config: parity::config(&document), scene_seed: 7, reject_fireflies: true, clamp_direct: None, clamp_indirect: None };
+        let parts = renderer.frame_features(&settings, scene.width, scene.height);
+        let wanted = match scene.name {
+            "shallow_focus" => F::THIN_LENS,
+            "bladed_bokeh" => F::THIN_LENS | F::BLADES,
+            "orthographic" => F::ORTHOGRAPHIC,
+            "all_round" => F::EQUIRECTANGULAR,
+            "shifted_lens" => F::SHIFT,
+            "soft_filter" | "wide_box" => F::FILTER,
+            _ => F::NONE,
+        };
+        eprintln!("{}: the frame reaches {}", scene.name, parts.names());
+        assert_eq!(parts, wanted, "{}", scene.name);
     }
 }
 
@@ -156,10 +200,11 @@ fn parity_shot(name: &str) -> (tequila_render_core::scene::SceneSnapshot, FrameS
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    let (mut snapshot, _) = snapshot(&document, environment, &mut scene.cache());
+    snapshot.background = parity::background(&document);
     let settings = FrameSettings {
         camera: scene.camera(&document),
-        config: document.lighting.config(),
+        config: parity::config(&document),
         scene_seed: scene.seed,
         reject_fireflies: true,
         clamp_direct: None,

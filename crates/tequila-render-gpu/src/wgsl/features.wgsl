@@ -60,3 +60,23 @@ override FEATURE_TEXTURES: bool = true;
 override FEATURE_ATTRIBUTES: bool = true;
 // Rounded edges: the bevel's probes at the surface a path meets first.
 override FEATURE_BEVEL: bool = true;
+// A background colour or backplate past the parts, along a specular chain.
+override FEATURE_BACKGROUND: bool = true;
+// The backplate's picture, read at the film point.
+override FEATURE_BACKPLATE: bool = true;
+// The thin lens: a camera ray from a point on the opening (a frame's part:
+// the camera's, which the scene's records do not hold).
+override FEATURE_THIN_LENS: bool = true;
+// An opening of blades rather than a round one (a frame's part).
+override FEATURE_BLADES: bool = true;
+// A dome of a size: the sky looked up, sampled and weighed from where a
+// path is, its shadow rays stopping at the dome.
+override FEATURE_DOME: bool = true;
+// A shifted lens's film (a frame's part).
+override FEATURE_SHIFT: bool = true;
+// Parallel rays from the film plane (a frame's part).
+override FEATURE_ORTHOGRAPHIC: bool = true;
+// Every direction round the camera (a frame's part).
+override FEATURE_EQUIRECTANGULAR: bool = true;
+// A pixel filter other than one pixel's box (a frame's part: the film's).
+override FEATURE_FILTER: bool = true;
