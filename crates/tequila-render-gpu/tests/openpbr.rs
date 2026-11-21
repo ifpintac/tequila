@@ -379,6 +379,8 @@ fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: 
         inputs.extend_from_slice(bytemuck::cast_slice::<GpuMaterial, u32>(std::slice::from_ref(&gpu)));
         inputs.extend(bits(&[floor, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z, u.x, u.y, uc]));
         inputs.push(aimed as u32);
+        // And nought for cy_zero, which the card must not see is.
+        inputs.push(0);
 
         let eval = bsdf.eval(wo, wi);
         let mut e = vec![eval.r, eval.g, eval.b, bsdf.pdf(wo, wi)];
@@ -397,7 +399,8 @@ fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: 
     }
     let base = MATERIAL_WORDS;
     let body = format!(
-        "let m = {material};
+        "cy_zero = inp({}u);
+         let m = {material};
          let rf = inf({base}u);
          let wo = vec3<f32>(inf({}u), inf({}u), inf({}u));
          let wi = vec3<f32>(inf({}u), inf({}u), inf({}u));
@@ -412,6 +415,7 @@ fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: 
          outf(13u, select(0.0, r.roughness, s.ok));
          let al = openpbr_albedo(b, wo);
          outf(14u, al.x); outf(15u, al.y); outf(16u, al.z);",
+        base + 11,
         base + 1,
         base + 2,
         base + 3,
@@ -426,7 +430,7 @@ fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: 
     );
     let name = format!("{}{kind}", if aimed { "OpenPbrBsdf aimed" } else { "OpenPbrBsdf" });
     let name = name.as_str();
-    let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 11, STACK_WORDS.len());
+    let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 12, STACK_WORDS.len());
     // The processor's roughness word for no sample is 0 here too.
     let want: Vec<Vec<f32>> = want
         .into_iter()
@@ -535,6 +539,7 @@ fn reflection_density_and_selective_values(seed: u64, make: fn(&mut Pcg32) -> Ma
         let gpu = GpuMaterial::from_material(&m);
         inputs.extend_from_slice(bytemuck::cast_slice::<GpuMaterial, u32>(std::slice::from_ref(&gpu)));
         inputs.extend(bits(&[floor, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z]));
+        inputs.push(0);
         let first = bsdf.pdf_reflection(wo, wi, |r| seeing_share(r, 0.5, 0.8));
         let second = bsdf.pdf_reflection(wo, wi, |r| seeing_share(r, 0.1, 0.3));
         let diffuse = bsdf.eval_selective(wo, wi, true, false);
@@ -561,7 +566,8 @@ fn reflection_density_and_selective_values(seed: u64, make: fn(&mut Pcg32) -> Ma
     }
     let base = MATERIAL_WORDS;
     let body = format!(
-        "let m = {material};
+        "cy_zero = inp({}u);
+         let m = {material};
          let wo = vec3<f32>(inf({}u), inf({}u), inf({}u));
          let wi = vec3<f32>(inf({}u), inf({}u), inf({}u));
          let b = openpbr_aim(openpbr_to_aim(m, inf({base}u)), wo);
@@ -574,6 +580,7 @@ fn reflection_density_and_selective_values(seed: u64, make: fn(&mut Pcg32) -> Ma
          let a = openpbr_eval_selective(b, wo, wi, true, true);
          outf(8u, a.x); outf(9u, a.y); outf(10u, a.z);
          outf(11u, select(0.0, 1.0, openpbr_has_delta(b)));",
+        base + 7,
         base + 1,
         base + 2,
         base + 3,
@@ -582,7 +589,7 @@ fn reflection_density_and_selective_values(seed: u64, make: fn(&mut Pcg32) -> Ma
         base + 6,
         material = material_from_words(),
     );
-    let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 7, SELECTIVE_WORDS.len());
+    let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 8, SELECTIVE_WORDS.len());
     println!("pdf_reflection: {seen} of {N} items with a reflection density, {deltas} stacks with a mirror-smooth lobe");
     // The flag is never looser: the words are all compared, none sampled.
     compare(&format!("OpenPbrBsdf::pdf_reflection and eval_selective{kind}"), &out, &want, &SELECTIVE_WORDS, 11, &cases);

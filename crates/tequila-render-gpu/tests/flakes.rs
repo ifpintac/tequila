@@ -58,14 +58,16 @@ fn the_flake_field_is_the_processors() {
         let material = Material { flake_weight: weight, flake_size: size, flake_spread: spread, ..Material::default() };
         let flaked = tequila_render_core::flakes::apply(&Material { flake_weight: weight.max(2e-4), ..material.clone() }, &point(position, scale));
         let weight = weight.max(2e-4);
-        inputs.extend([position.x, position.y, position.z, scale, size, weight, spread].map(f32::to_bits));
+        // And nought for cy_zero, which the card must not see is.
+        inputs.extend([position.x, position.y, position.z, scale, size, weight, spread, 0.0].map(f32::to_bits));
         want.push([flaked.flake_normal.x, flaked.flake_normal.y, flaked.flake_normal.z, flaked.flake_coverage]);
         on += (flaked.flake_coverage > 0.5) as usize;
         cases.push(format!("position {position:?} scale {scale} size {size} weight {weight} spread {spread}"));
     }
-    let body = "let at = flake_at(vec3<f32>(inf(0u), inf(1u), inf(2u)), inf(3u), inf(4u), inf(5u), inf(6u));
+    let body = "cy_zero = inp(7u);
+                let at = flake_at(vec3<f32>(inf(0u), inf(1u), inf(2u)), inf(3u), inf(4u), inf(5u), inf(6u));
                 outf(0u, at.x); outf(1u, at.y); outf(2u, at.z); outf(3u, at.w);";
-    let out = h.run_wgsl(&["flakes"], body, &inputs, 7, 4);
+    let out = h.run_wgsl(&["flakes"], body, &inputs, 8, 4);
     let (mut other_cell, mut worst) = (Vec::new(), 0.0f32);
     for (i, w) in want.iter().enumerate() {
         let c: Vec<f32> = out[i * 4..(i + 1) * 4].iter().map(|b| f32::from_bits(*b)).collect();

@@ -228,21 +228,22 @@ fn a_thin_films_reflectance_is_the_processors() {
         let ior = 1.0 + rng.next_f32() * 1.5;
         let n = Spectrum { r: 0.1 + rng.next_f32() * 2.5, g: 0.1 + rng.next_f32() * 2.5, b: 0.1 + rng.next_f32() * 2.5 };
         let k = Spectrum { r: rng.next_f32() * 6.0, g: rng.next_f32() * 6.0, b: rng.next_f32() * 6.0 };
-        inputs.extend(bits(&[f.weight, f.thickness, f.ior, cos, ior, n.r, n.g, n.b, k.r, k.g, k.b]));
+        // And nought for cy_zero, which the card must not see is.
+        inputs.extend(bits(&[f.weight, f.thickness, f.ior, cos, ior, n.r, n.g, n.b, k.r, k.g, k.b, 0.0]));
         let (d, c) = (f.over_dielectric(cos, ior), f.over_conductor(cos, ComplexIor { n, k }));
         let mut e = [0.0f32; OUT];
         e[..6].copy_from_slice(&[d.r, d.g, d.b, c.r, c.g, c.b]);
         want.push(e);
         cases.push(format!("film {f:?} cos {cos} ior {ior} n {n:?} k {k:?}"));
     }
-    let body = "let f = vec4<f32>(inf(0u), inf(1u), inf(2u), 0.0); let c = inf(3u); let ior = inf(4u);
+    let body = "cy_zero = inp(11u); let f = vec4<f32>(inf(0u), inf(1u), inf(2u), 0.0); let c = inf(3u); let ior = inf(4u);
          let n = vec3<f32>(inf(5u), inf(6u), inf(7u)); let k = vec3<f32>(inf(8u), inf(9u), inf(10u));
          var d = vec3<f32>(fresnel_dielectric(c, ior));
          var m = fresnel_conductor(c, n, k);
          if (film_on(f)) { d = film_over(d, c, f, vec3<f32>(max(ior, 1.0)), vec3<f32>(0.0)); m = film_over(m, c, f, n, -k); }
          outf(0u, d.x); outf(1u, d.y); outf(2u, d.z); outf(3u, m.x); outf(4u, m.y); outf(5u, m.z);
          for (var w = 6u; w < 13u; w++) { outf(w, 0.0); }";
-    let out = h.run_wgsl(&["lobes"], body, &inputs, 11, OUT);
+    let out = h.run_wgsl(&["lobes"], body, &inputs, 12, OUT);
     compare("Film", &out, &want, &cases);
 }
 
@@ -259,12 +260,13 @@ fn the_specular_interface_under_a_film_is_the_processors() {
         let (wo, wi) = (direction(&mut rng), direction(&mut rng));
         let (u, uc) = (vec2(rng.next_f32(), rng.next_f32()), rng.next_f32());
         let lobe = DielectricSpecular::new(roughness, ior).with_weight(weight).with_film(Some(f));
-        inputs.extend(bits(&[roughness, ior, weight, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z, u.x, u.y, uc, f.weight, f.thickness, f.ior]));
+        inputs.extend(bits(&[roughness, ior, weight, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z, u.x, u.y, uc, f.weight, f.thickness, f.ior, 0.0]));
         want.push(expected(lobe.eval(wo, wi), lobe.pdf(wo, wi), lobe.sample(wo, u, uc), lobe.directional_albedo(wo)));
         cases.push(format!("roughness {roughness} ior {ior} weight {weight} film {f:?} wo {wo:?} wi {wi:?}"));
     }
     let body = format!(
-        "var l = specular_new(inf(0u), inf(1u)); l.weight = clamp(inf(2u), 0.0, 1.0);
+        "cy_zero = inp(15u);
+         var l = specular_new(inf(0u), inf(1u)); l.weight = clamp(inf(2u), 0.0, 1.0);
          l.film = vec4<f32>(inf(12u), inf(13u), inf(14u), 0.0);
          let wo = vec3<f32>(inf(3u), inf(4u), inf(5u)); let wi = vec3<f32>(inf(6u), inf(7u), inf(8u));{}",
         BODY_TAIL
@@ -273,7 +275,7 @@ fn the_specular_interface_under_a_film_is_the_processors() {
             .replace("SAMPLE", "specular_sample(l, wo, vec2<f32>(inf(9u), inf(10u)), inf(11u))")
             .replace("ALBEDO", "specular_directional_albedo(l, wo)")
     );
-    let out = h.run_wgsl(&["lobes"], &body, &inputs, 15, OUT);
+    let out = h.run_wgsl(&["lobes"], &body, &inputs, 16, OUT);
     compare("DielectricSpecular under a film", &out, &want, &cases);
 }
 
@@ -294,13 +296,14 @@ fn the_conductor_under_a_film_is_the_processors() {
         let lobe = Conductor::new(Ggx::from_roughness(roughness, anisotropy), ComplexIor { n, k }).with_tint(tint).with_film(Some(f));
         inputs.extend(bits(&[
             roughness, anisotropy, n.r, n.g, n.b, k.r, k.g, k.b, tint.r, tint.g, tint.b, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z, u.x,
-            u.y, uc, f.weight, f.thickness, f.ior,
+            u.y, uc, f.weight, f.thickness, f.ior, 0.0,
         ]));
         want.push(expected(lobe.eval(wo, wi), lobe.pdf(wo, wi), lobe.sample(wo, u, uc), lobe.albedo(wo).r));
         cases.push(format!("roughness {roughness} anisotropy {anisotropy} n {n:?} k {k:?} film {f:?} wo {wo:?} wi {wi:?}"));
     }
     let body = format!(
-        "let l = Conductor(ggx_from_roughness(inf(0u), inf(1u)), vec3<f32>(inf(2u), inf(3u), inf(4u)),
+        "cy_zero = inp(23u);
+         let l = Conductor(ggx_from_roughness(inf(0u), inf(1u)), vec3<f32>(inf(2u), inf(3u), inf(4u)),
                            vec3<f32>(inf(5u), inf(6u), inf(7u)), vec3<f32>(inf(8u), inf(9u), inf(10u)),
                            vec4<f32>(inf(20u), inf(21u), inf(22u), 0.0));
          let wo = vec3<f32>(inf(11u), inf(12u), inf(13u)); let wi = vec3<f32>(inf(14u), inf(15u), inf(16u));{}",
@@ -310,6 +313,6 @@ fn the_conductor_under_a_film_is_the_processors() {
             .replace("SAMPLE", "conductor_sample(l, wo, vec2<f32>(inf(17u), inf(18u)), inf(19u))")
             .replace("ALBEDO", "conductor_albedo(l, wo).x")
     );
-    let out = h.run_wgsl(&["lobes"], &body, &inputs, 23, OUT);
+    let out = h.run_wgsl(&["lobes"], &body, &inputs, 24, OUT);
     compare("Conductor under a film", &out, &want, &cases);
 }

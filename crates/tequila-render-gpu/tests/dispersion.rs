@@ -54,16 +54,18 @@ fn dispersion_is_the_processors() {
         let abbe = if rng.next_f32() < 0.05 { 0.0 } else { 5.0 + rng.next_f32() * 95.0 };
         let wavelength = if rng.next_f32() < 0.5 { dispersion::sample(rng.next_f32()) } else { 300.0 + rng.next_f32() * 500.0 };
         let u = if rng.next_f32() < 0.02 { 1.0 } else { rng.next_f32() };
-        inputs.extend([ior, abbe, wavelength, u].map(f32::to_bits));
+        // And nought for cy_zero, which the card must not see is.
+        inputs.extend([ior, abbe, wavelength, u, 0.0].map(f32::to_bits));
         let weight = dispersion::weight(wavelength);
         want.push([dispersion::ior_at(ior, abbe, wavelength), weight.r, weight.g, weight.b, dispersion::sample(u)]);
         cases.push(format!("ior {ior} abbe {abbe} wavelength {wavelength} u {u}"));
     }
-    let body = "let w = dispersion_weight(inf(2u));
+    let body = "cy_zero = inp(4u);
+                let w = dispersion_weight(inf(2u));
                 outf(0u, dispersion_ior_at(inf(0u), inf(1u), inf(2u)));
                 outf(1u, w.x); outf(2u, w.y); outf(3u, w.z);
                 outf(4u, dispersion_sample(inf(3u)));";
-    let out = h.run_wgsl(&["dispersion"], body, &inputs, 4, 5);
+    let out = h.run_wgsl(&["dispersion"], body, &inputs, 5, 5);
     let (mut loose, mut worst) = (0usize, [0.0f32; 5]);
     for (i, w) in want.iter().enumerate() {
         let c: Vec<f32> = out[i * 5..(i + 1) * 5].iter().map(|b| f32::from_bits(*b)).collect();
