@@ -1,6 +1,7 @@
 //! What the card renders otherwise, it says (`docs/07` R3): each sentence
-//! of `part_limits`, `camera_limits` and the flakes of `glass_limits` is
-//! said of a scene that has the thing, and none of them of the parity
+//! of `part_limits` and `camera_limits` is said of a scene that has the
+//! thing, and what the card now renders as the processor does (flakes, a
+//! dome, a background) is not, and none of them of the parity
 //! set's grey product, which has none (the parity test holds every scene of
 //! the set to that). No card is needed: the limits are read off the scene.
 
@@ -97,11 +98,12 @@ fn a_background_colour_or_backplate_is_not_said() {
     assert!(floor_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &plate.lighting.config()));
 }
 
+/// Flakes are the card's as the processor's (`flakes.wgsl`): no limit.
 #[test]
-fn flakes_are_said() {
+fn flakes_are_not_said() {
     let document = with_material(grey(), "Body", &|m| m.flake_weight = 0.5);
     let scene = snapped(&document);
-    assert_eq!(glass_limits(&scene, &document.lighting.config()), vec!["metallic flakes are left out"]);
+    assert!(glass_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", glass_limits(&scene, &document.lighting.config()));
 }
 
 #[test]

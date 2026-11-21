@@ -92,3 +92,6 @@ override FEATURE_SHADOW_LINKS: bool = true;
 override FEATURE_PASSES_PARTS: bool = true;
 // An IES lamp: its profile read towards the way its light leaves it.
 override FEATURE_IES: bool = true;
+// Metallic paint's flakes: the flake field at a point (flakes.wgsl) and
+// the metal lobe under the coat in the flake's frame (openpbr.wgsl).
+override FEATURE_FLAKES: bool = true;

@@ -266,6 +266,27 @@ fn material(rng: &mut Pcg32) -> Material {
     m
 }
 
+/// [`material`] at a point of metallic paint: flakes over the 1e-4 the
+/// stack takes them from (now and then under it), the point on a flake
+/// most of the time, off one a fifth and between a tenth, the flake leaning
+/// anywhere to past sixty degrees, its roughness over its range (mirror
+/// flakes among them), its colour anything.
+fn flaked(rng: &mut Pcg32) -> Material {
+    let mut m = material(rng);
+    m.flake_weight = if rng.next_f32() < 0.1 { rng.next_f32() * 2e-4 } else { (1e-4 + rng.next_f32()).min(1.0) };
+    m.flake_color = colour(rng);
+    m.flake_roughness = roughness(rng);
+    m.flake_coverage = match rng.next_f32() {
+        x if x < 0.2 => 0.0,
+        x if x < 0.9 => 1.0,
+        _ => rng.next_f32(),
+    };
+    let (theta, phi) = (rng.next_f32() * 1.2, std::f32::consts::TAU * rng.next_f32());
+    m.flake_normal = vec3(theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos());
+    assert!(GpuMaterial::supports(&m));
+    m
+}
+
 /// The stack's words: eval rgb, pdf, sampled, wi, f, pdf, delta, the
 /// reflection's roughness (-1 for none), albedo rgb.
 const STACK_WORDS: [Word; 17] = [
@@ -308,18 +329,27 @@ fn material_from_words() -> String {
     // The edges' radius and the probes' count (a word).
     parts.push(at(62));
     parts.push("inp(63u)".into());
-    parts.push(format!("vec4<f32>({}, {}, {}, {})", at(64), at(65), at(66), at(67)));
+    // The glow behind, then the flakes: colour and weight, size, spread,
+    // roughness and coverage, normal.
+    for v in [64, 68, 72, 76] {
+        parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
+    }
     format!("GpuMaterial({})", parts.join(", "))
 }
 
 fn the_stack(seed: u64, aimed: bool) {
+    the_stack_of(seed, aimed, material, "");
+}
+
+/// The stack's test over materials `make` makes, its name ending `kind`.
+fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, kind: &str) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 68);
+    assert_eq!(MATERIAL_WORDS, 80);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut misses, mut floored) = (0, 0, 0);
     for _ in 0..N {
-        let m = material(&mut rng);
+        let m = make(&mut rng);
         let floor = if rng.next_f32() < 0.6 { 0.0 } else { rng.next_f32() * 0.5 };
         let (wo, wi) = (direction(&mut rng, 0.03), direction(&mut rng, 0.05));
         let (u, uc) = (vec2(rng.next_f32(), rng.next_f32()), rng.next_f32());
@@ -379,7 +409,8 @@ fn the_stack(seed: u64, aimed: bool) {
         base + 9,
         material = material_from_words(),
     );
-    let name = if aimed { "OpenPbrBsdf aimed" } else { "OpenPbrBsdf" };
+    let name = format!("{}{kind}", if aimed { "OpenPbrBsdf aimed" } else { "OpenPbrBsdf" });
+    let name = name.as_str();
     let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 11, STACK_WORDS.len());
     // The processor's roughness word for no sample is 0 here too.
     let want: Vec<Vec<f32>> = want
@@ -403,6 +434,18 @@ fn the_stack_is_the_processors() {
 #[test]
 fn the_aimed_stack_is_the_processors() {
     the_stack(32, true);
+}
+
+/// On metallic paint: the flake's lobe in its frame under the coat, its
+/// share of the base and of the base's response.
+#[test]
+fn the_stack_on_a_flake_is_the_processors() {
+    the_stack_of(34, false, flaked, " on flakes");
+}
+
+#[test]
+fn the_aimed_stack_on_a_flake_is_the_processors() {
+    the_stack_of(35, true, flaked, " on flakes");
 }
 
 /// integrator.rs's `seeing_share` with its thresholds as parameters: 1 up
@@ -436,12 +479,22 @@ const SELECTIVE_WORDS: [Word; 12] = [
 /// samples and the bounces that meet the lamps read of the stack.
 #[test]
 fn the_stacks_reflection_density_and_selective_values_are_the_processors() {
+    reflection_density_and_selective_values(33, material, "");
+}
+
+/// The same on metallic paint, where a flake is a reflection of its own.
+#[test]
+fn the_stacks_reflection_density_and_selective_values_on_a_flake_are_the_processors() {
+    reflection_density_and_selective_values(36, flaked, " on flakes");
+}
+
+fn reflection_density_and_selective_values(seed: u64, make: fn(&mut Pcg32) -> Material, kind: &str) {
     let Some(h) = Harness::for_test() else { return };
-    let mut rng = Pcg32::new(33, 1);
+    let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut seen) = (0, 0);
     for _ in 0..N {
-        let m = material(&mut rng);
+        let m = make(&mut rng);
         let floor = if rng.next_f32() < 0.6 { 0.0 } else { rng.next_f32() * 0.5 };
         let (wo, wi) = (direction(&mut rng, 0.0), direction(&mut rng, 0.05));
         let mut bsdf = OpenPbrBsdf::to_aim(&m, floor);
@@ -499,5 +552,5 @@ fn the_stacks_reflection_density_and_selective_values_are_the_processors() {
     let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 7, SELECTIVE_WORDS.len());
     println!("pdf_reflection: {seen} of {N} items with a reflection density, {deltas} stacks with a mirror-smooth lobe");
     // The flag is never looser: the words are all compared, none sampled.
-    compare("OpenPbrBsdf::pdf_reflection and eval_selective", &out, &want, &SELECTIVE_WORDS, 11, &cases);
+    compare(&format!("OpenPbrBsdf::pdf_reflection and eval_selective{kind}"), &out, &want, &SELECTIVE_WORDS, 11, &cases);
 }

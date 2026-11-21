@@ -582,6 +582,22 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: direct_off,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "metallic_paint",
+    covers: "R3 tier A, flakes: lamp_lit's product in metallic paints - the body candy red under a clear coat, \
+             flakes 3 mm across over half of it leaning up to half of sixty degrees; the buttons mirror-smooth \
+             flakes all over, no coat, leaning anywhere to sixty degrees; the bezel a half metal under a coat and a \
+             fuzz, flakes 2 mm over a third of it - the flake field (Worley cells in the part's object space, a \
+             flake's presence and lean from its cell), the metal lobe in the flake's frame under the coat in place \
+             of that share of the base, its share of the base's response the coat traps light against, mirror flakes \
+             as delta lobes and Filter Glossy's blur of them, the stack's choice of a flake by its albedo where it faces",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: metallic_paint,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -1951,6 +1967,54 @@ fn driven_film() -> SceneDocument {
     let checker = graph.add_node(checker);
     graph.connect(m, checker, Socket::Input(0));
     graph.connect(checker, output, Socket::Param(Param::TransmissionWeight));
+    document
+}
+
+/// `document`'s material `name` changed by `change`.
+fn repainted(document: &mut SceneDocument, name: &str, change: &dyn Fn(&mut Material)) {
+    let key = document.materials.iter().find(|(_, m)| m.name == name).map(|(k, _)| k).expect("the material");
+    change(document.materials.get_mut(key).expect("the material").graph.material_mut());
+}
+
+/// lamp_lit's product in metallic paints (`flakes.rs`): flakes of a few
+/// millimetres, a pixel or so across here, so each sparkles on its own.
+fn metallic_paint() -> SceneDocument {
+    let mut document = lamp_lit();
+    repainted(&mut document, "Body", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.3, g: 0.02, b: 0.025 },
+            flake_weight: 0.5,
+            flake_size: 0.003,
+            flake_spread: 0.5,
+            flake_roughness: 0.15,
+            flake_color: Spectrum { r: 0.9, g: 0.55, b: 0.45 },
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Button", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.05, g: 0.1, b: 0.3 },
+            coat_weight: 0.0,
+            flake_weight: 1.0,
+            flake_size: 0.004,
+            flake_spread: 1.0,
+            flake_roughness: 0.0,
+            flake_color: Spectrum::splat(0.95),
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Bezel", &|m| {
+        m.base_color = Spectrum { r: 0.2, g: 0.6, b: 0.3 };
+        m.base_metalness = 0.5;
+        m.coat_weight = 1.0;
+        m.fuzz_weight = 0.5;
+        m.fuzz_color = Spectrum { r: 0.9, g: 0.9, b: 1.0 };
+        m.flake_weight = 0.3;
+        m.flake_size = 0.002;
+        m.flake_spread = 0.8;
+        m.flake_roughness = 0.3;
+        m.flake_color = Spectrum { r: 0.8, g: 0.85, b: 0.9 };
+    });
     document
 }
 

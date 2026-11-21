@@ -121,9 +121,12 @@ impl KernelFeatures {
     pub const PASSES_PARTS: KernelFeatures = part(24);
     /// An IES lamp's profile.
     pub const IES: KernelFeatures = part(25);
+    /// Metallic paint's flakes: the flake field at a point and the metal
+    /// lobe under the coat in the flake's frame.
+    pub const FLAKES: KernelFeatures = part(26);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 26] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 27] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -150,6 +153,7 @@ impl KernelFeatures {
         (Self::SHADOW_LINKS, "FEATURE_SHADOW_LINKS"),
         (Self::PASSES_PARTS, "FEATURE_PASSES_PARTS"),
         (Self::IES, "FEATURE_IES"),
+        (Self::FLAKES, "FEATURE_FLAKES"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -276,6 +280,9 @@ impl KernelFeatures {
         // lamp_sample's and light_irradiance_bound's IES lamp (a lamp's
         // flags).
         keep(r.lamp_flags & FLAG_IES != 0, Self::IES);
+        // The flake field and the flake's lobe (shade_vertex, openpbr_build:
+        // a material record's flake weight, which no program drives).
+        keep(any_material(&|m| m.flake_color[3] > 1e-4), Self::FLAKES);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of

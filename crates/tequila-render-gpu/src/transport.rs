@@ -314,7 +314,6 @@ struct GlassScene {
     dispersion: bool,
     subsurface: bool,
     film: bool,
-    flakes: bool,
     scattering: bool,
     volume_maps: bool,
     folded_glass: bool,
@@ -350,10 +349,6 @@ impl GlassScene {
             dispersion: scene.has_dispersion(),
             subsurface: any(&|m| m.subsurface_weight != 0.0),
             film: any(&|m| m.thin_film_weight > 1e-4),
-            // A material's coverage is always nought: it is the point's,
-            // which the processor fills in wherever the weight is over 1e-4
-            // (flakes.rs's apply).
-            flakes: any(&|m| m.flake_weight > 1e-4),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
@@ -397,9 +392,6 @@ impl GlassScene {
         }
         if self.film {
             limits.push("a thin film is left out");
-        }
-        if self.flakes {
-            limits.push("metallic flakes are left out");
         }
         if self.folded_glass {
             limits.push("glass whose graph sets its transmission is a medium as its graph's constants have it");
@@ -744,7 +736,8 @@ impl GpuRenderer {
         // The materials as data: a material with a program has the constants
         // its graph folded to (`CompiledGraph::constants`), which the
         // program's driven parameters are written over at each point. One
-        // the card's stack cannot render yet (glass, skin, film, flakes)
+        // the card's stack cannot render yet (skin, film, scattering,
+        // dispersion)
         // renders as its opaque part, and says so; one whose program the
         // card cannot run renders as its constants, and says why.
         let mut pictures = CardPictures::of(scene);
@@ -778,7 +771,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  or dispersion (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, scattering or dispersion (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };

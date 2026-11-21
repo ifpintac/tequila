@@ -22,12 +22,6 @@ fn surface_refusals(m: &Material, rounding: bool) -> Vec<&'static str> {
     if m.thin_film_weight > 1e-4 {
         why.push("thin film");
     }
-    // The processor puts a flake under a point wherever the weight is over
-    // 1e-4 (flakes.rs); a preset's coverage is always nought, being the
-    // point's.
-    if m.flake_weight > 1e-4 {
-        why.push("flakes");
-    }
     if glass && m.volume_scattering().is_some() {
         why.push("a volume that scatters");
     }

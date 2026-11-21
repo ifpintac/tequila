@@ -26,6 +26,7 @@
 //#include lamps
 //#include emitters
 //#include program
+//#include flakes
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 // The shadow catchers (scene.rs's GpuCatcher), by an instance's `catcher`.
@@ -218,10 +219,11 @@ fn pure_delta(b: OpenPbr) -> bool {
             continue;
         }
         switch slot {
-            case 1u: { if (!ggx_is_smooth(b.coat.distribution)) { return false; } }
-            case 2u: { if (!ggx_is_smooth(b.metal.distribution)) { return false; } }
-            case 3u: { if (!ggx_is_smooth(b.specular.distribution)) { return false; } }
-            case 4u: { if (!ggx_is_smooth(b.transmission.distribution)) { return false; } }
+            case LOBE_COAT: { if (!ggx_is_smooth(b.coat.distribution)) { return false; } }
+            case LOBE_FLAKE: { if (!ggx_is_smooth(b.flake.distribution)) { return false; } }
+            case LOBE_METAL: { if (!ggx_is_smooth(b.metal.distribution)) { return false; } }
+            case LOBE_SPECULAR: { if (!ggx_is_smooth(b.specular.distribution)) { return false; } }
+            case LOBE_TRANSMISSION: { if (!ggx_is_smooth(b.transmission.distribution)) { return false; } }
             default: { return false; }
         }
     }
@@ -2111,6 +2113,14 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     var lobes = material;
     if (abs(relative - material.specular_ior) > 1e-6) {
         lobes.specular_ior = relative;
+    }
+    // Metallic paint's flakes (ic:1668-1678): which flake this point lies
+    // on, if any, and how it leans, in the part's object space. No program
+    // on the card drives them, so the record's weight is the point's.
+    if (FEATURE_FLAKES && lobes.flake_color.w > 1e-4) {
+        let at = flake_at(rows_point(inst.world_to_object, surf.position), inst.scale, lobes.flake.x, lobes.flake_color.w, lobes.flake.y);
+        lobes.flake.w = at.w;
+        lobes.flake_normal = vec4<f32>(at.xyz, 0.0);
     }
     // Clear glass the last light sample was taken through, met on the way
     // on by a bounce that passes it - and what that bounce left by, weighed
