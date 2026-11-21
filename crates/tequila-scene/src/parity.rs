@@ -40,6 +40,8 @@ pub struct ParityScene {
     pub samples: u32,
     pub seed: u32,
     build: fn() -> SceneDocument,
+    /// What it does to the product's camera as framed: a lens, a projection.
+    lens: fn(Camera) -> Camera,
     /// The pictures its materials sample, made here (no image file is
     /// shipped), by the ids its document gives them.
     pictures: fn() -> Vec<(TextureId, Texture)>,
@@ -50,9 +52,9 @@ impl ParityScene {
         (self.build)()
     }
 
-    /// The camera it is seen from: framed on its product.
+    /// The camera it is seen from: framed on its product, through its lens.
     pub fn camera(&self, document: &SceneDocument) -> Camera {
-        product_camera(document, self.width as f32 / self.height as f32)
+        (self.lens)(product_camera(document, self.width as f32 / self.height as f32))
     }
 
     /// A cache to snapshot the scene through, holding its pictures: the
@@ -76,6 +78,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: grey_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_materials",
@@ -88,6 +91,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: simple_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor",
@@ -101,6 +105,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_glossy",
@@ -112,6 +117,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_glossy,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_studio",
@@ -123,6 +129,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_studio,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_lit",
@@ -133,6 +140,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_lit,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "lamp_lit",
@@ -142,6 +150,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamp_lit,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "studio_lamps",
@@ -151,6 +160,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: studio_lamps,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "lamps_in_view",
@@ -160,6 +170,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamps_in_view,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball",
@@ -169,6 +180,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "rough_glass_floor",
@@ -178,6 +190,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: rough_glass_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "pane_and_lamps",
@@ -187,6 +200,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: pane_and_lamps,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "liquid_in_glass",
@@ -196,6 +210,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: liquid_in_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball_floor",
@@ -205,6 +220,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "textured_product",
@@ -219,6 +235,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: textured_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "projected_product",
@@ -232,6 +249,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: projected_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "bumped_product",
@@ -246,6 +264,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: bumped_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "glowing_pattern",
@@ -258,6 +277,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_pattern,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "glowing_screen",
@@ -271,6 +291,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_screen,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glow_under_glass",
@@ -283,6 +304,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glow_under_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "cutout_grille",
@@ -298,6 +320,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: cutout_grille,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "cut_glass",
@@ -310,6 +333,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: cut_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glowing_volume",
@@ -322,6 +346,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_volume,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "bevelled_product",
@@ -337,6 +362,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: bevelled_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "driven_film",
@@ -350,6 +376,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: driven_film,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "background_colour",
@@ -359,6 +386,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: background_colour,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "backplate",
@@ -368,8 +396,50 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: backplate,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shallow_focus",
+    covers: "R3, depth of field: product_floor through a thin lens at f/1.4, focused on the product's front - each \
+             camera ray from a point on the round opening drawn on the lens dimensions (the concentric disc) \
+             towards its pinhole ray's point on the focus plane, the floor's far edge and the horizon blurred, the \
+             floor's reflection and shadow through the lens",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: product_floor,
+    lens: shallow,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "bladed_bokeh",
+    covers: "R3, depth of field through a bladed opening: lamps_in_view at f/1.2 focused well in front of the \
+             product, through six blades turned a fifth of a radian - a wedge by the lens draw, a point in its \
+             triangle - the product, the lamps' stand-ins and their reflections out of focus through the six-sided opening",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: lamps_in_view,
+    lens: bladed,
     pictures: no_pictures,
 }];
+
+/// The product's camera as framed.
+fn framed(camera: Camera) -> Camera {
+    camera
+}
+
+/// A shallow focus: f/1.4, focused on the near side of the product.
+fn shallow(camera: Camera) -> Camera {
+    Camera { f_number: 1.4, focus_distance: camera.focus_distance * 0.85, ..camera }
+}
+
+/// A bladed opening wide open, focused in front of the product.
+fn bladed(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Aperture;
+    Camera { f_number: 1.2, focus_distance: camera.focus_distance * 0.6, aperture: Aperture::Bladed { blades: 6, rotation: 0.2 }, ..camera }
+}
 
 /// The path [`background`] takes for the set's own backplate
 /// ([`backplate_picture`]) rather than a file's.

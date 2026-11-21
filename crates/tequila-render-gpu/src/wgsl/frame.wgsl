@@ -97,9 +97,22 @@ struct FrameParams {
     plate_offset: u32,
     plate_width: u32,
     plate_height: u32,
-    _pad0: u32,
-    _pad1: u32,
+    // CAMERA_THIN_LENS, CAMERA_BLADED.
+    camera_flags: u32,
+    // The thin lens (Camera::generate_ray): the opening's radius in scene
+    // units, the focus distance, a bladed opening's blades and turn.
+    lens_radius: f32,
+    focus_distance: f32,
+    aperture_blades: u32,
+    aperture_rotation: f32,
+    _pad2: u32,
 };
+
+// FrameParams::camera_flags (transport.rs's CAMERA_*): a thin lens with an
+// opening, each ray drawn from a point on it through its pinhole ray's
+// point on the focus plane; an opening of blades rather than a round one.
+const CAMERA_THIN_LENS: u32 = 1u;
+const CAMERA_BLADED: u32 = 2u;
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).
 const GLASS_SOLID: u32 = 0u;

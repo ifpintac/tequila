@@ -250,6 +250,20 @@ fn a_backplate_is_the_processors_picture() {
     same_picture("backplate");
 }
 
+/// Depth of field: a thin lens wide open, focused on the product's front,
+/// the floor's far edge and the horizon blurred.
+#[test]
+fn a_shallow_focus_is_the_processors_picture() {
+    same_picture("shallow_focus");
+}
+
+/// A bladed opening: the lamps and highlights out of focus spread into its
+/// shape.
+#[test]
+fn bladed_bokeh_is_the_processors_picture() {
+    same_picture("bladed_bokeh");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]

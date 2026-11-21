@@ -108,7 +108,9 @@ fn the_camera_and_the_film_are_said() {
     let config = document.lighting.config();
     let pinhole = parity::scene("grey_product").unwrap().camera(&document);
     let said = |camera: Camera, config: &IntegratorConfig| camera_limits(&camera, config);
-    assert_eq!(said(Camera { f_number: 2.8, ..pinhole }, &config), vec!["no depth of field: everything is in focus, as through a pinhole"]);
+    // Depth of field is the card's, round or bladed.
+    assert!(said(Camera { f_number: 2.8, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { f_number: 2.8, aperture: tequila_render_core::camera::Aperture::Bladed { blades: 5, rotation: 0.3 }, ..pinhole }, &config).is_empty());
     assert_eq!(
         said(Camera { projection: Projection::Orthographic { scale: 1.0 }, ..pinhole }, &config),
         vec!["an orthographic camera is not drawn: the card's camera is a perspective one"]

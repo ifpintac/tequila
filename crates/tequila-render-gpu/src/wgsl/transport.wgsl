@@ -2122,6 +2122,79 @@ fn reflected_on(floor: FloorSeen, seen: vec3<f32>, escaped: bool, depth: f32) ->
     return Caught(lerp3(caught.radiance, seen, share), caught.coverage + share * (1.0 - caught.coverage));
 }
 
+// cy_exact for a pair: each product rounded as Rust rounds it.
+fn cy_exact2(v: vec2<f32>) -> vec2<f32> {
+    return bitcast<vec2<f32>>(bitcast<vec2<u32>>(v) | vec2<u32>(cy_zero));
+}
+
+// Camera::sample_aperture (camera.rs): a point on the lens's opening, of
+// radius 1, for the lens draw `u` - sample_polygon_aperture for one of
+// blades (a wedge by u.x, then a point in its triangle, folded),
+// sample_uniform_disk_concentric for a round one (sampling.rs).
+fn aperture_point(u: vec2<f32>) -> vec2<f32> {
+    if ((frame.camera_flags & CAMERA_BLADED) != 0u) {
+        let blades = f32(frame.aperture_blades);
+        let along = cy_exact(u.x * blades);
+        let wedge = min(floor(along), blades - 1.0);
+        var s = clamp(along - wedge, 0.0, 1.0);
+        var t = u.y;
+        let a0 = cy_div(cy_exact(CY_TAU * wedge), blades) + frame.aperture_rotation;
+        let a1 = cy_div(cy_exact(CY_TAU * (wedge + 1.0)), blades) + frame.aperture_rotation;
+        let v0 = cy_sincos(a0).yx;
+        let v1 = cy_sincos(a1).yx;
+        if (s + t > 1.0) {
+            s = 1.0 - s;
+            t = 1.0 - t;
+        }
+        return cy_exact2(v0 * s) + cy_exact2(v1 * t);
+    }
+    let o = vec2<f32>(2.0 * u.x - 1.0, 2.0 * u.y - 1.0);
+    if (o.x == 0.0 && o.y == 0.0) {
+        return vec2<f32>(0.0);
+    }
+    var r: f32;
+    var theta: f32;
+    if (abs(o.x) > abs(o.y)) {
+        r = o.x;
+        theta = (CY_PI / 4.0) * cy_div(o.y, o.x);
+    } else {
+        r = o.y;
+        theta = (CY_PI / 2.0) - cy_exact((CY_PI / 4.0) * cy_div(o.x, o.y));
+    }
+    let sc = cy_sincos(theta);
+    return vec2<f32>(r * sc.y, r * sc.x);
+}
+
+struct CameraRay {
+    origin: vec3<f32>,
+    direction: vec3<f32>,
+};
+
+// Camera::generate_ray (camera.rs) for a point on the film, (0, 0) the
+// picture's top left and (1, 1) its bottom right: through the pinhole; or,
+// through a thin lens (CAMERA_THIN_LENS), from a point on its opening
+// drawn on the lens dimensions (sampler::dim::LENS, after the pixel's
+// jitter) towards where the pinhole's ray meets the focus plane. The time
+// the processor draws with the shutter open (sampler::dim::TIME) is a
+// Sobol' dimension, no state, and nothing reads a ray's time; no camera
+// opens its shutter.
+fn camera_ray(film: vec2<f32>, s: ptr<function, Sampler>) -> CameraRay {
+    let sx = 2.0 * film.x - 1.0;
+    let sy = 1.0 - 2.0 * film.y;
+    if ((frame.camera_flags & CAMERA_THIN_LENS) != 0u) {
+        let d = vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0);
+        let lens = aperture_point(sampler_lens(s)) * frame.lens_radius;
+        let t_focus = cy_div(frame.focus_distance, -d.z);
+        let start = vec3<f32>(lens, 0.0);
+        let towards = normalized(cy_exact3(d * t_focus) - start);
+        return CameraRay(rows_point(frame.camera_to_world, start), normalized(rows_vector(frame.camera_to_world, towards)));
+    }
+    let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
+    let origin = rows_point(frame.camera_to_world, vec3<f32>(0.0));
+    let direction = normalized(rows_vector(frame.camera_to_world, camera_dir));
+    return CameraRay(origin, direction);
+}
+
 // One camera sample. WGSL has no recursion, so the paths the processor
 // traces from within a path run in this same loop, each when the path that
 // starts it has done what comes before it: the floor's reflection
@@ -2140,13 +2213,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     let j = sampler_pixel_jitter(&s);
     let film = vec2<f32>((f32(x) + j.x) / f32(frame.width), (f32(y) + j.y) / f32(frame.height));
     camera_film = film;
-    let sx = 2.0 * film.x - 1.0;
-    let sy = 1.0 - 2.0 * film.y;
-    let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
-    let origin = rows_point(frame.camera_to_world, vec3<f32>(0.0));
-    let direction = normalized(rows_vector(frame.camera_to_world, camera_dir));
+    let ray = camera_ray(film, &s);
 
-    var st = path_start(origin, direction, frame.max_bounces, false, false);
+    var st = path_start(ray.origin, ray.direction, frame.max_bounces, false, false);
     var background = vec3<f32>(0.0);
     var coverage = 0.0;
     // The floor a path ended on, and whether there is one.

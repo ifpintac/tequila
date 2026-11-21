@@ -139,8 +139,16 @@ pub struct FrameParams {
     pub plate_offset: u32,
     pub plate_width: u32,
     pub plate_height: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
+    /// [`CAMERA_THIN_LENS`] and [`CAMERA_BLADED`].
+    pub camera_flags: u32,
+    /// The thin lens (`Camera::generate_ray`): the opening's radius in
+    /// scene units (`Camera::aperture_radius`), the focus distance, and a
+    /// bladed opening's blades (3 or more) and turn.
+    pub lens_radius: f32,
+    pub focus_distance: f32,
+    pub aperture_blades: u32,
+    pub aperture_rotation: f32,
+    pub _pad2: u32,
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -178,6 +186,14 @@ pub const SCENE_BACKGROUND_COLOUR: u32 = 128;
 /// They see a backplate's picture, at the film point the path set out from
 /// (`Background::Backplate`).
 pub const SCENE_BACKPLATE: u32 = 256;
+
+/// [`FrameParams::camera_flags`]: the camera is a thin lens with an opening
+/// (`Camera::aperture_radius` over nought): each ray starts on the opening,
+/// drawn on the lens dimensions, and passes through its pinhole ray's point
+/// on the focus plane.
+pub const CAMERA_THIN_LENS: u32 = 1;
+/// The opening has blades (`Aperture::Bladed`) rather than being round.
+pub const CAMERA_BLADED: u32 = 2;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -396,9 +412,6 @@ pub fn camera_limits(camera: &Camera, config: &IntegratorConfig) -> Vec<&'static
         Projection::Shift { .. } => limits.push("a shifted lens is left unshifted"),
         Projection::Orthographic { .. } => limits.push("an orthographic camera is not drawn: the card's camera is a perspective one"),
         Projection::Equirectangular => limits.push("a 360-degree camera is not drawn: the card's camera is a perspective one"),
-    }
-    if camera.aperture_radius(1.0) > 0.0 {
-        limits.push("no depth of field: everything is in focus, as through a pinhole");
     }
     // A box of one pixel places a sample where its jitter falls
     // (FilterSampler::place); any other filter spreads it.
@@ -1023,6 +1036,14 @@ impl GpuRenderer {
         let m = settings.camera.camera_to_world.m;
         let (direct, indirect) = settings.clamps();
         let e = &self.environment.layout;
+        // The thin lens, as Camera::generate_ray has it: an opening of this
+        // radius (none for a pinhole, or a projection with no lens), round
+        // or of `blades` (at least 3) turned by `rotation`.
+        let lens_radius = settings.camera.aperture_radius(aspect);
+        let (blades, rotation) = match settings.camera.aperture {
+            tequila_render_core::camera::Aperture::Bladed { blades, rotation } => (blades.max(3), rotation),
+            tequila_render_core::camera::Aperture::Circular => (0, 0.0),
+        };
         FrameParams {
             camera_to_world: [m[0], m[1], m[2]],
             half_height,
@@ -1091,8 +1112,12 @@ impl GpuRenderer {
             plate_offset: e.plate_offset,
             plate_width: e.plate_width,
             plate_height: e.plate_height,
-            _pad0: 0,
-            _pad1: 0,
+            camera_flags: if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
+            lens_radius,
+            focus_distance: settings.camera.focus_distance,
+            aperture_blades: blades,
+            aperture_rotation: rotation,
+            _pad2: 0,
         }
     }
 
@@ -1325,6 +1350,12 @@ impl GpuRenderer {
     /// `entry` reaches is compiled: a module with two entry points is
     /// pared down to the one a pipeline takes.
     pub fn run_on_scene(&self, settings: &FrameSettings, kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
+        self.run_on_scene_at(settings, (1, 1), kernel, entry, words, groups)
+    }
+
+    /// [`GpuRenderer::run_on_scene`] with the frame `width` by `height`, for
+    /// what reads the frame's size: the camera's half-widths, its aspect.
+    pub fn run_on_scene_at(&self, settings: &FrameSettings, (width, height): (usize, usize), kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
         let device = &self.gpu.device;
         let source = format!("{}\n{kernel}\n", crate::shader::source("transport"));
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(source.into()) });
@@ -1342,7 +1373,7 @@ impl GpuRenderer {
         let init = |label: &str, contents: &[u8], usage| wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage });
         let io = init("scene test", bytemuck::cast_slice(&padded), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
         let pixel = init("scene test pixel", bytemuck::bytes_of(&PixelSums::default()), wgpu::BufferUsages::STORAGE);
-        let params = self.params(settings, 1, 1, 0, 1);
+        let params = self.params(settings, width, height, 0, 1);
         let uniform = init("scene test frame", bytemuck::bytes_of(&params), wgpu::BufferUsages::UNIFORM);
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene test back"), size: bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
