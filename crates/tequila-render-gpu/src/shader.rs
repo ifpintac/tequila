@@ -26,6 +26,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("procedural", include_str!("wgsl/procedural.wgsl")),
     ("flakes", include_str!("wgsl/flakes.wgsl")),
     ("film", include_str!("wgsl/film.wgsl")),
+    ("dispersion", include_str!("wgsl/dispersion.wgsl")),
     ("program", include_str!("wgsl/program.wgsl")),
     ("environment", include_str!("wgsl/environment.wgsl")),
     ("onb", include_str!("wgsl/onb.wgsl")),

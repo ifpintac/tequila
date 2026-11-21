@@ -370,9 +370,6 @@ impl GlassScene {
         if spectral {
             limits.push("the picture is traced in red, green and blue rather than by wavelength");
         }
-        if self.dispersion {
-            limits.push("glass that disperses light bends every colour alike");
-        }
         if config.caustics {
             limits.push(match config.caustics_method {
                 CausticsMethod::Photons => "no caustic photons: the light glass and mirrors focus is left out",
@@ -731,7 +728,7 @@ impl GpuRenderer {
         // The materials as data: a material with a program has the constants
         // its graph folded to (`CompiledGraph::constants`), which the
         // program's driven parameters are written over at each point. One
-        // the card's stack cannot render yet (skin, scattering, dispersion)
+        // the card's stack cannot render yet (skin, scattering)
         // renders as its opaque part, and says so; one whose program the
         // card cannot run renders as its constants, and says why.
         let mut pictures = CardPictures::of(scene);
@@ -765,7 +762,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface, scattering or dispersion (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface or scattering (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
@@ -1341,6 +1338,9 @@ impl GpuRenderer {
                             background: Spectrum { r: b[0], g: b[1], b: b[2] },
                             coverage: r[3],
                             escaped: r[3] == 0.0,
+                            // The one wavelength a dispersed path carried,
+                            // which the firefly rejection judges it by.
+                            wavelength: (b[3] > 0.0).then_some(b[3]),
                             ..Default::default()
                         };
                         pixel.accumulate_with(&result, reject, None);

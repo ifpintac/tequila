@@ -27,6 +27,7 @@
 //#include emitters
 //#include program
 //#include flakes
+//#include dispersion
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 // The shadow catchers (scene.rs's GpuCatcher), by an instance's `catcher`.
@@ -234,6 +235,9 @@ struct PathOut {
     radiance: vec3<f32>,
     background: vec3<f32>,
     coverage: f32,
+    // The one wavelength the camera's path carried from a dispersive
+    // surface on (PathResult::wavelength), nought for none.
+    wavelength: f32,
 };
 
 fn is_finite(x: f32) -> bool {
@@ -1131,6 +1135,9 @@ struct PathState {
     receiver_position: vec3<f32>,
     receiver_normal: vec3<f32>,
     receiver_two_sided: bool,
+    // The one wavelength the path carries from the first dispersive glass
+    // it met on (ic:833-836), nought before.
+    wavelength: f32,
 };
 
 // A path from `origin` along `direction` (trace's set-up): the camera's, a
@@ -1166,6 +1173,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.in_floor = in_floor;
     st.fresh = true;
     st.receiver = false;
+    st.wavelength = 0.0;
     return st;
 }
 
@@ -2077,7 +2085,7 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     }
     // The frame: along the anisotropy's tangent where the material is
     // anisotropic (ic:1866-1885).
-    let material = shaded.material;
+    var material = shaded.material;
     var f: Frame;
     if (material.specular_roughness_anisotropy > 0.0) {
         f = anisotropic_frame(hit, surf, shaded.normal, shaded.drawn, material.specular_rotation);
@@ -2089,6 +2097,18 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         return SHADE_END;
     }
     let inst = scene_instances[hit.instance_custom_data];
+    // Dispersion (ic:1912-1946): glass with an Abbe number bends as light of
+    // one wavelength does - drawn at the first such glass a path meets (a
+    // draw of the open stream), the path weighed by the colour it stands
+    // for, and kept from there on, entering and leaving alike, so a medium
+    // is left by the index it was entered with.
+    if (FEATURE_DISPERSION && material.transmission_color.w > 0.0 && material.film.w > 0.0) {
+        if ((*st).wavelength <= 0.0) {
+            (*st).wavelength = dispersion_sample(sampler_next_unstructured(s));
+            (*st).throughput = (*st).throughput * dispersion_weight((*st).wavelength);
+        }
+        material.specular_ior = dispersion_ior_at(material.specular_ior, material.film.w, (*st).wavelength);
+    }
     // Which side of the surface the path is on, read from the media it has
     // crossed into rather than from the winding, and the index between the
     // medium here and the one beyond: going from a denser medium into a
@@ -2900,6 +2920,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     // cutouts, whose shadow's coverage is added where the path reaches it.
     var settled = -1.0;
     var catcher_behind = false;
+    // The camera's wavelength, where its path ended on a floor whose
+    // reflection then took its place.
+    var floor_wavelength = 0.0;
     var out: PathOut;
     loop {
         if (st.fresh) {
@@ -3079,6 +3102,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                                 if (reaches) {
                                     floor.rise = ray.rise;
                                     floor.near = ray.near;
+                                    floor_wavelength = st.wavelength;
                                     st = path_start(ray.origin, ray.direction, min(st.max_bounces, 3u), st.reflected, true);
                                     mirror = true;
                                     next = first;
@@ -3312,10 +3336,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         // added to what it had, unclamped, and at the camera's own hit the
         // backdrop it leaves showing and the coverage.
         var result = st.radiance;
+        var wavelength = st.wavelength;
         if (on_floor) {
             var caught = floor.caught;
             if (mirror) {
                 caught = reflected_on(floor, sanitized(st.radiance), escaped, depth);
+                wavelength = floor_wavelength;
             }
             result = floor.radiance + floor.throughput * caught.radiance;
             if (floor.bounce == 0u && floor.camera) {
@@ -3335,12 +3361,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             st = parked;
             reflecting = false;
             if (parked_ends || (parked_roulette && !russian_roulette(&st, &s))) {
-                out = PathOut(sanitized(st.radiance + split_light), background, coverage);
+                out = PathOut(sanitized(st.radiance + split_light), background, coverage, st.wavelength);
                 break;
             }
             continue;
         }
-        out = PathOut(sanitized(result + split_light), background, coverage);
+        out = PathOut(sanitized(result + split_light), background, coverage, wavelength);
         break;
     }
     return out;
@@ -3357,11 +3383,17 @@ fn transport_main(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var i = 0u; i < frame.samples; i++) {
         let out = path(id.x, y, frame.sample_base + i);
         if ((frame.mode & 1u) != 0u) {
-            accumulate(pixel, out.radiance, out.background, out.coverage);
+            // How luminous the film finds the light a dispersed path
+            // carries (Pixel::accumulate_with's hue), 1 for any other.
+            var hue = 1.0;
+            if (FEATURE_DISPERSION && out.wavelength > 0.0) {
+                hue = max(luminance(dispersion_weight(out.wavelength)), 1e-3);
+            }
+            accumulate(pixel, out.radiance, out.background, out.coverage, hue);
         } else {
             let at = (i * pixels + pixel) * 2u;
             frame_samples[at] = vec4<f32>(out.radiance, out.coverage);
-            frame_samples[at + 1u] = vec4<f32>(out.background, 0.0);
+            frame_samples[at + 1u] = vec4<f32>(out.background, out.wavelength);
         }
     }
 }

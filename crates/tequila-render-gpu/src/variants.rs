@@ -126,9 +126,12 @@ impl KernelFeatures {
     pub const FLAKES: KernelFeatures = part(26);
     /// A thin film over the metal and the dielectric interface.
     pub const FILM: KernelFeatures = part(27);
+    /// Glass that disperses light: a wavelength drawn at it, its index at
+    /// that wavelength.
+    pub const DISPERSION: KernelFeatures = part(28);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 28] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 29] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -157,6 +160,7 @@ impl KernelFeatures {
         (Self::IES, "FEATURE_IES"),
         (Self::FLAKES, "FEATURE_FLAKES"),
         (Self::FILM, "FEATURE_FILM"),
+        (Self::DISPERSION, "FEATURE_DISPERSION"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -289,6 +293,10 @@ impl KernelFeatures {
         // The film over the metal and the interface (openpbr_build: a
         // material record's film weight, which no program drives).
         keep(any_material(&|m| m.film[0] > 1e-4), Self::FILM);
+        // A dispersive surface (shade_vertex: a material record's Abbe
+        // number, which no program drives, whatever its transmission, which
+        // a program may).
+        keep(any_material(&|m| m.film[3] > 0.0), Self::DISPERSION);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of

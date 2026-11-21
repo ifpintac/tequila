@@ -227,13 +227,10 @@ impl GpuMaterial {
 
     /// Whether the card renders `m` as the processor does: no subsurface at
     /// all (even a share too small for its own lobe takes from the diffuse);
-    /// and as glass, none that scatters in its volume (a random walk) or
-    /// that disperses light (a wavelength of its own). Flakes and thin films
-    /// it renders, wherever they are.
+    /// and as glass, none that scatters in its volume (a random walk).
+    /// Flakes, thin films and glass that disperses light it renders.
     pub fn supports(m: &Material) -> bool {
         let glass = m.transmission_weight > 0.0;
-        m.subsurface_weight == 0.0
-            && !(glass && m.volume_scattering().is_some())
-            && !(glass && m.transmission_dispersion_abbe > 0.0)
+        m.subsurface_weight == 0.0 && !(glass && m.volume_scattering().is_some())
     }
 }

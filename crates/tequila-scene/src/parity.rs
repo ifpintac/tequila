@@ -614,6 +614,21 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: thin_film,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_rgb",
+    covers: "R3 tier B, dispersion in an RGB render (spectral off): lamp_lit's product with a smooth ball of \
+             dispersive glass (index 1.9, Abbe number 18) and a rough one (0.2, Abbe number 30) in front of it - \
+             a wavelength drawn at the first such glass a path meets (a draw of the open stream), the path \
+             weighed by the colour it stands for, the index at that wavelength at every dispersive surface after, \
+             entering and leaving alike; no split at dispersive glass; the firefly rejection judging a dispersed \
+             path by the light it carries",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_rgb,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -918,6 +933,7 @@ fn wide_box() -> SceneDocument {
 pub fn config(document: &SceneDocument) -> IntegratorConfig {
     let mut config = document.lighting.config();
     config.pixel_filter = document.render.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    config.spectral = document.render.spectral;
     config
 }
 
@@ -2067,6 +2083,37 @@ fn thin_film() -> SceneDocument {
         (name, material_type, m)
     })
     .0
+}
+
+/// lamp_lit's product with two balls of dispersive glass in front of it,
+/// one smooth and one rough, rendered as `spectral` says.
+fn dispersive_balls(spectral: tequila_render_core::settings::SpectralMode) -> SceneDocument {
+    let mut document = lamp_lit();
+    let mut bus = crate::command::CommandBus::new();
+    let smooth = Material {
+        transmission_depth: 0.4,
+        transmission_color: Spectrum { r: 0.95, g: 0.97, b: 0.9 },
+        specular_ior: 1.9,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 18.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let rough = Material { specular_roughness: 0.2, specular_ior: 1.6, transmission_dispersion_abbe: 30.0, ..smooth.clone() };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Smooth Gem", ball(0.12), MaterialType::GlassSolid, smooth, Transform::translation(vec3(0.25, 0.121, 0.85))),
+            ("Rough Gem", ball(0.08), MaterialType::GlassSolid, rough, Transform::translation(vec3(-0.25, 0.081, 0.9))),
+        ],
+    );
+    document.render.spectral = spectral;
+    document
+}
+
+/// The dispersive balls in an RGB render.
+fn dispersion_rgb() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Off)
 }
 
 /// `simple_product` on its modelled ground, bumped by pictures every way:

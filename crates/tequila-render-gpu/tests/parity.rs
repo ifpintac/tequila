@@ -354,6 +354,13 @@ fn thin_films_are_the_processors_picture() {
     same_picture("thin_film");
 }
 
+/// Dispersive glass in an RGB render: a wavelength drawn at the first such
+/// glass a path meets, the index at it from there on.
+#[test]
+fn dispersion_in_rgb_is_the_processors_picture() {
+    same_picture("dispersion_rgb");
+}
+
 /// The library's presets with metallic flakes (`flakes.rs`) on the
 /// Headphones' parts, every one of them, as the presets have them - their
 /// programs' bumps and rounded edges kept: the flake field in each part's
@@ -832,6 +839,8 @@ fn rounding_presets() -> Vec<tequila_format::library::LibraryEntry> {
                 // were chosen: kept out, so the walls keep their members
                 // (the flake presets have a wall of their own).
                 && m.flake_weight <= 1e-4
+                // Nor glass that disperses light, for the same reason.
+                && !(m.transmission_weight > 0.0 && m.transmission_dispersion_abbe > 0.0)
         })
         .collect()
 }

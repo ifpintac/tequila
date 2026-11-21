@@ -98,6 +98,23 @@ fn a_background_colour_or_backplate_is_not_said() {
     assert!(floor_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &plate.lighting.config()));
 }
 
+/// Glass that disperses light is the card's as the processor's in an RGB
+/// render (`dispersion.wgsl`); rendered by wavelength, the card still traces
+/// red, green and blue, and says so.
+#[test]
+fn dispersion_is_said_only_by_wavelength() {
+    use tequila_render_core::settings::SpectralMode;
+    let document = with_material(grey(), "Body", &|m| {
+        m.transmission_weight = 1.0;
+        m.transmission_dispersion_abbe = 20.0;
+    });
+    let scene = snapped(&document);
+    let rgb = IntegratorConfig { spectral: SpectralMode::Off, ..document.lighting.config() };
+    assert!(glass_limits(&scene, &rgb).is_empty(), "{:?}", glass_limits(&scene, &rgb));
+    let auto = IntegratorConfig { spectral: SpectralMode::Auto, ..document.lighting.config() };
+    assert_eq!(glass_limits(&scene, &auto), vec!["the picture is traced in red, green and blue rather than by wavelength"]);
+}
+
 /// A thin film is the card's as the processor's (`film.wgsl`): no limit.
 #[test]
 fn a_thin_film_is_not_said() {

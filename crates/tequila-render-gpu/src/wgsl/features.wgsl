@@ -98,3 +98,6 @@ override FEATURE_FLAKES: bool = true;
 // A thin film over the metal and the dielectric interface: the Airy sum in
 // place of their Fresnel (film.wgsl).
 override FEATURE_FILM: bool = true;
+// Glass that disperses light, in an RGB render: a wavelength drawn at the
+// first such glass a path meets, the index at it (dispersion.wgsl).
+override FEATURE_DISPERSION: bool = true;

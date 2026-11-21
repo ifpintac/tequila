@@ -207,12 +207,15 @@ fn luminance(c: vec3<f32>) -> f32 {
 // Pixel::accumulate_with for a sample with no hue, no wavelength and no
 // clamp: firefly rejection (k = 8 deviations, from the 16th sample on)
 // judging only what the path found beyond the background.
-fn accumulate(pixel: u32, radiance_in: vec3<f32>, background: vec3<f32>, coverage: f32) {
+fn accumulate(pixel: u32, radiance_in: vec3<f32>, background: vec3<f32>, coverage: f32, hue: f32) {
     var p = frame_pixels[pixel];
     var radiance = radiance_in;
     if ((frame.mode & 2u) != 0u && p.samples >= 16u) {
         let sampled = max(radiance - background, vec3<f32>(0.0));
-        let lum = luminance(sampled);
+        // Judged by the light it carries, not its colour's luminance: a
+        // path carrying one wavelength over that wavelength's (hue, 1 for
+        // any other path).
+        let lum = luminance(sampled) / hue;
         let n = f32(p.samples);
         let mean = luminance(p.sum.xyz * (1.0 / n));
         // Kahan's compensation is what the sum is over by.
