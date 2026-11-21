@@ -424,7 +424,7 @@ fn what_every_variant_keeps_costs_to_compile() {
         ("no coat arms", Box::new(arms("1u"))),
         ("no metal arms", Box::new(arms("2u"))),
         ("no sky sample", Box::new(replace(&[("            if (frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no light sample at all", Box::new(replace(&[("        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);", "        let direct = vec3<f32>(0.0);")]))),
+        ("no light sample at all", Box::new(replace(&[("        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing);", "        let direct = vec3<f32>(0.0);")]))),
         ("no meeting and escaping", Box::new(replace(&[("                let sky = meet_and_escape(&st, hit);", "                let sky = vec3<f32>(0.0);")]))),
         ("no Filter Glossy rebuild", Box::new(replace(&[("        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {", "        if (false) {")]))),
         ("no aiming", Box::new(replace(&[("        bsdf = openpbr_aim(openpbr_build(lobes, roughness_floor, true, from_inside), wo);", "        bsdf = openpbr_build(lobes, roughness_floor, false, from_inside);")]))),

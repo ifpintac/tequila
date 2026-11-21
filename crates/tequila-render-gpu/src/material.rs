@@ -9,10 +9,10 @@
 //! what the integrator reads of glass besides - the medium a solid part is
 //! (its priority, its index as the scene has it, whether its volume absorbs
 //! or scatters, and the medium a walk through it crosses) and the clear
-//! glass a shadow ray passes (`Pane`); and the thin film over
-//! the metal and the interface. Subsurface is not on the card yet, so its
-//! parameters are not here; [`GpuMaterial::supports`] says whether a
-//! material is one the card's stack is the processor's for.
+//! glass a shadow ray passes (`Pane`); the thin film over the metal and the
+//! interface; and the subsurface colour and the medium a walk under the
+//! surface crosses. [`GpuMaterial::supports`] says whether a material is
+//! one the card's stack is the processor's for.
 //! Cutout opacity and emission are the integrator's, not the BSDF's, and
 //! are here for it to read (`transport.wgsl`: a cutout's holes, a glowing
 //! surface), among the floats a program writes.
@@ -121,6 +121,14 @@ pub struct GpuMaterial {
     /// function's anisotropy; and its single-scattering albedo.
     pub volume_extinction: [f32; 4],
     pub volume_albedo: [f32; 4],
+    /// `subsurface_color`, and in `[3]` `subsurface_weight`.
+    pub subsurface_color: [f32; 4],
+    /// The medium a walk under the surface crosses
+    /// (`Material::subsurface_medium`): its extinction per metre, and in
+    /// `[3]` its phase function's anisotropy; and its single-scattering
+    /// albedo.
+    pub subsurface_extinction: [f32; 4],
+    pub subsurface_albedo: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -170,6 +178,7 @@ impl GpuMaterial {
         let c = if has_depth { m.transmission_tint } else { m.transmission_color * m.transmission_tint };
         let tint = [c.r.max(0.0).sqrt(), c.g.max(0.0).sqrt(), c.b.max(0.0).sqrt(), m.transmission_depth];
         let scattering = m.volume_scattering();
+        let walk = m.subsurface_medium();
         let mut glass = 0;
         for (on, flag) in [
             (m.geometry_thin_walled, GLASS_THIN),
@@ -236,14 +245,17 @@ impl GpuMaterial {
             film: [m.thin_film_weight, m.thin_film_thickness, m.thin_film_ior, m.transmission_dispersion_abbe],
             volume_extinction: scattering.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
             volume_albedo: scattering.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
+            subsurface_color: [m.subsurface_color.r, m.subsurface_color.g, m.subsurface_color.b, m.subsurface_weight],
+            subsurface_extinction: walk.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
+            subsurface_albedo: walk.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
         }
     }
 
-    /// Whether the card renders `m` as the processor does: no subsurface at
-    /// all (even a share too small for its own lobe takes from the diffuse).
-    /// Flakes, thin films, glass that disperses light and volumes that
-    /// scatter it renders.
-    pub fn supports(m: &Material) -> bool {
-        m.subsurface_weight == 0.0
+    /// Whether the card renders `m` as the processor does: every material's
+    /// stack now, subsurface, flakes, thin films, glass that disperses light
+    /// and volumes that scatter among them (what a program drives the card
+    /// may still refuse, `program::lower`).
+    pub fn supports(_m: &Material) -> bool {
+        true
     }
 }

@@ -5,129 +5,110 @@
 // where it came in (WalkGuide, GuidedTurn) - for transport.wgsl's walks
 // through a volume that scatters and under a surface.
 //
-// Its exponential and logarithm are FreeBSD's expf and logf (musl's before
-// its tables), each within an ulp of the true value as the processor's are,
-// where the card's own are looser by a growing margin over the range a walk
-// reaches; the products a sum reads are rounded as Rust rounds them
-// (cy_exact), and the quotients and roots are correctly rounded (cy_div,
-// cy_sqrt).
-//#include nodes
+// Its exponential, logarithm, power and arctangent are correctly rounded,
+// as the processor's expf, logf, powf and atanf are all but a few times in
+// ten thousand: each carried in two floats on the pictures' tables
+// (textures.wgsl's tex_log2_parts, tex_powf, tex_atan2), where the card's
+// own, and FreeBSD's ports, are an ulp off one time in ten - which a
+// guided walk's turn, v - (v + 1) e^x for a diffusion length v in the
+// hundreds, multiplies a hundredfold. The products a sum reads are rounded
+// as Rust rounds them (cy_exact), and the quotients and roots correctly
+// rounded (tex_div, cy_sqrt).
+//#include textures
 //#include onb
 //#include sampler
 
 const MD_PI: f32 = 3.14159265358979323846;
 const MD_TAU: f32 = 6.28318530717958647692;
 
-// expf (FreeBSD's e_expf.c): x = k ln 2 + r, |r| at most half ln 2, and a
-// rational fit of e^r.
-fn md_exp(x_in: f32) -> f32 {
-    var x = x_in;
-    let bits = bitcast<u32>(x);
-    let sign = bits >> 31u;
-    let hx = bits & 0x7FFFFFFFu;
-    if (hx > 0x7F800000u) {
-        return x;
-    }
-    if (hx >= 0x42AEAC50u) {
-        if (hx >= 0x42B17218u && sign == 0u) {
-            return bitcast<f32>(0x7F800000u);
-        }
-        if (sign != 0u && hx >= 0x42CFF1B5u) {
-            return 0.0;
-        }
-    }
-    var k = 0;
-    var hi = x;
-    var lo = 0.0;
-    if (hx > 0x3EB17218u) {
-        if (hx > 0x3F851592u) {
-            // invln2 x + half[sign], truncated towards nought (C's cast).
-            let t = cy_exact(1.4426950216 * x) + select(0.5, -0.5, sign != 0u);
-            k = i32(trunc(t));
-        } else {
-            k = 1 - i32(sign) - i32(sign);
-        }
-        let kf = f32(k);
-        hi = x - cy_exact(kf * 6.9314575195e-1);
-        lo = cy_exact(kf * 1.4286067653e-6);
-        x = hi - lo;
-    } else if (hx <= 0x39000000u) {
-        return 1.0 + x;
-    }
-    let xx = cy_exact(x * x);
-    let c = x - cy_exact(xx * (1.6666625440e-1 + cy_exact(xx * -2.7667332906e-3)));
-    let y = 1.0 + ((cy_div(cy_exact(x * c), 2.0 - c) - lo) + hi);
-    if (k == 0) {
-        return y;
-    }
-    return md_scale(y, k);
+// 2^(yh + yl) for |yl| far under an ulp of yh (tex_powf's last steps):
+// 2^(j/16) from the table times e^g for |g| under ln 2 / 32, the rest of a
+// series in one float.
+fn md_exp2_parts(yh: f32, yl: f32) -> f32 {
+    let n = floor(yh + 0.5);
+    let f0 = yh - n;
+    let j = floor(f0 * 16.0 + 0.5);
+    let ff = tex_two_sum(f0 - j * 0.0625, yl);
+    let ln2h = bitcast<f32>(texture_header[TEX_LN2]);
+    let ln2l = bitcast<f32>(texture_header[TEX_LN2 + 1u]);
+    let gh = cy_exact(ff.x * ln2h);
+    let gl = fma(ff.x, ln2h, -gh) + (ff.x * ln2l + ff.y * ln2h);
+    let poly = gh * gh * (0.5 + gh * (0.16666667 + gh * (0.041666668 + gh * 0.008333334)));
+    let rest = gl + poly;
+    let at = TEX_TABLE_EXP2 + 2u * u32(j + 8.0);
+    let th = bitcast<f32>(texture_header[at]);
+    let tl = bitcast<f32>(texture_header[at + 1u]);
+    let a = cy_exact(th * gh);
+    let a_err = fma(th, gh, -a);
+    let sum = tex_two_sum(th, a);
+    let r = sum.x + (sum.y + (a_err + (th * rest + tl * (1.0 + gh))));
+    return ldexp(r, i32(n));
 }
 
-// scalbnf: y times 2^k, through the subnormals as the processor's does.
-fn md_scale(y: f32, k: i32) -> f32 {
-    var v = y;
-    var n = k;
-    if (n > 127) {
-        v = v * 1.7014118e38;
-        n -= 127;
-        if (n > 127) {
-            v = v * 1.7014118e38;
-            n -= 127;
-            n = min(n, 127);
-        }
-    } else if (n < -126) {
-        // 2^-126 times 2^24, so the last step rounds once into the
-        // subnormals.
-        v = v * (1.17549435e-38 * 16777216.0);
-        n += 126 - 24;
-        if (n < -126) {
-            v = v * (1.17549435e-38 * 16777216.0);
-            n += 126 - 24;
-            n = max(n, -126);
-        }
-    }
-    return v * bitcast<f32>(u32(0x7F + n) << 23u);
-}
-
-// logf (FreeBSD's e_logf.c): x = 2^k m with m in [sqrt(2)/2, sqrt(2)],
-// ln m from s = (m - 1)/(m + 1) and a fit in s^2.
-fn md_ln(x_in: f32) -> f32 {
-    var x = x_in;
-    var ix = bitcast<u32>(x);
-    var k = 0;
-    if (ix < 0x00800000u || (ix >> 31u) != 0u) {
-        if ((ix << 1u) == 0u) {
-            return bitcast<f32>(0xFF800000u);
-        }
-        if ((ix >> 31u) != 0u) {
-            return bitcast<f32>(0x7FC00000u);
-        }
-        k -= 25;
-        x = x * 33554432.0;
-        ix = bitcast<u32>(x);
-    } else if (ix >= 0x7F800000u) {
+// expf, correctly rounded: 2^(x log2 e), the product in two floats.
+fn md_exp(x: f32) -> f32 {
+    if (!(x == x)) {
         return x;
-    } else if (ix == 0x3F800000u) {
+    }
+    if (x > 88.72284) {
+        return bitcast<f32>(0x7F800000u);
+    }
+    if (x < -103.97209) {
         return 0.0;
     }
-    ix += 0x3F800000u - 0x3F3504F3u;
-    k += i32(ix >> 23u) - 0x7F;
-    ix = (ix & 0x007FFFFFu) + 0x3F3504F3u;
-    x = bitcast<f32>(ix);
-    let f = x - 1.0;
-    let s = cy_div(f, 2.0 + f);
-    let z = cy_exact(s * s);
-    let w = cy_exact(z * z);
-    let t1 = cy_exact(w * (0.40000972152 + cy_exact(w * 0.24279078841)));
-    let t2 = cy_exact(z * (0.66666662693 + cy_exact(w * 0.28498786688)));
-    let r = t2 + t1;
-    let hfsq = cy_exact(cy_exact(0.5 * f) * f);
-    let dk = f32(k);
-    return (((cy_exact(s * (hfsq + r)) + cy_exact(dk * 9.0580006145e-6)) - hfsq) + f) + cy_exact(dk * 6.9313812256e-1);
+    let yh = cy_exact(x * 1.4426950216293335);
+    let yl = fma(x, 1.4426950216293335, -yh) + x * 1.925963033500011e-8;
+    return md_exp2_parts(yh, yl);
 }
 
-// powf for x over nought, as the guide and the walk's remap raise their
-// albedos: e^(y ln x); nought for x nought.
+// logf, correctly rounded: log2 in two floats (tex_log2_parts) times ln 2
+// in two; near 1, where that is good only to an absolute 2^-40, as
+// 2 atanh(f / (2 + f)) for f = x - 1 (exact), its leading term in two
+// floats.
+fn md_ln(x_in: f32) -> f32 {
+    var x = x_in;
+    if (x == 1.0) {
+        return 0.0;
+    }
+    if (x > 0.9375 && x < 1.0625) {
+        let f = x - 1.0;
+        let d = cy_exact(2.0 + f);
+        let d_low = f - cy_exact(d - 2.0);
+        let s = tex_div(f, d);
+        var r = fma(-s, d, f);
+        r = fma(-s, d_low, r);
+        let s_low = tex_div(r, d);
+        let s2 = cy_exact(s * s);
+        let corr = cy_exact(s * s2) * (0.6666667 + s2 * (0.4 + s2 * 0.2857143));
+        return 2.0 * s + (2.0 * s_low + corr);
+    }
+    if (!(x > 0.0)) {
+        return select(bitcast<f32>(0x7FC00000u), bitcast<f32>(0xFF800000u), x == 0.0);
+    }
+    if (x > 3.4e38) {
+        return x;
+    }
+    // A subnormal, scaled up by 2^25, the 25 taken off the logarithm.
+    var shift = 0.0;
+    if (x < 1.17549435e-38) {
+        x = x * 33554432.0;
+        shift = 25.0;
+    }
+    var l = tex_log2_parts(x);
+    if (shift != 0.0) {
+        let t = tex_two_sum(l.x, -shift);
+        l = vec2<f32>(t.x, t.y + l.y);
+    }
+    let ln2h = bitcast<f32>(texture_header[TEX_LN2]);
+    let ln2l = bitcast<f32>(texture_header[TEX_LN2 + 1u]);
+    let p = cy_exact(l.x * ln2h);
+    let p_low = fma(l.x, ln2h, -p) + (l.x * ln2l + l.y * ln2h);
+    return p + p_low;
+}
+
+// powf for x at or over nought, as the guide and the walk's remap raise
+// their albedos and arctangents: tex_powf's, correctly rounded; nought for
+// x nought, one for y nought.
 fn md_pow(x: f32, y: f32) -> f32 {
     if (x == 1.0 || y == 0.0) {
         return 1.0;
@@ -135,7 +116,77 @@ fn md_pow(x: f32, y: f32) -> f32 {
     if (x == 0.0) {
         return select(bitcast<f32>(0x7F800000u), 0.0, y > 0.0);
     }
-    return md_exp(cy_exact(y * md_ln(x)));
+    return tex_powf(x, y);
+}
+
+// atanf, correctly rounded (tex_atan2 of y over 1).
+fn md_atan(y: f32) -> f32 {
+    return tex_atan2(y, 1.0);
+}
+
+// sinf and cosf of t (a few turns either way at most), correctly rounded
+// all but now and then: t less a whole number of quarter turns, in two
+// floats (pi / 2 in three parts), then each series with its leading terms
+// in two floats - sin r = r - r^3/6 + r^5 T(r^2), cos r = 1 - r^2/2 +
+// r^4 C(r^2) - against Cephes' (cy_sincos), an ulp or two off one time in
+// ten. (sin, cos).
+fn md_sincos(t: f32) -> vec2<f32> {
+    let k = round(t * 0.63661975);
+    let a = t - k * 1.5703125;
+    let p2 = cy_exact(k * 0.0004838267923332751);
+    let p2e = fma(k, 0.0004838267923332751, -p2);
+    let s1 = tex_two_sum(a, -p2);
+    let low = (s1.y - p2e) - k * 2.5633440682570896e-12;
+    let rh = cy_exact(s1.x + low);
+    let rl = low - cy_exact(rh - s1.x);
+    let r2h = cy_exact(rh * rh);
+    let r2l = fma(rh, rh, -r2h) + 2.0 * rh * rl;
+    // r^3 / 6 in two floats.
+    let p = cy_exact(rh * r2h);
+    let pe = fma(rh, r2h, -p) + (rh * r2l + rl * r2h);
+    let q = tex_div(p, 6.0);
+    let qe = (fma(-q, 6.0, p) + pe) / 6.0;
+    let t5 = p * r2h * (0.008333334 + r2h * (-0.0001984127 + r2h * (2.7557319e-6 + r2h * (-2.5052108e-8 + r2h * 1.6059044e-10))));
+    let sd = tex_two_sum(rh, -q);
+    let sine = sd.x + (((sd.y + rl) - qe) + t5);
+    // 1 - r^2/2, its rounding kept, and the rest.
+    let h = 0.5 * r2h;
+    let c0 = cy_exact(1.0 - h);
+    let e0 = cy_exact(1.0 - c0) - h;
+    let r4 = r2h * r2h;
+    let rest = r4 * (0.041666668 + r2h * (-0.0013888889 + r2h * (2.4801588e-5 + r2h * (-2.7557319e-7 + r2h * 2.0876757e-9))));
+    let cosine = c0 + ((e0 - 0.5 * r2l) + rest);
+    switch (i32(k) & 3) {
+        case 0: { return vec2<f32>(sine, cosine); }
+        case 1: { return vec2<f32>(cosine, -sine); }
+        case 2: { return vec2<f32>(-sine, -cosine); }
+        default: { return vec2<f32>(-cosine, sine); }
+    }
+}
+
+// sample_cosine_hemisphere: the concentric disc (sample_uniform_disk_
+// concentric) and the hemisphere above it, its quotients, roots, sines and
+// cosines correctly rounded and its products rounded as Rust rounds them -
+// the walk's doorway's draw in and out (DiffuseTransmission), where the
+// diffuse lobe's (lobe_cosine_hemisphere) is the card's own trigonometry.
+fn md_cosine_hemisphere(u: vec2<f32>) -> vec3<f32> {
+    let o = vec2<f32>(2.0 * u.x - 1.0, 2.0 * u.y - 1.0);
+    var d = vec2<f32>(0.0);
+    if (!(o.x == 0.0 && o.y == 0.0)) {
+        var r: f32;
+        var theta: f32;
+        if (abs(o.x) > abs(o.y)) {
+            r = o.x;
+            theta = cy_exact((MD_PI / 4.0) * tex_div(o.y, o.x));
+        } else {
+            r = o.y;
+            theta = (MD_PI / 2.0) - cy_exact((MD_PI / 4.0) * tex_div(o.x, o.y));
+        }
+        let sc = md_sincos(theta);
+        d = vec2<f32>(cy_exact(r * sc.y), cy_exact(r * sc.x));
+    }
+    let z = cy_sqrt(max(cy_exact(1.0 - cy_exact(d.x * d.x)) - cy_exact(d.y * d.y), 0.0));
+    return vec3<f32>(d.x, d.y, z);
 }
 
 // Vec3::dot, summed in order, each product rounded.
@@ -149,7 +200,7 @@ fn md_phase(cos_theta: f32, g_in: f32) -> f32 {
     let g = clamp(g_in, -0.99, 0.99);
     let gg = cy_exact(g * g);
     let d = max((1.0 + gg) - cy_exact(cy_exact(2.0 * g) * cos_theta), 1e-6);
-    return cy_div(1.0 - gg, cy_exact(cy_exact((4.0 * MD_PI) * d) * cy_sqrt(d)));
+    return tex_div(1.0 - gg, cy_exact(cy_exact((4.0 * MD_PI) * d) * cy_sqrt(d)));
 }
 
 // sample_henyey_greenstein: a way on from `forward`, drawn by the phase
@@ -160,8 +211,8 @@ fn md_sample_phase(forward: vec3<f32>, g: f32, u: vec2<f32>) -> vec3<f32> {
         cos_theta = 1.0 - 2.0 * u.x;
     } else {
         let gg = cy_exact(g * g);
-        let s = cy_div(1.0 - gg, (1.0 - g) + cy_exact(cy_exact(2.0 * g) * u.x));
-        cos_theta = cy_div((1.0 + gg) - cy_exact(s * s), 2.0 * g);
+        let s = tex_div(1.0 - gg, (1.0 - g) + cy_exact(cy_exact(2.0 * g) * u.x));
+        cos_theta = tex_div((1.0 + gg) - cy_exact(s * s), 2.0 * g);
     }
     cos_theta = clamp(cos_theta, -1.0, 1.0);
     return md_turned(forward, cos_theta, u.y);
@@ -171,7 +222,7 @@ fn md_sample_phase(forward: vec3<f32>, g: f32, u: vec2<f32>) -> vec3<f32> {
 // the axis's own frame (Onb::from_normal).
 fn md_turned(axis: vec3<f32>, cos_theta: f32, turn: f32) -> vec3<f32> {
     let sin_theta = cy_sqrt(max(1.0 - cy_exact(cos_theta * cos_theta), 0.0));
-    let sc = cy_sincos(MD_TAU * turn);
+    let sc = md_sincos(MD_TAU * turn);
     let local = vec3<f32>(cy_exact(sin_theta * sc.y), cy_exact(sin_theta * sc.x), cos_theta);
     let f = frame_of(axis);
     return (cy_exact3(f.t * local.x) + cy_exact3(f.b * local.y)) + cy_exact3(f.n * local.z);
@@ -197,7 +248,7 @@ fn md_walk_flight(throughput: vec3<f32>, albedo: vec3<f32>, sigma: vec3<f32>, st
     }
     var chance = vec3<f32>(1.0 / 3.0);
     if (total > 0.0) {
-        chance = vec3<f32>(cy_div(weights.x, total), cy_div(weights.y, total), cy_div(weights.z, total));
+        chance = vec3<f32>(tex_div(weights.x, total), tex_div(weights.y, total), tex_div(weights.z, total));
     }
     var s = sigma.z;
     var below = chance.x;
@@ -209,7 +260,7 @@ fn md_walk_flight(throughput: vec3<f32>, albedo: vec3<f32>, sigma: vec3<f32>, st
             s = sigma.y;
         }
     }
-    let depth = cy_div(-md_ln(max(1.0 - along, 1e-12)), max(cy_exact(s * stretch), 1e-9));
+    let depth = tex_div(-md_ln(max(1.0 - along, 1e-12)), max(cy_exact(s * stretch), 1e-9));
     return WalkFlight(chance, depth);
 }
 
@@ -272,9 +323,9 @@ fn md_guide_new(solid: u32, entry: vec3<f32>, normal: vec3<f32>, albedo: vec3<f3
     if (!(alpha > 0.0 && alpha < 1.0)) {
         return guide;
     }
-    let exponent = (2.44294 - cy_exact(0.0215813 * alpha)) + cy_div(0.578637, alpha);
-    let diffusion = cy_div(1.0, cy_sqrt(1.0 - md_pow(alpha, exponent)));
-    let phase_log = md_ln(cy_div(diffusion + 1.0, diffusion - 1.0));
+    let exponent = (2.44294 - cy_exact(0.0215813 * alpha)) + tex_div(0.578637, alpha);
+    let diffusion = tex_div(1.0, cy_sqrt(1.0 - md_pow(alpha, exponent)));
+    let phase_log = md_ln(tex_div(diffusion + 1.0, diffusion - 1.0));
     let share = 1.0 - max(md_pow(abs(g), 0.125), 0.5);
     if (!(diffusion > 1.0 && diffusion <= 3.4e38 && phase_log > 0.0 && phase_log <= 3.4e38 && share > 0.0)) {
         return guide;
@@ -294,7 +345,7 @@ fn md_guide_new(solid: u32, entry: vec3<f32>, normal: vec3<f32>, albedo: vec3<f3
 // WalkGuide::look: how far the first flight looks for the surface opposite,
 // ten mean free paths in the channel that travels furthest.
 fn md_guide_look(sigma: vec3<f32>) -> f32 {
-    return cy_div(10.0, max(min(min(sigma.x, sigma.y), sigma.z), 1e-9));
+    return tex_div(10.0, max(min(min(sigma.x, sigma.y), sigma.z), 1e-9));
 }
 
 // WalkGuide::stretch: what the next flight's extinction is multiplied by.
@@ -307,7 +358,7 @@ fn md_guide_stretch(guide: WalkGuide) -> f32 {
 
 // Dwivedi's density for a direction at `mu` to the entry's normal.
 fn md_dwivedi(guide: WalkGuide, mu: f32) -> f32 {
-    return cy_div(cy_div(1.0, cy_exact((guide.diffusion - mu) * guide.phase_log)), MD_TAU);
+    return tex_div(tex_div(1.0, cy_exact((guide.diffusion - mu) * guide.phase_log)), MD_TAU);
 }
 
 // WalkGuide::turn at `at`, the walk heading `forward`: guided by Dwivedi's
@@ -322,7 +373,7 @@ fn md_guide_turn(guide: ptr<function, WalkGuide>, at: vec3<f32>, forward: vec3<f
     let has_opposite = opposite > 0.0;
     if (has_opposite) {
         let x = clamp(md_dot(at - (*guide).entry, -(*guide).normal), 0.0, opposite);
-        backward_fraction = cy_div(1.0, 1.0 + md_exp(cy_div(opposite - 2.0 * x, (*guide).diffusion)));
+        backward_fraction = tex_div(1.0, 1.0 + md_exp(tex_div(opposite - 2.0 * x, (*guide).diffusion)));
     }
     var backward = false;
     if (has_opposite) {
@@ -348,10 +399,10 @@ fn md_guide_turn(guide: ptr<function, WalkGuide>, at: vec3<f32>, forward: vec3<f
     (*guide).guided = guided;
     (*guide).backward = backward;
     (*guide).backward_fraction = backward_fraction;
-    (*guide).forward_factor = cy_div(md_dwivedi(*guide, cos_theta), phase);
-    (*guide).backward_factor = cy_div(md_dwivedi(*guide, -cos_theta), phase);
-    (*guide).forward_stretch = 1.0 - cy_div(cos_theta, v);
-    (*guide).backward_stretch = 1.0 + cy_div(cos_theta, v);
+    (*guide).forward_factor = tex_div(md_dwivedi(*guide, cos_theta), phase);
+    (*guide).backward_factor = tex_div(md_dwivedi(*guide, -cos_theta), phase);
+    (*guide).forward_stretch = 1.0 - tex_div(cos_theta, v);
+    (*guide).backward_stretch = 1.0 + tex_div(cos_theta, v);
     return next;
 }
 

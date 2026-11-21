@@ -343,14 +343,19 @@ fn seen_meets(seen: SeenFrom, light: GpuLight) -> bool {
     return lamp_met_by_bounces(light, seen.instance);
 }
 
-// A medium a path is inside (ic:338's Medium, without scattering, walks or
-// Volume Maps): the solid it is, its priority, its index, and the material
-// whose volume absorbs along the path (its GLASS_VOLUME).
+// A medium a path is inside (ic:338's Medium, without Volume Maps): the
+// solid it is, its priority, its index, and the material whose volume
+// absorbs along the path (its GLASS_VOLUME) or scatters (GLASS_SCATTERS);
+// or, entered through a subsurface lobe and left through one, a walk under
+// the material's surface (`doorway`, Medium::walk) and the albedo of its
+// medium as the shaded material had it.
 struct Medium {
     solid: u32,
     priority: f32,
     ior: f32,
     material: u32,
+    doorway: bool,
+    albedo: vec3<f32>,
 };
 
 // MediumStack (ic:563): at most four, in the order entered.
@@ -426,9 +431,33 @@ fn media_cross(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32, mat
         }
         (*m).len -= 1u;
     } else if ((*m).len < MAX_MEDIA) {
-        (*m).media[(*m).len] = Medium(solid, priority, ior, material);
+        (*m).media[(*m).len] = Medium(solid, priority, ior, material, false, vec3<f32>(0.0));
         (*m).len += 1u;
     }
+}
+
+// MediumStack::cross_walk: crossing a surface of `solid` through its
+// subsurface lobe leaves the medium of `solid` the path is in, or starts a
+// walk under it (Medium::walk, of the shaded material: its priority, its
+// index and its walk's albedo); a fifth medium is not recorded.
+fn media_cross_walk(m: ptr<function, Media>, solid: u32, priority: f32, ior: f32, material: u32, albedo: vec3<f32>) {
+    let at = media_position(*m, solid);
+    if (at != NO_MEDIUM) {
+        for (var j = at; j + 1u < (*m).len; j++) {
+            (*m).media[j] = (*m).media[j + 1u];
+        }
+        (*m).len -= 1u;
+    } else if ((*m).len < MAX_MEDIA) {
+        (*m).media[(*m).len] = Medium(solid, priority, ior, material, true, albedo);
+        (*m).len += 1u;
+    }
+}
+
+// MediumStack::walking_in: whether the path is on a walk under `solid`'s
+// surface, the medium present.
+fn media_walking_in(m: Media, solid: u32) -> bool {
+    let top = media_top(m, NO_MEDIUM);
+    return top != NO_MEDIUM && m.media[top].doorway && m.media[top].solid == solid;
 }
 
 // ---- Media that scatter (ic:338-512, 967-1256, 4112-4273) -----------------
@@ -440,7 +469,7 @@ const MAX_WALK_STEPS: u32 = 16384u;
 // Whether a medium scatters as well as absorbs (Medium::scattering): a
 // volume that does (GLASS_SCATTERS, Material::volume_scattering).
 fn medium_scatters(m: Medium) -> bool {
-    return (scene_materials[m.material].glass & GLASS_SCATTERS) != 0u;
+    return (FEATURE_SUBSURFACE && m.doorway) || (FEATURE_SCATTERING && (scene_materials[m.material].glass & GLASS_SCATTERS) != 0u);
 }
 
 // The medium a walk crosses (SubsurfaceMedium): its extinction per metre,
@@ -453,7 +482,77 @@ struct Scattering {
 
 fn medium_scattering(m: Medium) -> Scattering {
     let r = scene_materials[m.material];
+    if (FEATURE_SUBSURFACE && m.doorway) {
+        return Scattering(r.subsurface_extinction.xyz, m.albedo, r.subsurface_extinction.w);
+    }
     return Scattering(r.volume_extinction.xyz, r.volume_albedo.xyz, r.volume_extinction.w);
+}
+
+// One component of a cross product as the processor works it out in f64 and
+// rounds to f32 (Vec3::cross): a d - b e, its two products exact, rounded
+// once; a nought signed as f64 signs it.
+fn exact_cross_term(a: f32, d: f32, b: f32, e: f32) -> f32 {
+    let p1 = cy_exact(a * d);
+    let e1 = fma(a, d, -p1);
+    let p2 = cy_exact(b * e);
+    let e2 = fma(b, e, -p2);
+    if (e1 == 0.0 && e2 == 0.0) {
+        return p1 - p2;
+    }
+    let s = tex_two_sum(p1, -p2);
+    return s.x + (s.y + (e1 - e2));
+}
+
+// The geometric normal of `hit` as the processor's resolve has it
+// (embree.rs: Mesh::geometric_normal_scaled through Transform::normal, then
+// try_normalize), turned to face `direction`'s origin (facing_forward): down
+// to the sign of a nought, which turns a frame about the normal
+// (Onb::from_normal) the other way round. What a walk is guided about.
+fn exact_geometric(hit: RayIntersection, direction: vec3<f32>) -> vec3<f32> {
+    let inst = scene_instances[hit.instance_custom_data];
+    let mesh = scene_meshes[inst.mesh];
+    let first = mesh.first_index + 3u * hit.primitive_index;
+    let c0 = scene_position(mesh.base_vertex + scene_indices[first]);
+    let a = scene_position(mesh.base_vertex + scene_indices[first + 1u]) - c0;
+    let b = scene_position(mesh.base_vertex + scene_indices[first + 2u]) - c0;
+    let n = vec3<f32>(exact_cross_term(a.y, b.z, a.z, b.y), exact_cross_term(a.z, b.x, a.x, b.z), exact_cross_term(a.x, b.y, a.y, b.x));
+    let m = inst.world_to_object;
+    let w = vec3<f32>(
+        (cy_exact(m[0].x * n.x) + cy_exact(m[1].x * n.y)) + cy_exact(m[2].x * n.z),
+        (cy_exact(m[0].y * n.x) + cy_exact(m[1].y * n.y)) + cy_exact(m[2].y * n.z),
+        (cy_exact(m[0].z * n.x) + cy_exact(m[1].z * n.y)) + cy_exact(m[2].z * n.z),
+    );
+    let len2 = (cy_exact(w.x * w.x) + cy_exact(w.y * w.y)) + cy_exact(w.z * w.z);
+    var g = vec3<f32>(0.0, 1.0, 0.0);
+    if (len2 > 0.0 && len2 <= 3.4e38) {
+        let inv = tex_div(1.0, cy_sqrt(len2));
+        g = vec3<f32>(cy_exact(w.x * inv), cy_exact(w.y * inv), cy_exact(w.z * inv));
+    }
+    let facing = (cy_exact(direction.x * g.x) + cy_exact(direction.y * g.y)) + cy_exact(direction.z * g.z);
+    return select(g, -g, facing > 0.0);
+}
+
+// The surface a random walk leaves by (walk_exit, ic:316): the subsurface
+// lobe alone, white, nothing reflecting in front of it - `m` with every
+// other lobe's weight nought.
+fn walk_exit_material(m: GpuMaterial) -> GpuMaterial {
+    var e = m;
+    e.base_weight = 1.0;
+    e.base_metalness = 0.0;
+    e.specular_weight = 0.0;
+    e.transmission_color.w = 0.0;
+    e.coat_weight = 0.0;
+    e.fuzz_weight = 0.0;
+    e.geometry_occlusion = 1.0;
+    e.base_color = vec4<f32>(0.18, 0.18, 0.18, 0.0);
+    e.subsurface_color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    e.glass = 0u;
+    // No flake, no film, no dispersion: walk_exit is a default material
+    // but for what it sets.
+    e.flake_color.w = 0.0;
+    e.flake.w = 0.0;
+    e.film = vec4<f32>(0.0);
+    return e;
 }
 
 // Intersector::intersect with the ray's reach `t_max`: a walk's flight is
@@ -655,7 +754,7 @@ fn enclosing_media(origin: vec3<f32>, direction: vec3<f32>) -> Media {
     for (var j = 0u; j < used; j++) {
         if ((counts[j] & 1u) == 1u) {
             let m = scene_materials[materials[j]];
-            md.media[md.len] = Medium(solids[j], m.medium_priority, m.base_ior, materials[j]);
+            md.media[md.len] = Medium(solids[j], m.medium_priority, m.base_ior, materials[j], false, vec3<f32>(0.0));
             md.len += 1u;
         }
     }
@@ -1348,6 +1447,9 @@ struct PathState {
     walk_steps: u32,
     lit_from: u32,
     lit_pdf: f32,
+    // The walk under a surface the path came in on, guided back towards
+    // where it came in (ic:822's WalkGuide; NO_WALK for none).
+    guide: WalkGuide,
 };
 
 // A path from `origin` along `direction` (trace's set-up): the camera's, a
@@ -1395,6 +1497,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.walk_steps = 0u;
     st.lit_from = NO_SOLID;
     st.lit_pdf = 0.0;
+    st.guide = md_no_guide();
     return st;
 }
 
@@ -1774,7 +1877,7 @@ struct Direct {
     through: u32,
 };
 
-fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool) -> Direct {
+fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool, facing: vec3<f32>) -> Direct {
     var direct = vec3<f32>(0.0);
     var parts: Direct;
     for (var source = 0u; source < 3u; source++) {
@@ -1830,7 +1933,7 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             // seen from here (sample_from): the direction there, the density
             // times the patch's jacobian, and how far the dome is.
             let finite = dome_finite();
-            let e = env_sample_sky(select(select(surf.geometric, vec3<f32>(0.0), transmissive), vec3<f32>(0.0), finite), sampler_light_sample(s));
+            let e = env_sample_sky(select(facing, vec3<f32>(0.0), finite), sampler_light_sample(s));
             if (!e.ok) {
                 continue;
             }
@@ -2404,6 +2507,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // lighter one is the interface seen from inside (ic:1947-1970). The
     // stack's interface and transmission read that index.
     let boundary = FEATURE_GLASS && (material.glass & GLASS_BOUNDARY) != 0u;
+    // A walk that reaches its own part's surface from inside leaves through
+    // it, spread over the hemisphere outside (ic:1975).
+    let exiting_walk = FEATURE_SUBSURFACE && media_walking_in((*st).media, inst.solid);
     var from_inside = false;
     var relative = material.specular_ior;
     if (boundary) {
@@ -2431,11 +2537,14 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         lobes.flake.w = at.w;
         lobes.flake_normal = vec4<f32>(at.xyz, 0.0);
     }
+    if (exiting_walk) {
+        lobes = walk_exit_material(lobes);
+    }
     // Clear glass the last light sample was taken through, met on the way
     // on by a bounce that passes it - and what that bounce left by, weighed
     // as the lobes that pass glass that bends light are; glass met as glass
     // by a seeing bounce (ic:1974-1991).
-    let pane = FEATURE_PANES && (material.glass & GLASS_PANE) != 0u;
+    let pane = FEATURE_PANES && (material.glass & GLASS_PANE) != 0u && !exiting_walk;
     let bends = (material.glass & GLASS_BENDS) != 0u;
     let glass = (*st).through_glass;
     let passing = pane && (pane_passes(glass, bends) || (glass == GLASS_UNBENT && (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u));
@@ -2481,14 +2590,23 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         (*st).receiver = false;
     }
     if (samples_lights) {
-        (*st).sky_facing = select(surf.geometric, vec3<f32>(0.0), transmissive);
+        // Lit from one side, it draws only the sky it can see: a surface
+        // that only reflects; one whose only way through is a walk's
+        // doorway, behind which is the part itself; a walk's way out,
+        // whose light comes from outside alone (ic:2069-2081).
+        let doorway_only = (material.glass & GLASS_THIN) == 0u && material.transmission_color.w <= 0.0;
+        if (exiting_walk) {
+            (*st).sky_facing = -surf.geometric;
+        } else {
+            (*st).sky_facing = select(vec3<f32>(0.0), surf.geometric, !transmissive || doorway_only);
+        }
         if (FEATURE_EMITTERS && (frame.glass_flags & SCENE_EMITTERS) != 0u) {
             (*st).receiver = true;
             (*st).receiver_position = surf.position;
             (*st).receiver_normal = surf.geometric;
             (*st).receiver_two_sided = transmissive;
         }
-        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);
+        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing);
         if (FEATURE_SPECTRAL && spectral_on) {
             // Through a dispersive surface the light came by the hero's
             // index, and is the hero's alone (ic:2172-2193).
@@ -2525,7 +2643,7 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // Carrying wavelengths, only while they all share one weight, which the
     // reflection's own wavelengths are filtered by (ic:2277-2286).
     let shares = !(FEATURE_SPECTRAL && spectral_on) || all((*st).tp4 == vec4<f32>((*st).tp4.x));
-    if (FEATURE_PANES && shares && bounce == 0u && !(*st).reflected && !(*st).in_floor && (material.glass & (GLASS_PANE | GLASS_PLAIN)) == (GLASS_PANE | GLASS_PLAIN)) {
+    if (FEATURE_PANES && shares && bounce == 0u && !(*st).reflected && !(*st).in_floor && !exiting_walk && (material.glass & (GLASS_PANE | GLASS_PLAIN)) == (GLASS_PANE | GLASS_PLAIN)) {
         let eta = select(relative, cy_div(1.0, relative), from_inside);
         let reflected = fresnel_dielectric(wo.z, eta);
         if (reflected < 1.0) {
@@ -2588,13 +2706,25 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // Through the surface: counted against the transmissions, the relative
     // index squared kept for Russian roulette, and a medium's boundary
     // entered or left, recorded with the surface's own index (ic:2373-2399).
-    if (FEATURE_GLASS && sample.is_transmission) {
+    if ((FEATURE_GLASS || FEATURE_SUBSURFACE) && sample.is_transmission) {
         (*st).transmission_bounces += 1u;
         if ((*st).transmission_bounces > frame.max_transmission_bounces) {
             return shade_ends(split, splitting);
         }
         (*st).eta_scale *= sample.eta * sample.eta;
-        if (boundary) {
+        if (FEATURE_SUBSURFACE && chosen.slot == LOBE_SUBSURFACE && bsdf.subsurface_walk) {
+            // Through the subsurface lobe: a walk begins under the surface
+            // (of the shaded material), guided back towards this point and
+            // out through this surface; or the one the path was on ends
+            // (ic:2388-2395).
+            var media = (*st).media;
+            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, material.subsurface_albedo.xyz);
+            (*st).media = media;
+            (*st).guide = md_no_guide();
+            if (media_walking_in(media, inst.solid)) {
+                (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), material.subsurface_albedo.xyz, material.subsurface_extinction.w);
+            }
+        } else if (boundary) {
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
@@ -3358,7 +3488,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     // are looked for along the whole ray.
                     seg_drawn = false;
                     var reach = 3.0e38;
-                    if (FEATURE_SCATTERING && !st.seen.valid) {
+                    if ((FEATURE_SCATTERING || FEATURE_SUBSURFACE) && !st.seen.valid) {
                         let top = media_top(st.media, NO_MEDIUM);
                         if (top != NO_MEDIUM && medium_scatters(st.media.media[top])) {
                             st.walk_steps += 1u;
@@ -3366,12 +3496,24 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                                 break;
                             }
                             let walk = medium_scattering(st.media.media[top]);
+                            // Guided, on the walk the path came in on: its
+                            // flight stretched as its last turn says, and its
+                            // first flight looking further, for the surface
+                            // opposite the one it came in by.
+                            let guiding = FEATURE_SUBSURFACE && st.guide.solid != NO_WALK && st.guide.solid == st.media.media[top].solid;
+                            var stretch = 1.0;
+                            if (guiding) {
+                                stretch = md_guide_stretch(st.guide);
+                            }
                             let pick = sampler_next_unstructured(&s);
                             let along = sampler_next_unstructured(&s);
-                            let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, 1.0, pick, along);
+                            let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, stretch, pick, along);
                             seg_chance = flight.chance;
                             seg_depth = flight.depth;
                             reach = flight.depth;
+                            if (guiding && !st.guide.flown) {
+                                reach = max(flight.depth, md_guide_look(walk.sigma));
+                            }
                             seg_drawn = true;
                         }
                     }
@@ -3414,7 +3556,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // carried, the lights sampled directly where the medium's
                 // surface bends nothing and it is the only one the path is
                 // in, and a turn by the phase function: the next segment.
-                if (FEATURE_SCATTERING) {
+                if (FEATURE_SCATTERING || FEATURE_SUBSURFACE) {
                     let top = media_top(st.media, NO_MEDIUM);
                     if (top != NO_MEDIUM && medium_scatters(st.media.media[top]) && (!open || seg_drawn)) {
                         let medium = st.media.media[top];
@@ -3425,12 +3567,32 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             }
                         }
                         let walk = medium_scattering(medium);
+                        // Guided, on the walk the path came in on (ic:1103-1123):
+                        // before its first turn, the surface opposite, if the
+                        // first flight saw it within ten mean free paths.
+                        let guiding = FEATURE_SUBSURFACE && st.guide.solid != NO_WALK && st.guide.solid == medium.solid;
+                        var stretch = 1.0;
+                        var turned = false;
+                        if (guiding) {
+                            if (!st.guide.flown) {
+                                var opposite = -1.0;
+                                if (!open && scene_instances[hit.instance_custom_data].solid == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
+                                    let d = md_dot(hit_place(hit).position - st.guide.entry, -st.guide.normal);
+                                    if (d > 0.0) {
+                                        opposite = d;
+                                    }
+                                }
+                                st.guide.opposite = opposite;
+                            }
+                            stretch = md_guide_stretch(st.guide);
+                            turned = st.guide.turned;
+                        }
                         var chance = seg_chance;
                         var depth = seg_depth;
                         if (!seg_drawn) {
                             let pick = sampler_next_unstructured(&s);
                             let along = sampler_next_unstructured(&s);
-                            let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, 1.0, pick, along);
+                            let flight = md_walk_flight(st.throughput, walk.albedo, walk.sigma, stretch, pick, along);
                             chance = flight.chance;
                             depth = flight.depth;
                         }
@@ -3442,7 +3604,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         var t = st.throughput;
                         if (collided) {
                             let kept = md_survive(walk.sigma, depth);
-                            let density = md_plain_density(chance, walk.sigma, kept, true);
+                            var density = 0.0;
+                            if (turned) {
+                                density = md_guided_density(st.guide, chance, walk.sigma, depth, true);
+                            } else {
+                                density = md_plain_density(chance, walk.sigma, kept, true);
+                            }
                             if (density <= 0.0) {
                                 lost = true;
                             } else {
@@ -3458,7 +3625,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             }
                         } else {
                             let kept = md_survive(walk.sigma, surface_at);
-                            let probability = md_plain_density(chance, walk.sigma, kept, false);
+                            var probability = 0.0;
+                            if (turned) {
+                                probability = md_guided_density(st.guide, chance, walk.sigma, surface_at, false);
+                            } else {
+                                probability = md_plain_density(chance, walk.sigma, kept, false);
+                            }
                             if (probability <= 0.0) {
                                 lost = true;
                             } else {
@@ -3472,16 +3644,25 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         if (collided) {
                             let at = st.origin + cy_exact3(st.direction * depth);
                             st.lit_from = NO_SOLID;
-                            if (abs(medium.ior - 1.0) < 1e-3 && st.media.len == 1u && (frame.lamp_flags & LAMPS_UNSAMPLED) == 0u) {
+                            if (FEATURE_SCATTERING && !medium.doorway && abs(medium.ior - 1.0) < 1e-3 && st.media.len == 1u && (frame.lamp_flags & LAMPS_UNSAMPLED) == 0u) {
                                 let lit = medium_light(&s, at, st.direction, walk.sigma, walk.g, medium.solid);
                                 let ceiling = light_ceiling(st.specular_chain, st.bounce);
                                 st.radiance += clamp_light(st.throughput * lit.sky, ceiling) + clamp_light(st.throughput * lit.lights, ceiling);
                                 st.lit_from = medium.solid;
                                 st.sky_facing = vec3<f32>(0.0);
                             }
-                            let u0 = sampler_next_unstructured(&s);
-                            let u1 = sampler_next_unstructured(&s);
-                            let onward = md_sample_phase(st.direction, walk.g, vec2<f32>(u0, u1));
+                            var onward: vec3<f32>;
+                            if (guiding) {
+                                // Through a local: naga's SPIR-V writer cannot
+                                // pass a pointer to a member.
+                                var guide = st.guide;
+                                onward = md_guide_turn(&guide, at, st.direction, walk.g, &s);
+                                st.guide = guide;
+                            } else {
+                                let u0 = sampler_next_unstructured(&s);
+                                let u1 = sampler_next_unstructured(&s);
+                                onward = md_sample_phase(st.direction, walk.g, vec2<f32>(u0, u1));
+                            }
                             st.lit_pdf = md_phase(md_dot(st.direction, onward), walk.g);
                             st.least_pdf = min(st.least_pdf, st.lit_pdf);
                             st.origin = at;
@@ -3621,7 +3802,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // Beer-Lambert across the segment just travelled, in the medium
                 // present (ic:1527-1556): only between two surfaces.
                 let top = media_top(st.media, NO_MEDIUM);
-                if (FEATURE_GLASS && top != NO_MEDIUM) {
+                if (FEATURE_GLASS && top != NO_MEDIUM && !(FEATURE_SUBSURFACE && st.media.media[top].doorway)) {
                     let medium = scene_materials[st.media.media[top].material];
                     if ((medium.glass & GLASS_VOLUME) != 0u) {
                         // What the medium gives off along the way, a lit

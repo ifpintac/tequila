@@ -15,9 +15,6 @@ use tequila_render_gpu::textures::{CardPictures, Pictures};
 /// edges count among them (they did until the card took Bevel).
 fn surface_refusals(m: &Material, rounding: bool) -> Vec<&'static str> {
     let mut why = Vec::new();
-    if m.subsurface_weight != 0.0 {
-        why.push("subsurface");
-    }
     if m.fuzz_density > 0.0 {
         why.push("fibres");
     }

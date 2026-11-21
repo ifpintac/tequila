@@ -108,3 +108,6 @@ override FEATURE_SPECTRAL: bool = true;
 // A volume that scatters: the random walk through it, and the lights a
 // collision in one whose surface bends nothing samples directly.
 override FEATURE_SCATTERING: bool = true;
+// Subsurface scattering: the walk's doorway in the stack, the random walk
+// under a surface, guided back towards where it came in, and its way out.
+override FEATURE_SUBSURFACE: bool = true;

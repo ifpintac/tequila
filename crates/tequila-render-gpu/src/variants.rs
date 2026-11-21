@@ -52,12 +52,12 @@ use crate::program::ProgramTable;
 use crate::scene::{GpuInstance, GpuMesh, INSTANCE_CASTS_SHADOWS, INSTANCE_STAND_IN, INSTANCE_UNSEEN, NO_CATCHER, NO_DATA, NO_LIGHT};
 
 /// The parts of the transport kernel a pipeline keeps: the parts
-/// `features.wgsl` names, one bit each, and which of the interpreter's
-/// instructions it keeps an arm for, a bit each by opcode (its
-/// `FEATURE_OPS`).
+/// `features.wgsl` names, one bit each (more than 32 of them since the
+/// media, so in 64 bits), and which of the interpreter's instructions it
+/// keeps an arm for, a bit each by opcode (its `FEATURE_OPS`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct KernelFeatures {
-    pub parts: u32,
+    pub parts: u64,
     pub ops: u32,
 }
 
@@ -136,9 +136,12 @@ impl KernelFeatures {
     /// A volume that scatters: the random walk through it, and the lights a
     /// collision in one whose surface bends nothing samples.
     pub const SCATTERING: KernelFeatures = part(30);
+    /// Subsurface scattering: the walk's doorway, the walk under a surface
+    /// and its way out.
+    pub const SUBSURFACE: KernelFeatures = part(31);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 31] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 32] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -170,6 +173,7 @@ impl KernelFeatures {
         (Self::DISPERSION, "FEATURE_DISPERSION"),
         (Self::SPECTRAL, "FEATURE_SPECTRAL"),
         (Self::SCATTERING, "FEATURE_SCATTERING"),
+        (Self::SUBSURFACE, "FEATURE_SUBSURFACE"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -178,7 +182,7 @@ impl KernelFeatures {
     /// None of them: a grey product under the sky.
     pub const NONE: KernelFeatures = KernelFeatures { parts: 0, ops: 0 };
     /// All of them: the whole kernel, which renders every scene.
-    pub const ALL: KernelFeatures = KernelFeatures { parts: (1 << Self::NAMED.len()) - 1, ops: u32::MAX };
+    pub const ALL: KernelFeatures = KernelFeatures { parts: (1u64 << Self::NAMED.len()) - 1, ops: u32::MAX };
 
     /// The instruction `op`'s arm.
     pub const fn op(op: u32) -> KernelFeatures {
@@ -209,7 +213,7 @@ impl KernelFeatures {
 
     /// What a variant is called in a cache's file names.
     pub fn key(self) -> String {
-        format!("{:04x}-{:08x}", self.parts, self.ops)
+        format!("{:08x}-{:08x}", self.parts, self.ops)
     }
 
     /// The parts a scene's records reach (see the module's notes): each
@@ -310,6 +314,9 @@ impl KernelFeatures {
         // one a crossing, the probe or a medium's surface that is no
         // interface records, all by a material's record.
         keep(any_material(&|m| m.glass & GLASS_SCATTERS != 0), Self::SCATTERING);
+        // The subsurface lobe (openpbr_build, a material's subsurface
+        // weight) and the walk it opens.
+        keep(any_material(&|m| m.subsurface_color[3] != 0.0), Self::SUBSURFACE);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -591,6 +598,9 @@ mod tests {
         let mut scatters = grey();
         scatters.glass = crate::material::GLASS_SCATTERS;
         assert_eq!(one(scatters), KernelFeatures::SCATTERING);
+        let mut translucent = grey();
+        translucent.subsurface_color = [0.9, 0.7, 0.6, 1.0];
+        assert_eq!(one(translucent), KernelFeatures::SUBSURFACE);
 
         // The frame's flags, the lamps, the tree, the instances, the meshes.
         use crate::transport::{SCENE_CUTOUTS, SCENE_TRANSMITS};

@@ -65,6 +65,11 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::SCATTERING), ["milk_in_glass", "scattering_volumes"].contains(name), "{name}: {}", features.names());
     }
+    // And only a scene with subsurface scattering keeps the walk under a
+    // surface.
+    for (name, features) in &chosen {
+        assert_eq!(features.contains(F::SUBSURFACE), ["subsurface_product", "backlit_translucency"].contains(name), "{name}: {}", features.names());
+    }
     // And only a scene that rounds its edges keeps the bevel.
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BEVEL), name.starts_with("bevel"), "{name}: {}", features.names());

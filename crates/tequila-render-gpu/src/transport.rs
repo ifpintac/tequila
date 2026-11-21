@@ -353,7 +353,6 @@ struct GlassScene {
     transmits: bool,
     panes: bool,
     dispersion: bool,
-    subsurface: bool,
     volume_maps: bool,
     folded_glass: bool,
     cutouts: bool,
@@ -369,7 +368,6 @@ impl GlassScene {
                 None => &scene.materials[i],
             })
             .collect();
-        let any = |test: &dyn Fn(&tequila_materials::openpbr::Material) -> bool| shaded.iter().any(|m| test(m));
         // The integrator reads a medium's boundary, priority and volume off
         // the scene's own material, the card off one record for both.
         let folded = shaded.iter().zip(&scene.materials).any(|(m, own)| {
@@ -388,7 +386,6 @@ impl GlassScene {
             transmits: scene.has_transmissive(),
             panes: scene.has_panes(),
             dispersion: scene.has_dispersion(),
-            subsurface: any(&|m| m.subsurface_weight != 0.0),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
             cutouts: scene.has_cutouts(),
@@ -410,9 +407,6 @@ impl GlassScene {
                 CausticsMethod::Photons => "no caustic photons: the light glass and mirrors focus is left out",
                 CausticsMethod::Manifold => "no manifold caustics: a lamp's light through glass that bends it is left out",
             });
-        }
-        if self.subsurface {
-            limits.push("subsurface scattering is left out: no random walk under a surface");
         }
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
@@ -803,7 +797,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now otherwise than on the processor (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };

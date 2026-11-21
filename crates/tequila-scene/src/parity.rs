@@ -12,7 +12,7 @@
 //! Generated, as the benchmark scenes are (`bench`), so they are the same
 //! on every machine and in every version.
 
-use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped};
+use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped, subsurface_product};
 use crate::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
 use crate::{CommandBus, SceneDocument};
 use tequila_core::math::{vec2, vec3, Transform};
@@ -696,6 +696,35 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: scattering_volumes,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "subsurface_product",
+    covers: "R3 tier B, subsurface scattering: the bench's subsurface_product, simple_product with a translucent body \
+             - the stack's subsurface lobe beside the diffuse, the walk's doorway: a path that takes it starts a \
+             random walk under the surface, guided back towards where it came in (Dwivedi's turns, half of them, \
+             each flight weighed by every way it could have been drawn), its first flight looking ten mean free \
+             paths ahead for the surface opposite, and leaves through the part's own surface, spread over the \
+             hemisphere outside, sampling the sky that side of it and the lamps",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: subsurface_product,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "backlit_translucency",
+    covers: "R3 tier B, subsurface scattering lit from behind: simple_product on its modelled ground under the sky, \
+             a translucent slab a centimetre thick and a thin-walled translucent sheet standing in front of it, a \
+             panel lamp behind them - the slab's walks guided across to its far side once the first flight has \
+             seen it, the sheet's light through it in its subsurface colour (no walk), both lit from the side the \
+             lamp is on",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: backlit_translucency,
     lens: framed,
     pictures: no_pictures,
 }];
@@ -2334,6 +2363,68 @@ fn scattering_volumes() -> SceneDocument {
         vec![
             ("Haze", ball(0.15), MaterialType::ScatteringMedium, haze, Transform::translation(vec3(0.3, 0.151, 0.85))),
             ("Wax", ball(0.1), MaterialType::TranslucentMedium, wax, Transform::translation(vec3(-0.3, 0.101, 0.95))),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground under the sky, a translucent
+/// slab a centimetre thick and a thin-walled translucent sheet standing in
+/// front of it, facing the camera, and a panel lamp behind them shining
+/// through towards it.
+fn backlit_translucency() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let eye = product_camera(&document, 320.0 / 180.0).position();
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(&document, &product);
+    let (middle, radius) = (bounds.center(), (bounds.diagonal().length() * 0.5).max(1e-4));
+    let toward = vec3(eye.x - middle.x, 0.0, eye.z - middle.z).normalize();
+    let right = Vec3::Y.cross(toward).normalize();
+    let placed = |at: Vec3, facing: Vec3| {
+        let z = facing.normalize();
+        let x = Vec3::Y.cross(z).normalize();
+        let y = z.cross(x);
+        Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+    };
+    let slab_at = middle + toward * (0.7 * radius) - right * (0.3 * radius);
+    let sheet_at = middle + toward * (0.7 * radius) + right * (0.35 * radius);
+    let lamp_at = middle + toward * (0.45 * radius) + Vec3::Y * (0.05 * radius);
+    let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+    let settings = LightSettings {
+        shape: LightShape::Area { width: 0.9 * radius, height: 0.4 * radius, disc: false, two_sided: false },
+        intensity: Intensity::Nits(30.0),
+        ..LightSettings::default()
+    };
+    bus.apply(&mut document, Command::AddLight { parent: None, name: "Back".into(), settings: Box::new(settings) }).expect("a lamp");
+    let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+    bus.apply(&mut document, Command::set_transform(id, placed(lamp_at, eye - lamp_at))).expect("the lamp placed");
+    let slab = Material {
+        subsurface_color: Spectrum { r: 0.95, g: 0.7, b: 0.45 },
+        subsurface_radius: Spectrum { r: 0.03, g: 0.02, b: 0.012 },
+        ..MaterialType::Translucent.defaults()
+    };
+    let sheet = Material {
+        base_color: Spectrum { r: 0.8, g: 0.8, b: 0.75 },
+        subsurface_weight: 0.7,
+        subsurface_color: Spectrum { r: 0.9, g: 0.85, b: 0.6 },
+        specular_roughness: 0.5,
+        geometry_thin_walled: true,
+        ..Material::default()
+    };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Slab", crate::bench::rounded_box(vec3(0.4 * radius, 0.45 * radius, 0.012), 0.003, 8), MaterialType::Translucent, slab, placed(slab_at, eye - slab_at)),
+            ("Sheet", crate::bench::rounded_box(vec3(0.35 * radius, 0.5 * radius, 0.002), 0.0008, 8), MaterialType::Translucent, sheet, placed(sheet_at, eye - sheet_at)),
         ],
     );
     document

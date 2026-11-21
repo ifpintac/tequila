@@ -8,11 +8,12 @@
 //! on the scene's own acceleration structure.
 //!
 //! The two draw the same numbers in the same order and do the same
-//! arithmetic, its products rounded as Rust rounds them, its quotients and
-//! roots correctly rounded; they part where the processor's expf, logf,
-//! sinf and cosf and the card's ports of FreeBSD's and Cephes' round apart
-//! (an ulp now and then), and where a ray query and Embree round a hit
-//! apart.
+//! arithmetic, its products rounded as Rust rounds them, its quotients,
+//! roots, exponentials, logarithms, powers and arctangents correctly
+//! rounded; they part where the processor's expf, logf and powf are not
+//! (a few times in ten thousand), where its sinf and cosf and the card's
+//! port of Cephes' round apart (an ulp now and then), and where a ray query
+//! and Embree round a hit apart.
 
 use tequila_core::math::{vec3, Vec2, Vec3};
 use tequila_core::rng::Pcg32;
@@ -63,6 +64,20 @@ fn unit(rng: &mut Pcg32) -> Vec3 {
     vec3(r * phi.cos(), r * phi.sin(), z)
 }
 
+/// `body` over `inputs` with `media.wgsl` and the pictures' tables it reads
+/// its exponential, logarithm, power and arctangent from (an empty set of
+/// pictures has them all).
+fn run_media(h: &Harness, body: &str, inputs: &[u32], in_words: usize, out_words: usize) -> Vec<u32> {
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    // cy_exact's zero, read from a word of each item the compiler cannot
+    // see is nought.
+    let body = format!("cy_zero = inp({in_words}u);
+{body}");
+    let padded: Vec<u32> = inputs.chunks(in_words).flat_map(|item| item.iter().copied().chain(std::iter::once(0))).collect();
+    h.run_wgsl_with(&["media"], &body, &padded, in_words + 1, out_words, &[(16, &pictures.texels), (17, &pictures.header)])
+}
+
 /// Said, and asserted: at most one item in a thousand outside its bound.
 fn report(name: &str, outside: usize, items: usize, cases: &[String]) {
     eprintln!("{name}: {outside} of {items} outside the bound");
@@ -95,7 +110,7 @@ fn the_walks_exponential_and_logarithm_are_the_processors() {
         xs.push((e, l));
         inputs.extend(bits(&[e, l]));
     }
-    let card = h.run_wgsl(&["media"], "outf(0u, md_exp(inf(0u))); outf(1u, md_ln(inf(1u)));", &inputs, 2, 2);
+    let card = run_media(&h, "outf(0u, md_exp(inf(0u))); outf(1u, md_ln(inf(1u)));", &inputs, 2, 2);
     let (mut worst_exp, mut worst_ln, mut apart, mut outside) = (0.0f32, 0.0f32, 0usize, 0usize);
     let mut cases = Vec::new();
     for (k, (e, l)) in xs.iter().enumerate() {
@@ -115,6 +130,47 @@ fn the_walks_exponential_and_logarithm_are_the_processors() {
     }
     eprintln!("exp and ln: {apart} of {N} not the processor's bits; worst {worst_exp} ulp (exp), {worst_ln} ulp (ln)");
     report("exp and ln within an ulp", outside, N, &cases);
+}
+
+/// The sine and cosine a turn reads, and the doorway's cosine-weighted
+/// draw (`sample_cosine_hemisphere`), within an ulp or two of the
+/// processor's.
+#[test]
+fn the_walks_sines_and_cosines_are_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(53, 59);
+    let mut inputs = Vec::new();
+    let mut items = Vec::new();
+    for _ in 0..N {
+        let t = std::f32::consts::TAU * rng.next_f32();
+        let u = Vec2 { x: rng.next_f32(), y: rng.next_f32() };
+        items.push((t, u));
+        inputs.extend(bits(&[t, u.x, u.y]));
+    }
+    let body = "let sc = md_sincos(inf(0u)); outf(0u, sc.x); outf(1u, sc.y);
+        let d = md_cosine_hemisphere(vec2<f32>(inf(1u), inf(2u))); outf(2u, d.x); outf(3u, d.y); outf(4u, d.z);";
+    let card = run_media(&h, body, &inputs, 3, 5);
+    let (mut outside, mut apart, mut draws_apart, mut worst) = (0usize, 0usize, 0usize, 0.0f32);
+    let mut cases = Vec::new();
+    for (k, (t, u)) in items.iter().enumerate() {
+        let want = [t.sin(), t.cos()];
+        let d = tequila_core::sampling::sample_cosine_hemisphere(*u);
+        let got = [f(&card, 5 * k), f(&card, 5 * k + 1)];
+        let dir = vec3(f(&card, 5 * k + 2), f(&card, 5 * k + 3), f(&card, 5 * k + 4));
+        let u_apart = ulps(got[0], want[0]).max(ulps(got[1], want[1]));
+        apart += (got != want) as usize;
+        draws_apart += (dir != d) as usize;
+        let dd = (dir - d).abs().max_component();
+        worst = worst.max(u_apart);
+        // Near a zero of either, an ulp of the argument is many of the
+        // result's.
+        if !((u_apart <= 2.0 || (got[0] - want[0]).abs().max((got[1] - want[1]).abs()) <= 1e-7) && dd <= 1e-6) {
+            outside += 1;
+            cases.push(format!("{k}: t {t}: card {got:?} cpu {want:?}; draw {u:?} card {dir:?} cpu {d:?}"));
+        }
+    }
+    eprintln!("sines and cosines: {apart} of {N} not the processor's bits, worst {worst} ulp; draws {draws_apart} not its bits");
+    report("sines and cosines within two ulps, draws within 1e-6", outside, N, &cases);
 }
 
 /// Henyey-Greenstein's phase function, and a turn drawn by it.
@@ -142,7 +198,7 @@ fn the_phase_function_and_its_turns_are_the_processors() {
         outf(0u, md_phase(inf(1u), g));
         let d = md_sample_phase(vec3<f32>(inf(2u), inf(3u), inf(4u)), g, vec2<f32>(inf(5u), inf(6u)));
         outf(1u, d.x); outf(2u, d.y); outf(3u, d.z);";
-    let card = h.run_wgsl(&["media"], body, &inputs, 7, 4);
+    let card = run_media(&h, body, &inputs, 7, 4);
     let (mut outside, mut worst_p, mut worst_d) = (0usize, 0.0f32, 0.0f32);
     let mut cases = Vec::new();
     for (k, (g, cos, forward, u)) in items.iter().enumerate() {
@@ -198,7 +254,7 @@ fn a_walks_flight_is_the_processors() {
         outf(4u, kept.x); outf(5u, kept.y); outf(6u, kept.z);
         outf(7u, md_plain_density(fl.chance, sigma, kept, true));
         outf(8u, md_plain_density(fl.chance, sigma, kept, false));";
-    let card = h.run_wgsl(&["media"], body, &inputs, 13, 9);
+    let card = run_media(&h, body, &inputs, 13, 9);
     let (mut outside, mut chances_apart) = (0usize, 0usize);
     let mut cases = Vec::new();
     for (k, (throughput, albedo, sigma, stretch, pick, along, t)) in items.iter().enumerate() {
@@ -227,6 +283,110 @@ fn a_walks_flight_is_the_processors() {
     }
     eprintln!("flights: {chances_apart} of {N} chances not the processor's bits");
     report("flights within 1e-6, densities within 1e-5", outside, N, &cases);
+}
+
+/// A walk under a surface guided back towards where it came in
+/// (`WalkGuide`): the guide made for a medium (its diffusion length, its
+/// logarithm, its share of guided turns), the first flight's look ahead, a
+/// turn guided or by the phase function - across to a surface opposite or
+/// not - on the open stream, and the flight after it: its stretch, and its
+/// density by every way it could have been drawn, colliding or flying
+/// past.
+#[test]
+fn a_guided_walk_is_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(37, 41);
+    let mut inputs = Vec::new();
+    let mut items = Vec::new();
+    while items.len() < N {
+        let colour = Spectrum { r: rng.next_f32(), g: rng.next_f32(), b: rng.next_f32() };
+        let radius = Spectrum { r: 0.001 + 0.2 * rng.next_f32(), g: 0.001 + 0.2 * rng.next_f32(), b: 0.001 + 0.2 * rng.next_f32() };
+        let g = match items.len() % 4 {
+            0 => 0.0,
+            1 => 0.9 * (2.0 * rng.next_f32() - 1.0),
+            2 => 0.3 * (2.0 * rng.next_f32() - 1.0),
+            _ => 0.97,
+        };
+        let material = tequila_materials::openpbr::Material { subsurface_weight: 1.0, subsurface_color: colour, subsurface_radius: radius, subsurface_scatter_anisotropy: g, ..Default::default() };
+        let Some(walk) = material.subsurface_medium() else { continue };
+        let entry = unit(&mut rng) * 0.1;
+        let normal = unit(&mut rng);
+        let at = entry - normal * (0.05 * rng.next_f32()) + unit(&mut rng) * 0.02 * rng.next_f32();
+        let forward = unit(&mut rng);
+        let opposite = if rng.next_f32() < 0.5 { Some(0.01 + 0.05 * rng.next_f32()) } else { None };
+        let pixel = [rng.next_u32() % 4096, rng.next_u32() % 4096, rng.next_u32() % 1024, rng.next_u32() % 65536];
+        let chance = {
+            let c = Spectrum { r: rng.next_f32(), g: rng.next_f32(), b: rng.next_f32() };
+            let t = c.r + c.g + c.b;
+            Spectrum { r: c.r / t, g: c.g / t, b: c.b / t }
+        };
+        let t = 0.05 * rng.next_f32() * rng.next_f32();
+        items.push((walk, entry, normal, at, forward, opposite, pixel, chance, t));
+        inputs.extend(bits(&[walk.albedo.r, walk.albedo.g, walk.albedo.b, walk.anisotropy, walk.extinction.r, walk.extinction.g, walk.extinction.b]));
+        inputs.extend(bits(&[entry.x, entry.y, entry.z, normal.x, normal.y, normal.z, at.x, at.y, at.z, forward.x, forward.y, forward.z, opposite.unwrap_or(-1.0)]));
+        inputs.extend_from_slice(&pixel);
+        inputs.extend(bits(&[chance.r, chance.g, chance.b, t]));
+    }
+    let body = "let albedo = vec3<f32>(inf(0u), inf(1u), inf(2u));
+        let g = inf(3u);
+        let sigma = vec3<f32>(inf(4u), inf(5u), inf(6u));
+        var guide = md_guide_new(7u, vec3<f32>(inf(7u), inf(8u), inf(9u)), vec3<f32>(inf(10u), inf(11u), inf(12u)), albedo, g);
+        outf(0u, select(0.0, 1.0, guide.solid != NO_WALK));
+        outf(1u, guide.diffusion); outf(2u, guide.phase_log); outf(3u, guide.share);
+        outf(4u, md_guide_look(sigma));
+        if (guide.solid != NO_WALK) {
+            guide.opposite = inf(19u);
+            var s = sampler_new(inp(20u), inp(21u), inp(22u), inp(23u));
+            let next = md_guide_turn(&guide, vec3<f32>(inf(13u), inf(14u), inf(15u)), vec3<f32>(inf(16u), inf(17u), inf(18u)), g, &s);
+            outf(5u, next.x); outf(6u, next.y); outf(7u, next.z);
+            outf(8u, md_guide_stretch(guide));
+            let chance = vec3<f32>(inf(24u), inf(25u), inf(26u));
+            outf(9u, md_guided_density(guide, chance, sigma, inf(27u), true));
+            outf(10u, md_guided_density(guide, chance, sigma, inf(27u), false));
+            outf(11u, select(0.0, 1.0, guide.guided));
+            outf(12u, select(0.0, 1.0, guide.backward));
+            outf(13u, sampler_next_unstructured(&s));
+        }";
+    let card = run_media(&h, body, &inputs, 28, 14);
+    let (mut outside, mut guided, mut made, mut backward, mut draws_apart) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut cases = Vec::new();
+    for (k, (walk, entry, normal, at, forward, opposite, pixel, chance, t)) in items.iter().enumerate() {
+        let c: Vec<f32> = card[14 * k..14 * k + 14].iter().map(|b| f32::from_bits(*b)).collect();
+        let look = walk_twins::Guide::look(walk.extinction);
+        let mut ok = near(c[4], look, 1e-6, 0.0);
+        let guide = walk_twins::Guide::new(7, *entry, *normal, walk);
+        ok &= (c[0] == 1.0) == guide.is_some();
+        if let Some(mut guide) = guide {
+            made += 1;
+            let (diffusion, phase_log, share) = guide.parts();
+            ok &= near(c[1], diffusion, 1e-5, 0.0) && near(c[2], phase_log, 1e-5, 0.0) && near(c[3], share, 1e-5, 0.0);
+            guide.set_opposite(*opposite);
+            let mut sampler = Sampler::new(pixel[0], pixel[1], pixel[2], pixel[3]);
+            let next = guide.turn(*at, *forward, walk.anisotropy, &mut sampler);
+            let following = sampler.next_unstructured();
+            if c[13].to_bits() != following.to_bits() {
+                draws_apart += 1;
+            }
+            let (was_guided, was_backward, ..) = guide.last_turn().expect("a turn");
+            guided += was_guided as usize;
+            backward += was_backward as usize;
+            ok &= (c[11] == 1.0) == was_guided && (c[12] == 1.0) == was_backward;
+            ok &= (vec3(c[5], c[6], c[7]) - next).abs().max_component() <= 1e-4;
+            ok &= near(c[8], guide.stretch(), 1e-4, 0.0);
+            let collided = guide.density(*chance, walk.extinction, *t, true).expect("a turn");
+            let past = guide.density(*chance, walk.extinction, *t, false).expect("a turn");
+            ok &= near(c[9], collided, 1e-4, 1e-30) && near(c[10], past, 1e-4, 1e-30);
+            if !ok {
+                cases.push(format!("{k}: card {c:?}; cpu {diffusion} {phase_log} {share} {next:?} {} {collided} {past}", guide.stretch()));
+            }
+        } else if !ok {
+            cases.push(format!("{k}: card {c:?}; cpu no guide, look {look}"));
+        }
+        outside += !ok as usize;
+    }
+    eprintln!("guided walks: {made} guides of {N}, {guided} turns guided, {backward} across; {draws_apart} left the sampler elsewhere");
+    assert_eq!(draws_apart, 0, "the card draws as many numbers as the processor");
+    report("guides, turns and their densities within 1e-4", outside, N, &cases);
 }
 
 /// What `scattering_volumes` puts in a test kernel's way: the renderer,
@@ -284,6 +444,7 @@ fn transmittance_test(@builtin(global_invocation_id) id: vec3<u32>) {
     let a = frame_samples[3u * k];
     let b = frame_samples[3u * k + 1u];
     let c = frame_samples[3u * k + 2u];
+    cy_zero = bitcast<u32>(c.w);
     let through = medium_transmittance(a.xyz, b.xyz, a.w, bitcast<u32>(b.w), c.xyz);
     frame_samples[3u * k] = vec4<f32>(through, 0.0);
 }
@@ -339,6 +500,7 @@ fn medium_light_test(@builtin(global_invocation_id) id: vec3<u32>) {
     let a = frame_samples[4u * k];
     let b = frame_samples[4u * k + 1u];
     let c = frame_samples[4u * k + 2u];
+    cy_zero = bitcast<u32>(c.w);
     let d = bitcast<vec4<u32>>(frame_samples[4u * k + 3u]);
     var s = sampler_new(d.x, d.y, d.z, d.w & 0xFFFFu);
     sampler_begin_bounce(&s, d.w >> 16u);
