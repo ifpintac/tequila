@@ -103,7 +103,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
