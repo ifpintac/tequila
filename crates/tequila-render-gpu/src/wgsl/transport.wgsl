@@ -2309,13 +2309,15 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             // index, and is the hero's alone (ic:2172-2193).
             var contribution: vec4<f32>;
             if (disperses && !(*st).alone) {
+                // The sky's, the lamp's, the glowing triangle's, in that
+                // order, from one place.
                 let alone = spectral_hero_alone((*st).tp4);
-                let sky = cy_exact3(direct.values[0] * direct.scales[0]);
-                let lamp = cy_exact3(direct.values[1] * direct.scales[1]);
-                let glow = cy_exact3(direct.values[2] * direct.scales[2]);
-                contribution = cy_exact4(select((*st).tp4, alone, (direct.through & 1u) != 0u) * spectral_unbounded(sky))
-                    + cy_exact4(select((*st).tp4, alone, (direct.through & 2u) != 0u) * spectral_unbounded(lamp))
-                    + cy_exact4(select((*st).tp4, alone, (direct.through & 4u) != 0u) * spectral_unbounded(glow));
+                contribution = vec4<f32>(0.0);
+                for (var k = 0u; k < 3u; k++) {
+                    let lit = cy_exact3(direct.values[k] * direct.scales[k]);
+                    let by = select((*st).tp4, alone, (direct.through & (1u << k)) != 0u);
+                    contribution = contribution + cy_exact4(by * spectral_unbounded(lit));
+                }
             } else {
                 contribution = (*st).tp4 * spectral_unbounded(direct.total);
             }

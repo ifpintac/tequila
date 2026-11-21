@@ -184,13 +184,22 @@ fn spectral_sigmoid_of(rgb_in: vec3<f32>) -> vec3<f32> {
     let y = cy_div(cy_exact(rgb[(largest + 2u) % 3u] * steps), z);
     let xi = min(u32(x), SPECTRAL_RESOLUTION - 2u);
     let yi = min(u32(y), SPECTRAL_RESOLUTION - 2u);
-    // The last brightness at or below z among the 62 inner ones.
-    var zi = 0u;
-    for (var s = 1u; s < SPECTRAL_RESOLUTION - 1u; s++) {
-        if (spec_word(SPEC_SCALE + s) <= z) {
-            zi = s;
+    // How many of the 62 inner brightnesses are at or below z
+    // (partition_point), by halves.
+    var lo = 1u;
+    var hi = SPECTRAL_RESOLUTION - 1u;
+    loop {
+        if (lo >= hi) {
+            break;
+        }
+        let mid = (lo + hi) / 2u;
+        if (spec_word(SPEC_SCALE + mid) <= z) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
         }
     }
+    let zi = lo - 1u;
     let dx = x - f32(xi);
     let dy = y - f32(yi);
     let s0 = spec_word(SPEC_SCALE + zi);

@@ -292,13 +292,24 @@ fn openpbr_stack_transmittance(b: OpenPbr, coat_average: f32, coat_weight: f32, 
     return clamp(total / 16.0, 0.0, 1.0);
 }
 
+// The coat and a flake wear no film (OpenPbrBsdf::build): their lobes as
+// read with the film a constant nought, so the film's arithmetic is built
+// only into the metal's and the interface's arms.
+fn openpbr_bare_specular(l: Specular) -> Specular {
+    return Specular(l.distribution, l.ior, l.tint, l.weight, vec4<f32>(0.0));
+}
+
+fn openpbr_bare_conductor(l: Conductor) -> Conductor {
+    return Conductor(l.distribution, l.n, l.k, l.tint, vec4<f32>(0.0));
+}
+
 // A lobe's albedo seen from `wo`, as its own Bsdf::albedo gives it (a
 // flake's in the shading frame, as face_on_probabilities reads it).
 fn openpbr_lobe_albedo(b: OpenPbr, slot: u32, wo: vec3<f32>) -> vec3<f32> {
     switch slot {
         case LOBE_FUZZ: { return sheen_albedo(b.fuzz, wo); }
         case LOBE_COAT: { return b.coat.tint * specular_directional_albedo(b.coat, wo); }
-        case LOBE_FLAKE: { return conductor_albedo(b.flake, wo); }
+        case LOBE_FLAKE: { return conductor_albedo(openpbr_bare_conductor(b.flake), wo); }
         case LOBE_METAL: { return conductor_albedo(b.metal, wo); }
         case LOBE_SPECULAR: { return b.specular.tint * specular_directional_albedo(b.specular, wo); }
         case LOBE_TRANSMISSION: { return transmission_albedo(b.transmission); }
@@ -312,7 +323,7 @@ fn openpbr_seen_albedo(b: OpenPbr, slot: u32, wo: vec3<f32>) -> vec3<f32> {
     if (FEATURE_FLAKES && slot == LOBE_FLAKE) {
         let local = to_local(b.flake_frame, wo);
         if (local.z > 0.0) {
-            return conductor_albedo(b.flake, local);
+            return conductor_albedo(openpbr_bare_conductor(b.flake), local);
         }
         return vec3<f32>(0.0);
     }
@@ -329,7 +340,7 @@ fn openpbr_flake_eval(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
     if (!(o.z > 0.0 && i.z > 0.0) || wi.z <= 1e-6) {
         return vec3<f32>(0.0);
     }
-    return conductor_eval(b.flake, o, i) * (i.z / wi.z);
+    return conductor_eval(openpbr_bare_conductor(b.flake), o, i) * (i.z / wi.z);
 }
 
 fn openpbr_flake_pdf(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
@@ -350,7 +361,7 @@ fn openpbr_flake_draw(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeS
     if (local.z <= 0.0) {
         return no_sample();
     }
-    var s = conductor_draw(b.flake, local, u, uc);
+    var s = conductor_draw(openpbr_bare_conductor(b.flake), local, u, uc);
     if (!s.ok) {
         return s;
     }
@@ -368,7 +379,7 @@ fn openpbr_flake_draw(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeS
 fn openpbr_lobe_eval(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {
     switch slot {
         case LOBE_FUZZ: { return sheen_eval(b.fuzz, wo, wi); }
-        case LOBE_COAT: { return specular_eval(b.coat, wo, wi); }
+        case LOBE_COAT: { return specular_eval(openpbr_bare_specular(b.coat), wo, wi); }
         case LOBE_FLAKE: {
             if (FEATURE_FLAKES) {
                 return openpbr_flake_eval(b, wo, wi);
@@ -405,7 +416,7 @@ fn openpbr_lobe_pdf(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> f32 
 fn openpbr_lobe_draw(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     switch slot {
         case LOBE_FUZZ: { return sheen_draw(b.fuzz, wo, u); }
-        case LOBE_COAT: { return specular_draw(b.coat, wo, u, uc); }
+        case LOBE_COAT: { return specular_draw(openpbr_bare_specular(b.coat), wo, u, uc); }
         case LOBE_FLAKE: {
             if (FEATURE_FLAKES) {
                 return openpbr_flake_draw(b, wo, u, uc);

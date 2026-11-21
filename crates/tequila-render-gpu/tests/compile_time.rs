@@ -644,3 +644,52 @@ fn what_the_options_cost_to_compile() {
         eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
     }
 }
+
+/// What the surface layers' port costs the kernel's cold compile (`docs/07`
+/// R3, tier A's flakes and thin film, tier B's spectral mode and
+/// dispersion): the kernel as it is, as it was before the port (the joined
+/// source in `TEQUILA_KERNEL_BEFORE`, when given), the grey product's
+/// variant both ways, and the kernel with each of the port's parts left out
+/// (its constant made a plain false), interleaved, `TEQUILA_COMPILE_ROUNDS`
+/// rounds (3); the medians at the end. Run by hand: `cargo test --test
+/// compile_time -- --ignored --nocapture surface_layers`.
+#[test]
+#[ignore]
+fn what_the_surface_layers_cost_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("before the port".to_string(), KernelFeatures::ALL, Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
+    }
+    for part in ["FEATURE_FLAKES", "FEATURE_FILM", "FEATURE_DISPERSION", "FEATURE_SPECTRAL"] {
+        let from = format!("override {part}: bool = true;");
+        if !tequila_render_gpu::shader::source("transport").contains(&from) {
+            continue;
+        }
+        cases.push((
+            format!("without {}", part.trim_start_matches("FEATURE_").to_ascii_lowercase()),
+            KernelFeatures::ALL,
+            Box::new(move |s: String| s.replace(&from, &format!("const {part}: bool = false;"))),
+        ));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
