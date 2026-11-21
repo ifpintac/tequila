@@ -136,7 +136,10 @@ fn frame_parts_are_the_cameras() {
             "all_round" => F::EQUIRECTANGULAR,
             "shifted_lens" => F::SHIFT,
             "soft_filter" | "wide_box" => F::FILTER,
-            "dispersion_spectral" | "spectral_floor" | "spectral_lamps" => F::SPECTRAL,
+            // A render by wavelength: Spectral On whatever the scene; Auto
+            // only where it disperses, which the grey product's renderer,
+            // the one asked here, does not.
+            "spectral_lamps" => F::SPECTRAL,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());
