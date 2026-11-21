@@ -60,3 +60,12 @@ override FEATURE_TEXTURES: bool = true;
 override FEATURE_ATTRIBUTES: bool = true;
 // Rounded edges: the bevel's probes at the surface a path meets first.
 override FEATURE_BEVEL: bool = true;
+// A background colour or backplate past the parts, along a specular chain.
+override FEATURE_BACKGROUND: bool = true;
+// The backplate's picture, read at the film point.
+override FEATURE_BACKPLATE: bool = true;
+// The thin lens: a camera ray from a point on the opening (a frame's part:
+// the camera's, which the scene's records do not hold).
+override FEATURE_THIN_LENS: bool = true;
+// An opening of blades rather than a round one (a frame's part).
+override FEATURE_BLADES: bool = true;

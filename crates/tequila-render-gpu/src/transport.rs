@@ -494,6 +494,9 @@ pub struct GpuRenderer {
     /// [`SCENE_BACKPLATE`] (none for the environment), and the colour.
     background_flags: u32,
     background: [f32; 3],
+    /// The kernel widened to the frame's parts a frame asked for that it
+    /// left out ([`KernelFeatures::of_frame`]), each built once.
+    widened: std::sync::Mutex<Vec<(KernelFeatures, wgpu::ComputePipeline)>>,
     /// The parts of the kernel the scene reaches ([`KernelFeatures::of`]),
     /// and the parts of the one `pipeline` was built with, which holds
     /// them all.
@@ -856,6 +859,11 @@ impl GpuRenderer {
         });
         let glass_scene = GlassScene::of(scene);
         let cut_programs = programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0);
+        let background_flags = match &scene.background {
+            Background::Environment => 0,
+            Background::Color(_) => SCENE_BACKGROUND_COLOUR,
+            Background::Backplate { .. } => SCENE_BACKPLATE,
+        };
         let features = KernelFeatures::of(&SceneRecords {
             materials: &records,
             programs: &programs,
@@ -863,7 +871,7 @@ impl GpuRenderer {
             meshes: &uploaded.mesh_records,
             lamps: lights.count,
             emitters: has_emitters,
-            glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
+            glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 } | background_flags,
         });
         let started = std::time::Instant::now();
         let (kernel, pipeline, aside) = match choice {
@@ -943,11 +951,8 @@ impl GpuRenderer {
             kernel,
             kernel_seconds,
             aside,
-            background_flags: match &scene.background {
-                Background::Environment => 0,
-                Background::Color(_) => SCENE_BACKGROUND_COLOUR,
-                Background::Backplate { .. } => SCENE_BACKPLATE,
-            },
+            background_flags,
+            widened: std::sync::Mutex::new(Vec::new()),
             background: match &scene.background {
                 Background::Color(c) => [c.r, c.g, c.b],
                 _ => [0.0; 3],
@@ -972,6 +977,30 @@ impl GpuRenderer {
                 let _ = thread.join();
             }
         }
+    }
+
+    /// The parts of the kernel a frame of `settings` at `width` by `height`
+    /// reaches through its camera and film ([`KernelFeatures::of_frame`]).
+    pub fn frame_features(&self, settings: &FrameSettings, width: usize, height: usize) -> KernelFeatures {
+        KernelFeatures::of_frame(self.params(settings, width, height, 0, 1).camera_flags)
+    }
+
+    /// The pipeline a pass that reaches the frame's parts `frame` renders
+    /// with: the one it has, where that keeps them; else that kernel widened
+    /// to them, built the first time a frame asks and kept.
+    fn pipeline_for(&self, frame: KernelFeatures) -> wgpu::ComputePipeline {
+        let kernel = self.kernel_now();
+        if kernel.contains(frame) {
+            return self.pipeline_now().clone();
+        }
+        let wide = kernel | frame;
+        let mut widened = self.widened.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((_, pipeline)) = widened.iter().find(|(k, _)| *k == wide) {
+            return pipeline.clone();
+        }
+        let pipeline = transport_pipeline(&self.gpu.device, &self.layout, None, wide);
+        widened.push((wide, pipeline.clone()));
+        pipeline
     }
 
     /// The pipeline the next pass renders with.
@@ -1207,8 +1236,9 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: pixel_buffer.as_entire_binding() },
             ],
         });
-        // Taken up at the pass's start, so one pass is one kernel's.
-        let pipeline = self.pipeline_now();
+        // Taken up at the pass's start, so one pass is one kernel's; widened
+        // to the parts this frame's camera reaches that it left out.
+        let pipeline = &self.pipeline_for(self.frame_features(settings, width, height));
         // The most a dispatch may do: every pixel, `batch` samples each.
         let most = pixels as u64 * batch as u64;
         let mut done = 0u32;

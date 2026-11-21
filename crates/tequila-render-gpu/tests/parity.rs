@@ -35,7 +35,8 @@ static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// should be one picture to the bit. How many pixels are apart, and by how
 /// much; asserted at the end of the shot, once its parity is said.
 fn same_as_the_whole_kernel(name: &str, renderer: &mut GpuRenderer, card: &Framebuffer, settings: &FrameSettings, samples: u32) -> usize {
-    let variant = renderer.kernel;
+    // The scene's variant, widened to what the frame's camera reaches.
+    let variant = renderer.kernel | renderer.frame_features(settings, card.width, card.height);
     {
         let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         renderer.set_kernel(KernelFeatures::ALL);

@@ -879,8 +879,8 @@ var<private> camera_film: vec2<f32>;
 // environment.
 fn past_the_scene(specular_chain: bool, camera_view: bool, in_floor: bool, direction: vec3<f32>) -> vec3<f32> {
     let background = frame.glass_flags & (SCENE_BACKGROUND_COLOUR | SCENE_BACKPLATE);
-    if (specular_chain && background != 0u) {
-        if ((background & SCENE_BACKPLATE) != 0u) {
+    if (FEATURE_BACKGROUND && specular_chain && background != 0u) {
+        if (FEATURE_BACKPLATE && (background & SCENE_BACKPLATE) != 0u) {
             return plate_bilinear(select(camera_film, vec2<f32>(0.0), in_floor));
         }
         return frame.background;
@@ -2132,7 +2132,7 @@ fn cy_exact2(v: vec2<f32>) -> vec2<f32> {
 // blades (a wedge by u.x, then a point in its triangle, folded),
 // sample_uniform_disk_concentric for a round one (sampling.rs).
 fn aperture_point(u: vec2<f32>) -> vec2<f32> {
-    if ((frame.camera_flags & CAMERA_BLADED) != 0u) {
+    if (FEATURE_BLADES && (frame.camera_flags & CAMERA_BLADED) != 0u) {
         let blades = f32(frame.aperture_blades);
         let along = cy_exact(u.x * blades);
         let wedge = min(floor(along), blades - 1.0);
@@ -2156,13 +2156,13 @@ fn aperture_point(u: vec2<f32>) -> vec2<f32> {
     var theta: f32;
     if (abs(o.x) > abs(o.y)) {
         r = o.x;
-        theta = (CY_PI / 4.0) * cy_div(o.y, o.x);
+        theta = cy_exact((CY_PI / 4.0) * cy_div(o.y, o.x));
     } else {
         r = o.y;
         theta = (CY_PI / 2.0) - cy_exact((CY_PI / 4.0) * cy_div(o.x, o.y));
     }
     let sc = cy_sincos(theta);
-    return vec2<f32>(r * sc.y, r * sc.x);
+    return cy_exact2(vec2<f32>(r * sc.y, r * sc.x));
 }
 
 struct CameraRay {
@@ -2181,9 +2181,9 @@ struct CameraRay {
 fn camera_ray(film: vec2<f32>, s: ptr<function, Sampler>) -> CameraRay {
     let sx = 2.0 * film.x - 1.0;
     let sy = 1.0 - 2.0 * film.y;
-    if ((frame.camera_flags & CAMERA_THIN_LENS) != 0u) {
-        let d = vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0);
-        let lens = aperture_point(sampler_lens(s)) * frame.lens_radius;
+    if (FEATURE_THIN_LENS && (frame.camera_flags & CAMERA_THIN_LENS) != 0u) {
+        let d = vec3<f32>(cy_exact(sx * frame.half_width), cy_exact(sy * frame.half_height), -1.0);
+        let lens = cy_exact2(aperture_point(sampler_lens(s)) * frame.lens_radius);
         let t_focus = cy_div(frame.focus_distance, -d.z);
         let start = vec3<f32>(lens, 0.0);
         let towards = normalized(cy_exact3(d * t_focus) - start);
@@ -2213,6 +2213,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     let j = sampler_pixel_jitter(&s);
     let film = vec2<f32>((f32(x) + j.x) / f32(frame.width), (f32(y) + j.y) / f32(frame.height));
     camera_film = film;
+    // cy_exact's zero from a word the compiler cannot see is one (the
+    // frame's mode never sets its top bit): a program sets it too, but a
+    // variant without programs would otherwise know it, and the camera's
+    // arithmetic would fuse there as it does not in the whole kernel.
+    cy_zero = frame.mode & 0x80000000u;
     let ray = camera_ray(film, &s);
 
     var st = path_start(ray.origin, ray.direction, frame.max_bounces, false, false);

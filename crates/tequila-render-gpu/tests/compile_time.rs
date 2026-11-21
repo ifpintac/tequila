@@ -523,7 +523,8 @@ fn what_the_camera_costs_to_compile() {
     let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
     // Each part of the port and what leaves it out.
     let parts: &[(&str, &[(&str, &str)])] = &[
-        ("no background colour or backplate", &[("if (specular_chain && background != 0u) {", "if (false) {")]),
+        ("no background colour or backplate", &[("if (FEATURE_BACKGROUND && specular_chain && background != 0u) {", "if (false) {")]),
+        ("no thin lens", &[("if (FEATURE_THIN_LENS && (frame.camera_flags & CAMERA_THIN_LENS) != 0u) {", "if (false) {")]),
     ];
     let mut cases: Vec<(String, Box<dyn Fn(String) -> String>)> = vec![("as it is".to_string(), Box::new(|s| s))];
     if let Some(before) = before {
