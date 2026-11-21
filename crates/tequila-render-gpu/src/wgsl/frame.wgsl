@@ -171,6 +171,13 @@ const LAMPS_FOR_REFLECTIONS: u32 = 8u;
 // Shadow rays pass all clear glass and there is some, so a bounce that sees
 // meets glass that bends light as glass (the integrator's meets_glass).
 const LAMPS_MEETS_GLASS: u32 = 16u;
+// Some light passes a part its shadow rays pass, which a path stopping at
+// the part meets there (the integrator's passes_parts); some part casts no
+// shadow (SceneSnapshot::has_shadowless_parts); the lights are not sampled
+// directly (IntegratorConfig::direct_lighting off).
+const LAMPS_PASSES_PARTS: u32 = 32u;
+const LAMPS_SHADOWLESS: u32 = 64u;
+const LAMPS_UNSAMPLED: u32 = 128u;
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;
 // Two vec4s a sample: radiance (and in w, 1 if the camera ray met

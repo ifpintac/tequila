@@ -9,8 +9,8 @@
 // spot's cosines, a sun's disc) comes worked out, so it is the processor's
 // number. No bindings: lamps.wgsl reads the scene's lamps.
 //
-// An IES lamp is not ported: its record is there for the selection, and its
-// light sample is none (transport.rs's lamp_limits says so).
+// An IES lamp's light sample is lamps.wgsl's (lamp_sample), which reads its
+// profile from the links buffer: none here.
 //#include onb
 
 const LT_PI: f32 = 3.14159265358979323846;
@@ -38,6 +38,9 @@ const LF_SPREAD_FULL: u32 = 1024u;
 const LF_RECTANGLE: u32 = 2048u;
 const LF_LINKS_ONLY: u32 = 4096u;
 const LF_LINKS_ALL_BUT: u32 = 8192u;
+const LF_SHADOW_LINKS_ONLY: u32 = 16384u;
+const LF_SHADOW_LINKS_ALL_BUT: u32 = 32768u;
+const LF_IES: u32 = 65536u;
 
 // lights.rs's GpuLight, member for member (tests/layouts.rs holds the two
 // to one layout).
@@ -78,11 +81,12 @@ struct GpuLight {
     alias_p: f32,
     alias_alt: u32,
     leaf: u32,
-    // Its light links: where its instances start in the links buffer, and
-    // how many (LF_LINKS_ONLY or LF_LINKS_ALL_BUT say which way).
+    // Its lists in the links buffer, from `links`: its light links' instances
+    // (LF_LINKS_ONLY or LF_LINKS_ALL_BUT say which way), then its shadow
+    // links' (LF_SHADOW_LINKS_ONLY or LF_SHADOW_LINKS_ALL_BUT).
     links: u32,
     link_count: u32,
-    _pad: u32,
+    shadow_link_count: u32,
 };
 
 // lights.rs's GpuLightNode: LightNode as LightSet::hierarchy shows it.

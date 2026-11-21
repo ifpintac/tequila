@@ -80,3 +80,15 @@ override FEATURE_ORTHOGRAPHIC: bool = true;
 override FEATURE_EQUIRECTANGULAR: bool = true;
 // A pixel filter other than one pixel's box (a frame's part: the film's).
 override FEATURE_FILTER: bool = true;
+// A part some kind of ray does not see - passed by that ray, and by the
+// camera's coverage - or held out, a hole where the camera sees it.
+override FEATURE_UNSEEN: bool = true;
+// A lamp's shadow links: the parts they leave out let its light by, so its
+// shadow rays walk the parts rather than ask whether any is in the way.
+override FEATURE_SHADOW_LINKS: bool = true;
+// The light past a part its shadow rays pass, met where a path stops at the
+// part (a part that casts no shadow, a lamp that casts none or whose shadow
+// links leave parts out), and a floor's nearness measured past such parts.
+override FEATURE_PASSES_PARTS: bool = true;
+// An IES lamp: its profile read towards the way its light leaves it.
+override FEATURE_IES: bool = true;

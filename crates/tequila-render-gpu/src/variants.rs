@@ -46,9 +46,10 @@
 //! first frame that asks for one it left out, building the wider kernel
 //! once and keeping it for the frames after.
 
+use crate::lights::{FLAG_IES, FLAG_SHADOW_LINKS_ALL_BUT, FLAG_SHADOW_LINKS_ONLY};
 use crate::material::GpuMaterial;
 use crate::program::ProgramTable;
-use crate::scene::{GpuInstance, GpuMesh, NO_CATCHER, NO_DATA, NO_LIGHT};
+use crate::scene::{GpuInstance, GpuMesh, INSTANCE_CASTS_SHADOWS, INSTANCE_STAND_IN, INSTANCE_UNSEEN, NO_CATCHER, NO_DATA, NO_LIGHT};
 
 /// The parts of the transport kernel a pipeline keeps: the parts
 /// `features.wgsl` names, one bit each, and which of the interpreter's
@@ -112,9 +113,17 @@ impl KernelFeatures {
     pub const FILTER: KernelFeatures = part(20);
     /// A dome of a size: the sky from where a path is.
     pub const DOME: KernelFeatures = part(21);
+    /// A part some kind of ray does not see, or one held out.
+    pub const UNSEEN: KernelFeatures = part(22);
+    /// A lamp's shadow links.
+    pub const SHADOW_LINKS: KernelFeatures = part(23);
+    /// The light past a part its shadow rays pass.
+    pub const PASSES_PARTS: KernelFeatures = part(24);
+    /// An IES lamp's profile.
+    pub const IES: KernelFeatures = part(25);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 22] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 26] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -137,6 +146,10 @@ impl KernelFeatures {
         (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
         (Self::FILTER, "FEATURE_FILTER"),
         (Self::DOME, "FEATURE_DOME"),
+        (Self::UNSEEN, "FEATURE_UNSEEN"),
+        (Self::SHADOW_LINKS, "FEATURE_SHADOW_LINKS"),
+        (Self::PASSES_PARTS, "FEATURE_PASSES_PARTS"),
+        (Self::IES, "FEATURE_IES"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -248,6 +261,21 @@ impl KernelFeatures {
         keep(r.glass_flags & SCENE_BACKPLATE != 0, Self::BACKPLATE);
         // The dome's lookups (the frame's SCENE_FINITE_DOME).
         keep(r.glass_flags & SCENE_FINITE_DOME != 0, Self::DOME);
+        // A part some ray passes, or held out (an instance's flags).
+        keep(r.instances.iter().any(|i| i.flags & INSTANCE_UNSEEN != 0), Self::UNSEEN);
+        // shadow_through's walk for a lamp's shadow links (a lamp's flags).
+        keep(r.lamp_flags & (FLAG_SHADOW_LINKS_ONLY | FLAG_SHADOW_LINKS_ALL_BUT) != 0, Self::SHADOW_LINKS);
+        // light_past_part and nearness_at (the frame's LAMPS_PASSES_PARTS
+        // and LAMPS_SHADOWLESS): a part that casts no shadow and is no
+        // lamp's stand-in (an instance's flags), or a lamp a ray can meet
+        // that casts no shadow or has shadow links (a lamp's).
+        keep(
+            r.instances.iter().any(|i| i.flags & (INSTANCE_CASTS_SHADOWS | INSTANCE_STAND_IN) == 0) || r.lamps_met_past,
+            Self::PASSES_PARTS,
+        );
+        // lamp_sample's and light_irradiance_bound's IES lamp (a lamp's
+        // flags).
+        keep(r.lamp_flags & FLAG_IES != 0, Self::IES);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -325,6 +353,10 @@ pub struct SceneRecords<'a> {
     pub meshes: &'a [GpuMesh],
     /// How many lamps (`FrameParams::light_count`).
     pub lamps: u32,
+    /// Every lamp record's flags, or'd (`crate::lights::GpuLight::flags`).
+    pub lamp_flags: u32,
+    /// Whether some lamp a ray can meet casts no shadow or has shadow links.
+    pub lamps_met_past: bool,
     /// Whether the glowing triangles' tree has leaves.
     pub emitters: bool,
     /// `FrameParams::glass_flags` as the scene sets them, whatever the
@@ -480,7 +512,7 @@ mod tests {
     }
 
     fn features(materials: &[GpuMaterial], programs: &ProgramTable, instances: &[GpuInstance], meshes: &[GpuMesh], lamps: u32, emitters: bool, glass_flags: u32) -> KernelFeatures {
-        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, emitters, glass_flags })
+        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, lamp_flags: 0, lamps_met_past: false, emitters, glass_flags })
     }
 
     /// A program of one instruction `op` with `operands` operands, writing

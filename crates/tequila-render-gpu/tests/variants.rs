@@ -85,8 +85,21 @@ fn each_scene_keeps_the_parts_it_reaches() {
         ("glow_under_glass", F::GLASS | F::PANES | F::EMITTERS | F::GLOW),
         ("bevelled_product", F::BEVEL | F::LAMPS),
         ("driven_film", F::GLASS | F::PROGRAMS),
+        ("hidden_parts", F::UNSEEN | F::FLOOR | F::GLASS),
+        ("shadow_links", F::SHADOW_LINKS | F::PASSES_PARTS | F::LAMPS),
+        ("shadowless_parts", F::PASSES_PARTS | F::FLOOR | F::LAMPS | F::EMITTERS | F::GLOW),
+        ("floor_lamps", F::FLOOR | F::LAMPS | F::SHADOW_LINKS),
+        ("ies_lamps", F::IES | F::FLOOR | F::LAMPS),
     ] {
         assert!(of(name).contains(wanted), "{name} keeps {}, not all of {}", of(name).names(), wanted.names());
+    }
+    // Only the scenes with hidden parts, shadow links, parts that cast no
+    // shadow or IES lamps keep those parts.
+    for (name, features) in &chosen {
+        assert_eq!(features.contains(F::UNSEEN), *name == "hidden_parts", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::SHADOW_LINKS), ["shadow_links", "floor_lamps"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::IES), *name == "ies_lamps", "{name}: {}", features.names());
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
