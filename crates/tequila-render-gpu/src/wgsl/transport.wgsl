@@ -176,12 +176,14 @@ fn clamp_light(c: vec3<f32>, ceiling: f32) -> vec3<f32> {
     return c;
 }
 
-// light_ceiling.
-fn light_ceiling(specular_chain: bool, found_at: u32) -> f32 {
+// light_ceiling, raised by what Russian roulette scaled the path up by:
+// the light judged as it would be without the roulette. A ceiling at or
+// below zero stays none.
+fn light_ceiling(specular_chain: bool, found_at: u32, roulette: f32) -> f32 {
     if (found_at == 0u || specular_chain) {
-        return frame.clamp_direct;
+        return frame.clamp_direct * roulette;
     }
-    return frame.clamp_indirect;
+    return frame.clamp_indirect * roulette;
 }
 
 fn trace(origin: vec3<f32>, direction: vec3<f32>) -> RayIntersection {
@@ -810,6 +812,9 @@ struct PathState {
     seen: SeenFrom,
     ray: u32,
     eta_scale: f32,
+    // What Russian roulette has scaled the throughput up by (ic:878's
+    // roulette), which the clamps leave out.
+    roulette: f32,
     transmission_bounces: u32,
     through_glass: u32,
     pass_pdf: f32,
@@ -853,6 +858,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     }
     st.ray = select(RAY_CAMERA, RAY_GLOSSY, reflected || in_floor);
     st.eta_scale = 1.0;
+    st.roulette = 1.0;
     st.transmission_bounces = 0u;
     st.through_glass = GLASS_SOLID;
     st.pass_pdf = PDF_INFINITE;
@@ -1068,7 +1074,7 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection) -> vec3<f
     }
     let bounce = (*st).bounce;
     let found_at = select(bounce - 1u, 0u, bounce == 0u);
-    let ceiling = light_ceiling((*st).specular_chain, found_at);
+    let ceiling = light_ceiling((*st).specular_chain, found_at, (*st).roulette);
     let lamps = select(0u, frame.light_count, seen.valid);
     var sky = vec3<f32>(0.0);
     for (var i = 0u; i <= lamps; i++) {
@@ -1740,6 +1746,7 @@ fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> 
         return false;
     }
     (*st).throughput = throughput * (1.0 / q);
+    (*st).roulette = (*st).roulette / q;
     return true;
 }
 
@@ -1861,7 +1868,7 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             (*st).receiver_two_sided = transmissive;
         }
         let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);
-        (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce));
+        (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce, (*st).roulette));
     }
 
     // The split (ic:2267-2318): at the first plain glass the camera ray
@@ -2710,7 +2717,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);
                         if (any(glow != vec3<f32>(0.0))) {
                             let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at, st.roulette));
                         }
                         let t = st.throughput * transmittance_over(medium, hit.t);
                         st.throughput = t;
@@ -2858,7 +2865,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     }
                 }
                 let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
+                st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at, st.roulette));
             }
             var off: SplitOff;
             let shaded = shade_vertex(&st, &s, hit, surf, material, &off);
