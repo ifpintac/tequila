@@ -58,3 +58,5 @@ override FEATURE_TEXTURES: bool = true;
 // The measures at the mesh's corners, weighed at a hit (their arm is
 // OP_ATTRIBUTE's).
 override FEATURE_ATTRIBUTES: bool = true;
+// Rounded edges: the bevel's probes at the surface a path meets first.
+override FEATURE_BEVEL: bool = true;

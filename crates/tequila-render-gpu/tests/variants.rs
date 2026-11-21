@@ -59,6 +59,10 @@ fn each_scene_keeps_the_parts_it_reaches() {
     ] {
         assert_eq!(of(name), wanted, "{name}");
     }
+    // And only a scene that rounds its edges keeps the bevel.
+    for (name, features) in &chosen {
+        assert_eq!(features.contains(F::BEVEL), name.starts_with("bevel"), "{name}: {}", features.names());
+    }
     // At least what each is in the set for.
     for (name, wanted) in [
         ("bumped_product", F::PROGRAMS | F::TEXTURES | F::op(24)),
@@ -66,12 +70,14 @@ fn each_scene_keeps_the_parts_it_reaches() {
         ("glowing_screen", F::EMITTERS | F::GLOW),
         ("glowing_volume", F::GLASS | F::VOLUME_GLOW),
         ("glow_under_glass", F::GLASS | F::PANES | F::EMITTERS | F::GLOW),
+        ("bevelled_product", F::BEVEL | F::LAMPS),
+        ("driven_film", F::GLASS | F::PROGRAMS),
     ] {
         assert!(of(name).contains(wanted), "{name} keeps {}, not all of {}", of(name).names(), wanted.names());
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }

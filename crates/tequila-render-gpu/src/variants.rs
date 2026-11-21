@@ -83,9 +83,11 @@ impl KernelFeatures {
     /// The measures at the mesh's corners at a hit (the arm is
     /// `OP_ATTRIBUTE`'s).
     pub const ATTRIBUTES: KernelFeatures = part(11);
+    /// Rounded edges: the bevel's probes at the surface a path meets first.
+    pub const BEVEL: KernelFeatures = part(12);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 12] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 13] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -98,6 +100,7 @@ impl KernelFeatures {
         (Self::PROGRAMS, "FEATURE_PROGRAMS"),
         (Self::TEXTURES, "FEATURE_TEXTURES"),
         (Self::ATTRIBUTES, "FEATURE_ATTRIBUTES"),
+        (Self::BEVEL, "FEATURE_BEVEL"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -200,6 +203,9 @@ impl KernelFeatures {
         keep(any_header(PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED), Self::TEXTURES);
         // mesh_measures (a mesh's attribute_base).
         keep(r.meshes.iter().any(|m| m.attribute_base != NO_DATA), Self::ATTRIBUTES);
+        // bevel_normal (the frame's SCENE_BEVEL, which a material record's
+        // edge radius sets).
+        keep(any_material(&|m| m.edge_radius > 0.0), Self::BEVEL);
         f
     }
 

@@ -2402,7 +2402,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // their draws after the material's program (which draws none)
                 // and before the cutout's, the bump bending what they leave.
                 seg_rounded = seg_surf.shading;
-                if ((frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {
+                if (FEATURE_BEVEL && (frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {
                     seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);
                 }
                 material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
