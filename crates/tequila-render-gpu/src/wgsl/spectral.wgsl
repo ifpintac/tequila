@@ -101,7 +101,8 @@ fn spectral_begin(u: f32) {
     var r = vec4<f32>(0.0);
     var g = vec4<f32>(0.0);
     var b = vec4<f32>(0.0);
-    for (var i = 0u; i < 4u; i++) {
+    // A wavelength at a time, the count opaque to the compiler: one copy.
+    for (var i = 0u; i < (4u | cy_zero); i++) {
         let v = u + f32(i) * 0.25;
         let ui = v - trunc(v);
         let drawn = spectral_sample(ui);
@@ -133,17 +134,19 @@ fn spectral_sigmoid(x: f32) -> f32 {
     return 0.5 + cy_div(cy_exact(0.5 * x), cy_sqrt(1.0 + cy_exact(x * x)));
 }
 
-// Sigmoid::at, at each of the four wavelengths.
+// Sigmoid::at, at each of the four wavelengths: one sigmoid, a lane at a
+// time (its count opaque to the compiler, so it keeps one copy of it), each
+// lane written through a select.
 fn spectral_at(c: vec3<f32>) -> vec4<f32> {
     if (abs(c.z) > 3.40282347e38) {
         return vec4<f32>(spectral_sigmoid(c.z));
     }
     var out = vec4<f32>(0.0);
-    let u = spectral_u;
-    out.x = spectral_sigmoid(cy_exact(cy_exact(cy_exact(c.x * u.x) + c.y) * u.x) + c.z);
-    out.y = spectral_sigmoid(cy_exact(cy_exact(cy_exact(c.x * u.y) + c.y) * u.y) + c.z);
-    out.z = spectral_sigmoid(cy_exact(cy_exact(cy_exact(c.x * u.z) + c.y) * u.z) + c.z);
-    out.w = spectral_sigmoid(cy_exact(cy_exact(cy_exact(c.x * u.w) + c.y) * u.w) + c.z);
+    for (var lane = 0u; lane < (4u | cy_zero); lane++) {
+        let u = spectral_u[lane];
+        let v = spectral_sigmoid(cy_exact(cy_exact(cy_exact(c.x * u) + c.y) * u) + c.z);
+        out = select(out, vec4<f32>(v), vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(lane));
+    }
     return out;
 }
 
@@ -206,7 +209,8 @@ fn spectral_sigmoid_of(rgb_in: vec3<f32>) -> vec3<f32> {
     let s1 = spec_word(SPEC_SCALE + zi + 1u);
     let dz = clamp(cy_div(z - s0, s1 - s0), 0.0, 1.0);
     var c = vec3<f32>(0.0);
-    for (var n = 0u; n < 8u; n++) {
+    // The eight corners, their count opaque to the compiler: one copy.
+    for (var n = 0u; n < (8u | cy_zero); n++) {
         let kk = n >> 2u;
         let jj = (n >> 1u) & 1u;
         let ii = n & 1u;
@@ -219,32 +223,46 @@ fn spectral_sigmoid_of(rgb_in: vec3<f32>) -> vec3<f32> {
     return c;
 }
 
+// Wavelengths::reflectance (`unbounded` false) and ::unbounded (true) in
+// one, with one look-up of the table: a grey exactly flat; a light, or a
+// weight above one, brought to half at its largest channel, looked up there
+// and scaled back; a reflectance or transmittance looked up as it is. The
+// transport reads every colour through this, once at each place a colour
+// meets a path.
+fn spectral_of(rgb: vec3<f32>, unbounded: bool) -> vec4<f32> {
+    if (rgb.x == rgb.y && rgb.y == rgb.z) {
+        return vec4<f32>(rgb.x);
+    }
+    let largest = max(max(rgb.x, rgb.y), rgb.z);
+    let scaled = unbounded || largest > 1.0;
+    if (scaled && largest <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+    var x = rgb;
+    var scale = 1.0;
+    if (scaled) {
+        scale = cy_div(largest, SPECTRAL_UNBOUNDED_BRIGHTNESS);
+        let inverse = cy_div(1.0, scale);
+        x = cy_exact3(rgb * inverse);
+    }
+    let v = spectral_at(spectral_sigmoid_of(x));
+    if (scaled) {
+        return cy_exact4(v * scale);
+    }
+    return v;
+}
+
 // Wavelengths::reflectance: a reflectance, transmittance or weight at the
 // four wavelengths; a grey exactly flat, a weight above one as an
 // unbounded colour.
 fn spectral_reflectance(rgb: vec3<f32>) -> vec4<f32> {
-    if (rgb.x == rgb.y && rgb.y == rgb.z) {
-        return vec4<f32>(rgb.x);
-    }
-    if (max(max(rgb.x, rgb.y), rgb.z) > 1.0) {
-        return spectral_unbounded(rgb);
-    }
-    return spectral_at(spectral_sigmoid_of(rgb));
+    return spectral_of(rgb, false);
 }
 
 // Wavelengths::unbounded: a light, or anything with no ceiling, brought to
 // half at its largest channel, looked up there and scaled back.
 fn spectral_unbounded(rgb: vec3<f32>) -> vec4<f32> {
-    if (rgb.x == rgb.y && rgb.y == rgb.z) {
-        return vec4<f32>(rgb.x);
-    }
-    let largest = max(max(rgb.x, rgb.y), rgb.z);
-    if (largest <= 0.0) {
-        return vec4<f32>(0.0);
-    }
-    let scale = cy_div(largest, SPECTRAL_UNBOUNDED_BRIGHTNESS);
-    let inverse = cy_div(1.0, scale);
-    return cy_exact4(spectral_at(spectral_sigmoid_of(cy_exact3(rgb * inverse))) * scale);
+    return spectral_of(rgb, true);
 }
 
 fn cy_exact4(v: vec4<f32>) -> vec4<f32> {
