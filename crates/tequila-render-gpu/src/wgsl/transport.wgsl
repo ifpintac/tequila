@@ -1015,8 +1015,11 @@ fn light_past_part(st: ptr<function, PathState>, hit: RayIntersection, place: Su
         }
         let pdf = select((*st).prev_pdf, min((*st).prev_pdf, (*st).pass_pdf), walked.bent);
         if (!walked.stopped) {
-            let sky = past_the_scene(false, false, false, origin, direction);
-            let pdf_light = env_pdf_from(origin, direction, (*st).sky_facing);
+            // Each through cy_exact: the driver otherwise rounds what follows
+            // otherwise where a dome of a size is a part of the kernel than
+            // where it is not (tests/variants.rs's which_part_left_out_...).
+            let sky = cy_exact3(past_the_scene(false, false, false, origin, direction));
+            let pdf_light = cy_exact(env_pdf_from(origin, direction, (*st).sky_facing));
             (*st).radiance += clamp_light((*st).throughput * (sky * through * mis_power(pdf, pdf_light)), ceiling);
         } else if (FEATURE_EMITTERS) {
             let next = walked.stop;
