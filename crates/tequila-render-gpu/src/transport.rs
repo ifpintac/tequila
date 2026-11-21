@@ -353,6 +353,8 @@ struct GlassScene {
     transmits: bool,
     panes: bool,
     dispersion: bool,
+    // A medium a path walks: a subsurface, or glass whose volume scatters.
+    walks: bool,
     volume_maps: bool,
     folded_glass: bool,
     cutouts: bool,
@@ -386,6 +388,7 @@ impl GlassScene {
             transmits: scene.has_transmissive(),
             panes: scene.has_panes(),
             dispersion: scene.has_dispersion(),
+            walks: shaded.iter().any(|m| m.subsurface_weight != 0.0 || (m.transmission_weight > 0.0 && m.volume_scattering().is_some())),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
             cutouts: scene.has_cutouts(),
@@ -400,13 +403,27 @@ impl GlassScene {
     fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
         use tequila_render_core::settings::CausticsMethod;
         // Rendered by wavelength or not as the processor renders it
-        // (`GpuRenderer::spectral`): no sentence for either.
+        // (`GpuRenderer::spectral`): no sentence for either - but for the
+        // media below.
         let mut limits = Vec::new();
         if config.caustics {
             limits.push(match config.caustics_method {
                 CausticsMethod::Photons => "no caustic photons: the light glass and mirrors focus is left out",
                 CausticsMethod::Manifold => "no manifold caustics: a lamp's light through glass that bends it is left out",
             });
+        }
+        // By wavelength the processor walks each of the path's four in its
+        // own medium - the colour's sigmoid spectrum at the wavelength made
+        // an extinction and an albedo by walk_coefficients or
+        // volume_coefficients (integrator.rs's walk_medium) - where the
+        // card's walk carries three channels.
+        let spectral = match config.spectral {
+            tequila_render_core::settings::SpectralMode::Auto => self.dispersion,
+            tequila_render_core::settings::SpectralMode::On => true,
+            tequila_render_core::settings::SpectralMode::Off => false,
+        };
+        if spectral && self.walks {
+            limits.push("subsurface and volumes that scatter are walked in three channels, not at the path's wavelengths");
         }
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");

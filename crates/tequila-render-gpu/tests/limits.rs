@@ -118,6 +118,26 @@ fn dispersion_and_wavelengths_are_not_said() {
     assert!(glass_limits(&snapped(&grey), &on).is_empty(), "{:?}", glass_limits(&snapped(&grey), &on));
 }
 
+/// A walk through a medium is the card's as the processor's in an RGB
+/// render; by wavelength the processor walks each of the path's four in its
+/// own medium, where the card's walk carries three channels: said there,
+/// and only there.
+#[test]
+fn a_walk_by_wavelength_is_said() {
+    use tequila_render_core::settings::SpectralMode;
+    for name in ["subsurface_product", "scattering_volumes"] {
+        let document = parity::scene(name).expect("the parity set has it").document();
+        let scene = snapped(&document);
+        for spectral in [SpectralMode::Off, SpectralMode::Auto] {
+            let config = IntegratorConfig { spectral, ..document.lighting.config() };
+            assert!(glass_limits(&scene, &config).is_empty(), "{name}: {:?}", glass_limits(&scene, &config));
+        }
+        let on = IntegratorConfig { spectral: SpectralMode::On, ..document.lighting.config() };
+        let said = glass_limits(&scene, &on);
+        assert!(said.iter().any(|s| s.contains("walked in three channels")), "{name}: {said:?}");
+    }
+}
+
 /// A thin film is the card's as the processor's (`film.wgsl`): no limit.
 #[test]
 fn a_thin_film_is_not_said() {
