@@ -111,15 +111,10 @@ fn the_camera_and_the_film_are_said() {
     // Depth of field is the card's, round or bladed.
     assert!(said(Camera { f_number: 2.8, ..pinhole }, &config).is_empty());
     assert!(said(Camera { f_number: 2.8, aperture: tequila_render_core::camera::Aperture::Bladed { blades: 5, rotation: 0.3 }, ..pinhole }, &config).is_empty());
-    assert_eq!(
-        said(Camera { projection: Projection::Orthographic { scale: 1.0 }, ..pinhole }, &config),
-        vec!["an orthographic camera is not drawn: the card's camera is a perspective one"]
-    );
-    assert_eq!(
-        said(Camera { projection: Projection::Equirectangular, ..pinhole }, &config),
-        vec!["a 360-degree camera is not drawn: the card's camera is a perspective one"]
-    );
-    assert_eq!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.1, shift_y: 0.0 }, ..pinhole }, &config), vec!["a shifted lens is left unshifted"]);
+    // And every projection.
+    assert!(said(Camera { projection: Projection::Orthographic { scale: 1.0 }, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { projection: Projection::Equirectangular, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.1, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
     assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.0, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
     let soft = IntegratorConfig { pixel_filter: PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }, ..config.clone() };
     assert_eq!(said(pinhole, &soft), vec!["the pixel filter is one pixel's box"]);

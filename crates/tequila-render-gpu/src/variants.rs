@@ -38,7 +38,8 @@
 //! through (`emitters.wgsl`). `tests/variants.rs` finds which part, and
 //! which place of it, moves a picture.
 //!
-//! Some parts are a frame's, not a scene's: the camera's lens and blades.
+//! Some parts are a frame's, not a scene's: the camera's lens, its blades
+//! and its projections.
 //! The records cannot say which camera will look at a scene, so
 //! [`KernelFeatures::of`] keeps none of them, and a renderer widens its
 //! kernel to the ones a frame reaches ([`KernelFeatures::of_frame`]) at the
@@ -101,9 +102,15 @@ impl KernelFeatures {
     pub const THIN_LENS: KernelFeatures = part(15);
     /// An opening of blades (a frame's part).
     pub const BLADES: KernelFeatures = part(16);
+    /// A shifted lens's film (a frame's part).
+    pub const SHIFT: KernelFeatures = part(17);
+    /// Parallel rays from the film plane (a frame's part).
+    pub const ORTHOGRAPHIC: KernelFeatures = part(18);
+    /// Every direction round the camera (a frame's part).
+    pub const EQUIRECTANGULAR: KernelFeatures = part(19);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 17] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 20] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -121,6 +128,9 @@ impl KernelFeatures {
         (Self::BACKPLATE, "FEATURE_BACKPLATE"),
         (Self::THIN_LENS, "FEATURE_THIN_LENS"),
         (Self::BLADES, "FEATURE_BLADES"),
+        (Self::SHIFT, "FEATURE_SHIFT"),
+        (Self::ORTHOGRAPHIC, "FEATURE_ORTHOGRAPHIC"),
+        (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -235,20 +245,22 @@ impl KernelFeatures {
 
     /// The parts a frame reaches through its camera and film, from the
     /// frame's `camera_flags` as the kernel reads them: the thin lens, its
-    /// blades. A scene's records cannot say which camera will look at it,
+    /// blades, a shifted film, the orthographic and 360-degree projections. A scene's records cannot say which camera will look at it,
     /// so [`KernelFeatures::of`] keeps none of these, and a renderer widens
     /// its kernel to them at the first frame that asks for one it left out
     /// (`GpuRenderer::render_pass`).
     pub fn of_frame(camera_flags: u32) -> KernelFeatures {
-        use crate::transport::{CAMERA_BLADED, CAMERA_THIN_LENS};
-        let mut f = KernelFeatures::NONE;
-        if camera_flags & CAMERA_THIN_LENS != 0 {
-            f = f | Self::THIN_LENS;
-        }
-        if camera_flags & CAMERA_BLADED != 0 {
-            f = f | Self::BLADES;
-        }
-        f
+        use crate::transport::{CAMERA_BLADED, CAMERA_EQUIRECTANGULAR, CAMERA_ORTHOGRAPHIC, CAMERA_SHIFT, CAMERA_THIN_LENS};
+        [
+            (CAMERA_THIN_LENS, Self::THIN_LENS),
+            (CAMERA_BLADED, Self::BLADES),
+            (CAMERA_SHIFT, Self::SHIFT),
+            (CAMERA_ORTHOGRAPHIC, Self::ORTHOGRAPHIC),
+            (CAMERA_EQUIRECTANGULAR, Self::EQUIRECTANGULAR),
+        ]
+        .into_iter()
+        .filter(|(flag, _)| camera_flags & flag != 0)
+        .fold(KernelFeatures::NONE, |f, (_, part)| f | part)
     }
 
     /// Each part's name, without its prefix, and the instructions:

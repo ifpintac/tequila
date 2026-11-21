@@ -161,11 +161,12 @@ fn rays_against_the_processor(renderer: &GpuRenderer, settings: &FrameSettings, 
 
 /// The camera's rays: through the pinhole, and through a thin lens round
 /// and bladed - three to eight blades, turned, wide open and stopped down,
-/// focused near and far - at two shapes of frame, each against
+/// focused near and far - shifted, with and without a lens; orthographic;
+/// every way round; at two shapes of frame, each against
 /// `Camera::generate_ray` with the same sampler.
 #[test]
 fn camera_rays_are_the_processors() {
-    use tequila_render_core::camera::{Aperture, Camera};
+    use tequila_render_core::camera::{Aperture, Camera, Projection};
     let Some((renderer, settings, _)) = renderer_for("shallow_focus") else { return };
     let framed = settings.camera;
     let cameras: Vec<(&str, Camera)> = vec![
@@ -177,6 +178,12 @@ fn camera_rays_are_the_processors() {
         ("five blades turned", Camera { aperture: Aperture::Bladed { blades: 5, rotation: 0.7 }, ..framed }),
         ("six blades turned past a turn", Camera { aperture: Aperture::Bladed { blades: 6, rotation: 7.0 }, ..framed }),
         ("eight blades turned back", Camera { f_number: 2.0, aperture: Aperture::Bladed { blades: 8, rotation: -1.3 }, ..framed }),
+        ("shifted", Camera { f_number: f32::INFINITY, projection: Projection::Shift { focal_length_mm: 35.0, shift_x: 0.1, shift_y: -0.2 }, ..framed }),
+        ("shifted through a lens of five blades", Camera { projection: Projection::Shift { focal_length_mm: 85.0, shift_x: -0.3, shift_y: 0.05 }, aperture: Aperture::Bladed { blades: 5, rotation: 0.4 }, ..framed }),
+        ("shifted, unshifted", Camera { f_number: f32::INFINITY, projection: Projection::Shift { focal_length_mm: 35.0, shift_x: 0.0, shift_y: 0.0 }, ..framed }),
+        ("orthographic", Camera { projection: Projection::Orthographic { scale: 1.3 }, ..framed }),
+        ("orthographic and tiny", Camera { projection: Projection::Orthographic { scale: 0.002 }, ..framed }),
+        ("every way round", Camera { projection: Projection::Equirectangular, ..framed }),
     ];
     let mut failed = Vec::new();
     for (k, (name, camera)) in cameras.into_iter().enumerate() {

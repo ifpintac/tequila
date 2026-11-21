@@ -69,3 +69,9 @@ override FEATURE_BACKPLATE: bool = true;
 override FEATURE_THIN_LENS: bool = true;
 // An opening of blades rather than a round one (a frame's part).
 override FEATURE_BLADES: bool = true;
+// A shifted lens's film (a frame's part).
+override FEATURE_SHIFT: bool = true;
+// Parallel rays from the film plane (a frame's part).
+override FEATURE_ORTHOGRAPHIC: bool = true;
+// Every direction round the camera (a frame's part).
+override FEATURE_EQUIRECTANGULAR: bool = true;

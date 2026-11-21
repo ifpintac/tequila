@@ -97,7 +97,8 @@ struct FrameParams {
     plate_offset: u32,
     plate_width: u32,
     plate_height: u32,
-    // CAMERA_THIN_LENS, CAMERA_BLADED.
+    // CAMERA_THIN_LENS, CAMERA_BLADED, CAMERA_SHIFT, CAMERA_ORTHOGRAPHIC,
+    // CAMERA_EQUIRECTANGULAR.
     camera_flags: u32,
     // The thin lens (Camera::generate_ray): the opening's radius in scene
     // units, the focus distance, a bladed opening's blades and turn.
@@ -105,14 +106,25 @@ struct FrameParams {
     focus_distance: f32,
     aperture_blades: u32,
     aperture_rotation: f32,
-    _pad2: u32,
+    // A shifted lens's film offset in fractions of the sensor, under
+    // CAMERA_SHIFT.
+    shift_x: f32,
+    shift_y: f32,
+    _pad3: u32,
+    _pad4: u32,
+    _pad5: u32,
 };
 
 // FrameParams::camera_flags (transport.rs's CAMERA_*): a thin lens with an
 // opening, each ray drawn from a point on it through its pinhole ray's
-// point on the focus plane; an opening of blades rather than a round one.
+// point on the focus plane; an opening of blades rather than a round one;
+// a shifted film; parallel rays from the film plane (the half-height and
+// half-width in scene units); every direction round the camera.
 const CAMERA_THIN_LENS: u32 = 1u;
 const CAMERA_BLADED: u32 = 2u;
+const CAMERA_SHIFT: u32 = 4u;
+const CAMERA_ORTHOGRAPHIC: u32 = 8u;
+const CAMERA_EQUIRECTANGULAR: u32 = 16u;
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).
 const GLASS_SOLID: u32 = 0u;

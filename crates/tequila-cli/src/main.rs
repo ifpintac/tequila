@@ -1401,7 +1401,7 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
             .map_err(|why| format!("--device GPU: {why}"))?;
         println!(
-            "  on the graphics card, {}: materials, glass among them, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor, the lamps, background colours and backplates, depth of field; subsurface, thin film, flakes, dispersion, caustics, fibres, cutaways and lenses other than a pinhole are still to come (docs/07 R3)",
+            "  on the graphics card, {}: materials, glass among them, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor, the lamps, background colours and backplates, depth of field, shifted, orthographic and 360-degree cameras; subsurface, thin film, flakes, dispersion, caustics, fibres and cutaways are still to come (docs/07 R3)",
             gpu.describe()
         );
         let settings = tequila_render_gpu::transport::FrameSettings {

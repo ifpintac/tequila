@@ -423,6 +423,41 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: lamps_in_view,
     lens: bladed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "orthographic",
+    covers: "R3, the orthographic camera: product_floor seen by parallel rays from the film plane, the frame as tall \
+             as the perspective one's at the product - each ray's start on the film plane in scene units, every \
+             ray the camera's forward",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: product_floor,
+    lens: orthographic,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "all_round",
+    covers: "R3, the 360-degree camera: glass_ball_floor seen every way round from the product's camera, the film's \
+             width round the horizon and its height from the zenith down - the sky above, the floor below, the \
+             product and the ball in front, the backdrop the camera sees behind",
+    width: 320,
+    height: 160,
+    samples: 256,
+    seed: 7,
+    build: glass_ball_floor,
+    lens: all_round,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shifted_lens",
+    covers: "R3, the shifted lens: lamp_lit through the product camera's lens with its film shifted an eighth across \
+             and a sixth down - the frame moved without turning the camera, verticals kept parallel",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: lamp_lit,
+    lens: shifted,
+    pictures: no_pictures,
 }];
 
 /// The product's camera as framed.
@@ -439,6 +474,25 @@ fn shallow(camera: Camera) -> Camera {
 fn bladed(camera: Camera) -> Camera {
     use tequila_render_core::camera::Aperture;
     Camera { f_number: 1.2, focus_distance: camera.focus_distance * 0.6, aperture: Aperture::Bladed { blades: 6, rotation: 0.2 }, ..camera }
+}
+
+/// Parallel rays, the frame as tall as the lens's is at the product.
+fn orthographic(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Projection;
+    let scale = 2.0 * camera.focus_distance * (camera.vertical_fov(320.0 / 180.0) * 0.5).tan();
+    Camera { projection: Projection::Orthographic { scale }, ..camera }
+}
+
+/// Every way round from where the product's camera stands.
+fn all_round(camera: Camera) -> Camera {
+    Camera { projection: tequila_render_core::camera::Projection::Equirectangular, ..camera }
+}
+
+/// The product's lens with its film shifted across and down.
+fn shifted(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Projection;
+    let Projection::Perspective { focal_length_mm } = camera.projection else { return camera };
+    Camera { projection: Projection::Shift { focal_length_mm, shift_x: 0.125, shift_y: -1.0 / 6.0 }, ..camera }
 }
 
 /// The path [`background`] takes for the set's own backplate

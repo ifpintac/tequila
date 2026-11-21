@@ -71,7 +71,8 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BACKGROUND), ["background_colour", "backplate"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
-        assert!(!features.contains(F::THIN_LENS) && !features.contains(F::BLADES), "{name}: {}", features.names());
+        let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR;
+        assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
     }
     // At least what each is in the set for.
     for (name, wanted) in [
@@ -87,7 +88,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
@@ -113,6 +114,9 @@ fn frame_parts_are_the_cameras() {
         let wanted = match scene.name {
             "shallow_focus" => F::THIN_LENS,
             "bladed_bokeh" => F::THIN_LENS | F::BLADES,
+            "orthographic" => F::ORTHOGRAPHIC,
+            "all_round" => F::EQUIRECTANGULAR,
+            "shifted_lens" => F::SHIFT,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());

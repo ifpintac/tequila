@@ -18,7 +18,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
-use tequila_render_core::camera::Camera;
+use tequila_render_core::camera::{Camera, Projection};
 use tequila_render_core::environment::Background;
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::integrator::PathResult;
@@ -139,7 +139,8 @@ pub struct FrameParams {
     pub plate_offset: u32,
     pub plate_width: u32,
     pub plate_height: u32,
-    /// [`CAMERA_THIN_LENS`] and [`CAMERA_BLADED`].
+    /// [`CAMERA_THIN_LENS`], [`CAMERA_BLADED`], [`CAMERA_SHIFT`],
+    /// [`CAMERA_ORTHOGRAPHIC`] and [`CAMERA_EQUIRECTANGULAR`].
     pub camera_flags: u32,
     /// The thin lens (`Camera::generate_ray`): the opening's radius in
     /// scene units (`Camera::aperture_radius`), the focus distance, and a
@@ -148,7 +149,13 @@ pub struct FrameParams {
     pub focus_distance: f32,
     pub aperture_blades: u32,
     pub aperture_rotation: f32,
-    pub _pad2: u32,
+    /// A shifted lens's film offset, in fractions of the sensor
+    /// (`Projection::Shift`), under [`CAMERA_SHIFT`].
+    pub shift_x: f32,
+    pub shift_y: f32,
+    pub _pad3: u32,
+    pub _pad4: u32,
+    pub _pad5: u32,
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -194,6 +201,14 @@ pub const SCENE_BACKPLATE: u32 = 256;
 pub const CAMERA_THIN_LENS: u32 = 1;
 /// The opening has blades (`Aperture::Bladed`) rather than being round.
 pub const CAMERA_BLADED: u32 = 2;
+/// The film is offset (`Projection::Shift`): verticals kept parallel.
+pub const CAMERA_SHIFT: u32 = 4;
+/// Parallel rays from the film plane (`Projection::Orthographic`): the
+/// frame's half-height and half-width are in scene units.
+pub const CAMERA_ORTHOGRAPHIC: u32 = 8;
+/// Every direction, the film's width round the horizon and its height
+/// from the zenith down (`Projection::Equirectangular`).
+pub const CAMERA_EQUIRECTANGULAR: u32 = 16;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -402,17 +417,9 @@ pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'s
 /// otherwise than the processor does, one sentence each; empty where they
 /// are the processor's (`transport.wgsl`'s pinhole and one pixel's box).
 /// The renderer says each at its first pass, with the other `*_limits`.
-pub fn camera_limits(camera: &Camera, config: &IntegratorConfig) -> Vec<&'static str> {
-    use tequila_render_core::camera::Projection;
+pub fn camera_limits(_camera: &Camera, config: &IntegratorConfig) -> Vec<&'static str> {
     use tequila_render_core::settings::PixelFilterKind;
     let mut limits = Vec::new();
-    match camera.projection {
-        Projection::Perspective { .. } => {}
-        Projection::Shift { shift_x, shift_y, .. } if shift_x == 0.0 && shift_y == 0.0 => {}
-        Projection::Shift { .. } => limits.push("a shifted lens is left unshifted"),
-        Projection::Orthographic { .. } => limits.push("an orthographic camera is not drawn: the card's camera is a perspective one"),
-        Projection::Equirectangular => limits.push("a 360-degree camera is not drawn: the card's camera is a perspective one"),
-    }
     // A box of one pixel places a sample where its jitter falls
     // (FilterSampler::place); any other filter spreads it.
     let filter = config.pixel_filter;
@@ -1061,7 +1068,17 @@ impl GpuRenderer {
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
         let aspect = width as f32 / height as f32;
-        let half_height = (settings.camera.vertical_fov(aspect) * 0.5).tan();
+        // The frame's half-height and half-width as Camera::generate_ray
+        // works them out: tan(fov / 2) for a lens, half the scale in scene
+        // units for a parallel projection, unread for a 360-degree one.
+        let (half_height, projection_flags, shift) = match settings.camera.projection {
+            Projection::Orthographic { scale } => (scale * 0.5, CAMERA_ORTHOGRAPHIC, (0.0, 0.0)),
+            Projection::Equirectangular => (0.0, CAMERA_EQUIRECTANGULAR, (0.0, 0.0)),
+            Projection::Shift { shift_x, shift_y, .. } if shift_x != 0.0 || shift_y != 0.0 => {
+                ((settings.camera.vertical_fov(aspect) * 0.5).tan(), CAMERA_SHIFT, (shift_x, shift_y))
+            }
+            Projection::Perspective { .. } | Projection::Shift { .. } => ((settings.camera.vertical_fov(aspect) * 0.5).tan(), 0, (0.0, 0.0)),
+        };
         let m = settings.camera.camera_to_world.m;
         let (direct, indirect) = settings.clamps();
         let e = &self.environment.layout;
@@ -1141,12 +1158,16 @@ impl GpuRenderer {
             plate_offset: e.plate_offset,
             plate_width: e.plate_width,
             plate_height: e.plate_height,
-            camera_flags: if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
+            camera_flags: projection_flags | if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
             lens_radius,
             focus_distance: settings.camera.focus_distance,
             aperture_blades: blades,
             aperture_rotation: rotation,
-            _pad2: 0,
+            shift_x: shift.0,
+            shift_y: shift.1,
+            _pad3: 0,
+            _pad4: 0,
+            _pad5: 0,
         }
     }
 

@@ -524,7 +524,15 @@ fn what_the_camera_costs_to_compile() {
     // Each part of the port and what leaves it out.
     let parts: &[(&str, &[(&str, &str)])] = &[
         ("no background colour or backplate", &[("if (FEATURE_BACKGROUND && specular_chain && background != 0u) {", "if (false) {")]),
-        ("no thin lens", &[("if (FEATURE_THIN_LENS && (frame.camera_flags & CAMERA_THIN_LENS) != 0u) {", "if (false) {")]),
+        ("no thin lens", &[("let lens = FEATURE_THIN_LENS && (flags & CAMERA_THIN_LENS) != 0u;", "let lens = false;")]),
+        (
+            "no other projections",
+            &[
+                ("let shifted = FEATURE_SHIFT && (flags & CAMERA_SHIFT) != 0u;", "let shifted = false;"),
+                ("let parallel = FEATURE_ORTHOGRAPHIC && (flags & CAMERA_ORTHOGRAPHIC) != 0u;", "let parallel = false;"),
+                ("let all_round = FEATURE_EQUIRECTANGULAR && (flags & CAMERA_EQUIRECTANGULAR) != 0u;", "let all_round = false;"),
+            ],
+        ),
     ];
     let mut cases: Vec<(String, Box<dyn Fn(String) -> String>)> = vec![("as it is".to_string(), Box::new(|s| s))];
     if let Some(before) = before {

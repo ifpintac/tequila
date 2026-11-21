@@ -265,6 +265,24 @@ fn bladed_bokeh_is_the_processors_picture() {
     same_picture("bladed_bokeh");
 }
 
+/// The orthographic camera: parallel rays from the film plane.
+#[test]
+fn an_orthographic_camera_is_the_processors_picture() {
+    same_picture("orthographic");
+}
+
+/// The 360-degree camera: every way round.
+#[test]
+fn a_360_degree_camera_is_the_processors_picture() {
+    same_picture("all_round");
+}
+
+/// The shifted lens: the frame moved without turning the camera.
+#[test]
+fn a_shifted_lens_is_the_processors_picture() {
+    same_picture("shifted_lens");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]

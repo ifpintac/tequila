@@ -2171,22 +2171,45 @@ struct CameraRay {
 };
 
 // Camera::generate_ray (camera.rs) for a point on the film, (0, 0) the
-// picture's top left and (1, 1) its bottom right: through the pinhole; or,
-// through a thin lens (CAMERA_THIN_LENS), from a point on its opening
-// drawn on the lens dimensions (sampler::dim::LENS, after the pixel's
-// jitter) towards where the pinhole's ray meets the focus plane. The time
+// picture's top left and (1, 1) its bottom right: through the pinhole, its
+// film shifted (CAMERA_SHIFT) or not; or, through a thin lens
+// (CAMERA_THIN_LENS), from a point on its opening drawn on the lens
+// dimensions (sampler::dim::LENS, after the pixel's jitter) towards where
+// the pinhole's ray meets the focus plane; or parallel, from the film
+// plane (CAMERA_ORTHOGRAPHIC); or every way round, the film's width the
+// horizon and its height from the zenith down (CAMERA_EQUIRECTANGULAR). The time
 // the processor draws with the shutter open (sampler::dim::TIME) is a
 // Sobol' dimension, no state, and nothing reads a ray's time; no camera
 // opens its shutter.
 fn camera_ray(film: vec2<f32>, s: ptr<function, Sampler>) -> CameraRay {
     let sx = 2.0 * film.x - 1.0;
     let sy = 1.0 - 2.0 * film.y;
-    if (FEATURE_THIN_LENS && (frame.camera_flags & CAMERA_THIN_LENS) != 0u) {
-        let d = vec3<f32>(cy_exact(sx * frame.half_width), cy_exact(sy * frame.half_height), -1.0);
-        let lens = cy_exact2(aperture_point(sampler_lens(s)) * frame.lens_radius);
-        let t_focus = cy_div(frame.focus_distance, -d.z);
-        let start = vec3<f32>(lens, 0.0);
-        let towards = normalized(cy_exact3(d * t_focus) - start);
+    let flags = frame.camera_flags;
+    let lens = FEATURE_THIN_LENS && (flags & CAMERA_THIN_LENS) != 0u;
+    let shifted = FEATURE_SHIFT && (flags & CAMERA_SHIFT) != 0u;
+    let parallel = FEATURE_ORTHOGRAPHIC && (flags & CAMERA_ORTHOGRAPHIC) != 0u;
+    let all_round = FEATURE_EQUIRECTANGULAR && (flags & CAMERA_EQUIRECTANGULAR) != 0u;
+    if (lens || shifted || parallel || all_round) {
+        var start = vec3<f32>(0.0);
+        var towards: vec3<f32>;
+        if (parallel) {
+            start = vec3<f32>(cy_exact(sx * frame.half_width), cy_exact(sy * frame.half_height), 0.0);
+            towards = vec3<f32>(0.0, 0.0, -1.0);
+        } else if (all_round) {
+            let phi = cy_sincos(cy_exact(sx * CY_PI));
+            let theta = cy_sincos(cy_exact(film.y * CY_PI));
+            towards = vec3<f32>(cy_exact(theta.x * phi.x), theta.y, -cy_exact(theta.x * phi.y));
+        } else {
+            // Without CAMERA_SHIFT the shift is nought, and sx + 0 is sx.
+            let d = vec3<f32>(cy_exact((sx + 2.0 * frame.shift_x) * frame.half_width), cy_exact((sy + 2.0 * frame.shift_y) * frame.half_height), -1.0);
+            if (lens) {
+                start = vec3<f32>(cy_exact2(aperture_point(sampler_lens(s)) * frame.lens_radius), 0.0);
+                let t_focus = cy_div(frame.focus_distance, -d.z);
+                towards = normalized(cy_exact3(d * t_focus) - start);
+            } else {
+                towards = normalized(d);
+            }
+        }
         return CameraRay(rows_point(frame.camera_to_world, start), normalized(rows_vector(frame.camera_to_world, towards)));
     }
     let camera_dir = normalized(vec3<f32>(sx * frame.half_width, sy * frame.half_height, -1.0));
