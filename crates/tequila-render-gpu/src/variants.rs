@@ -503,8 +503,9 @@ mod tests {
         m
     }
 
+    /// A part as the scene uploads one: seen by every ray, casting shadows.
     fn instance() -> GpuInstance {
-        GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, emitter: crate::emitters::EMITTER_NONE, ..GpuInstance::default() }
+        GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, emitter: crate::emitters::EMITTER_NONE, flags: INSTANCE_CASTS_SHADOWS, ..GpuInstance::default() }
     }
 
     fn mesh() -> GpuMesh {
