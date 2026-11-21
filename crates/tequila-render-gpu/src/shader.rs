@@ -34,6 +34,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("lights", include_str!("wgsl/lights.wgsl")),
     ("lamps", include_str!("wgsl/lamps.wgsl")),
     ("emitters", include_str!("wgsl/emitters.wgsl")),
+    ("media", include_str!("wgsl/media.wgsl")),
     ("transport", include_str!("wgsl/transport.wgsl")),
 ];
 

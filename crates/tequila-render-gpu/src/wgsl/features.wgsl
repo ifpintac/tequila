@@ -105,3 +105,6 @@ override FEATURE_DISPERSION: bool = true;
 // part: its spectral mode), every colour read at them by the spectral
 // tables (spectral.wgsl).
 override FEATURE_SPECTRAL: bool = true;
+// A volume that scatters: the random walk through it, and the lights a
+// collision in one whose surface bends nothing samples directly.
+override FEATURE_SCATTERING: bool = true;

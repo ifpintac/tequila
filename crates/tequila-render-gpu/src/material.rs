@@ -7,8 +7,9 @@
 //! has one), the transmission lobe (glass, thin-walled or
 //! solid) and the diffuse substrate, and this holds what that reads; and
 //! what the integrator reads of glass besides - the medium a solid part is
-//! (its priority, its index as the scene has it, whether its volume absorbs)
-//! and the clear glass a shadow ray passes (`Pane`); and the thin film over
+//! (its priority, its index as the scene has it, whether its volume absorbs
+//! or scatters, and the medium a walk through it crosses) and the clear
+//! glass a shadow ray passes (`Pane`); and the thin film over
 //! the metal and the interface. Subsurface is not on the card yet, so its
 //! parameters are not here; [`GpuMaterial::supports`] says whether a
 //! material is one the card's stack is the processor's for.
@@ -114,6 +115,12 @@ pub struct GpuMaterial {
     /// nanometres and `thin_film_ior`; and in `[3]`
     /// `transmission_dispersion_abbe`, the glass's dispersion.
     pub film: [f32; 4],
+    /// A volume that scatters ([`GLASS_SCATTERS`]): the medium
+    /// `Material::volume_scattering` makes, which a walk through it
+    /// crosses - its extinction per metre, and in `[3]` its phase
+    /// function's anisotropy; and its single-scattering albedo.
+    pub volume_extinction: [f32; 4],
+    pub volume_albedo: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -133,6 +140,9 @@ pub const GLASS_BENDS: u32 = 32;
 /// The pane's volume absorbs between its way in and its way out
 /// (`Pane::has_volume`).
 pub const GLASS_PANE_VOLUME: u32 = 64;
+/// The medium behind the surface scatters as well as absorbs
+/// (`Material::volume_scattering`): a path in it walks.
+pub const GLASS_SCATTERS: u32 = 128;
 
 fn colour(s: Spectrum) -> [f32; 4] {
     [s.r, s.g, s.b, 0.0]
@@ -159,6 +169,7 @@ impl GpuMaterial {
         let has_depth = !m.geometry_thin_walled && m.transmission_depth > 0.0;
         let c = if has_depth { m.transmission_tint } else { m.transmission_color * m.transmission_tint };
         let tint = [c.r.max(0.0).sqrt(), c.g.max(0.0).sqrt(), c.b.max(0.0).sqrt(), m.transmission_depth];
+        let scattering = m.volume_scattering();
         let mut glass = 0;
         for (on, flag) in [
             (m.geometry_thin_walled, GLASS_THIN),
@@ -168,6 +179,7 @@ impl GpuMaterial {
             (pane.is_some_and(|p| p.plain), GLASS_PLAIN),
             (pane.is_some_and(|p| p.bends()), GLASS_BENDS),
             (pane.is_some_and(|p| p.has_volume()), GLASS_PANE_VOLUME),
+            (scattering.is_some(), GLASS_SCATTERS),
         ] {
             if on {
                 glass |= flag;
@@ -222,15 +234,16 @@ impl GpuMaterial {
             flake: [m.flake_size, m.flake_spread, m.flake_roughness, m.flake_coverage],
             flake_normal: [m.flake_normal.x, m.flake_normal.y, m.flake_normal.z, 0.0],
             film: [m.thin_film_weight, m.thin_film_thickness, m.thin_film_ior, m.transmission_dispersion_abbe],
+            volume_extinction: scattering.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
+            volume_albedo: scattering.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
         }
     }
 
     /// Whether the card renders `m` as the processor does: no subsurface at
-    /// all (even a share too small for its own lobe takes from the diffuse);
-    /// and as glass, none that scatters in its volume (a random walk).
-    /// Flakes, thin films and glass that disperses light it renders.
+    /// all (even a share too small for its own lobe takes from the diffuse).
+    /// Flakes, thin films, glass that disperses light and volumes that
+    /// scatter it renders.
     pub fn supports(m: &Material) -> bool {
-        let glass = m.transmission_weight > 0.0;
-        m.subsurface_weight == 0.0 && !(glass && m.volume_scattering().is_some())
+        m.subsurface_weight == 0.0
     }
 }

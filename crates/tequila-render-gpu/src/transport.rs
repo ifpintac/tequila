@@ -354,7 +354,6 @@ struct GlassScene {
     panes: bool,
     dispersion: bool,
     subsurface: bool,
-    scattering: bool,
     volume_maps: bool,
     folded_glass: bool,
     cutouts: bool,
@@ -382,13 +381,14 @@ impl GlassScene {
                 || m.geometry_thin_walled != own.geometry_thin_walled
                 || m.volume_emission_color != own.volume_emission_color
                 || m.volume_emission_strength != own.volume_emission_strength
+                || m.transmission_scatter != own.transmission_scatter
+                || m.transmission_scatter_anisotropy != own.transmission_scatter_anisotropy
         });
         GlassScene {
             transmits: scene.has_transmissive(),
             panes: scene.has_panes(),
             dispersion: scene.has_dispersion(),
             subsurface: any(&|m| m.subsurface_weight != 0.0),
-            scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
             cutouts: scene.has_cutouts(),
@@ -413,9 +413,6 @@ impl GlassScene {
         }
         if self.subsurface {
             limits.push("subsurface scattering is left out: no random walk under a surface");
-        }
-        if self.scattering {
-            limits.push("a volume that scatters light only absorbs it");
         }
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
@@ -806,7 +803,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface or scattering (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };

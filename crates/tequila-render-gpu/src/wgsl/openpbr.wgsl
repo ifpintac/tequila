@@ -139,6 +139,11 @@ struct GpuMaterial {
     // thickness in nanometres and its index; and in w the glass's Abbe
     // number, its dispersion (none at 0).
     film: vec4<f32>,
+    // A volume that scatters (Material::volume_scattering, GLASS_SCATTERS):
+    // its extinction per metre, and in w its phase function's anisotropy;
+    // its single-scattering albedo. The integrator's.
+    volume_extinction: vec4<f32>,
+    volume_albedo: vec4<f32>,
 };
 
 // Material::emission, in nits: the colour times the luminance.
@@ -159,6 +164,7 @@ const GLASS_PANE: u32 = 8u;
 const GLASS_PLAIN: u32 = 16u;
 const GLASS_BENDS: u32 = 32u;
 const GLASS_PANE_VOLUME: u32 = 64u;
+const GLASS_SCATTERS: u32 = 128u;
 
 // The assembled stack for one shading point.
 struct OpenPbr {

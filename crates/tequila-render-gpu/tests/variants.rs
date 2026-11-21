@@ -61,6 +61,10 @@ fn each_scene_keeps_the_parts_it_reaches() {
     ] {
         assert_eq!(of(name), wanted, "{name}");
     }
+    // And only a scene with a volume that scatters keeps the walk.
+    for (name, features) in &chosen {
+        assert_eq!(features.contains(F::SCATTERING), ["milk_in_glass", "scattering_volumes"].contains(name), "{name}: {}", features.names());
+    }
     // And only a scene that rounds its edges keeps the bevel.
     for (name, features) in &chosen {
         assert_eq!(features.contains(F::BEVEL), name.starts_with("bevel"), "{name}: {}", features.names());
@@ -93,6 +97,8 @@ fn each_scene_keeps_the_parts_it_reaches() {
         ("shadowless_parts", F::PASSES_PARTS | F::FLOOR | F::LAMPS | F::EMITTERS | F::GLOW),
         ("floor_lamps", F::FLOOR | F::LAMPS | F::SHADOW_LINKS),
         ("ies_lamps", F::IES | F::FLOOR | F::LAMPS),
+        ("milk_in_glass", F::GLASS | F::PANES | F::SCATTERING),
+        ("scattering_volumes", F::GLASS | F::LAMPS | F::SCATTERING),
     ] {
         assert!(of(name).contains(wanted), "{name} keeps {}, not all of {}", of(name).names(), wanted.names());
     }
@@ -106,7 +112,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral", "scattering"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }

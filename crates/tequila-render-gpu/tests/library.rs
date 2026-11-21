@@ -14,13 +14,9 @@ use tequila_render_gpu::textures::{CardPictures, Pictures};
 /// constants have it, as the processor does; `rounding` whether rounded
 /// edges count among them (they did until the card took Bevel).
 fn surface_refusals(m: &Material, rounding: bool) -> Vec<&'static str> {
-    let glass = m.transmission_weight > 0.0;
     let mut why = Vec::new();
     if m.subsurface_weight != 0.0 {
         why.push("subsurface");
-    }
-    if glass && m.volume_scattering().is_some() {
-        why.push("a volume that scatters");
     }
     if m.fuzz_density > 0.0 {
         why.push("fibres");

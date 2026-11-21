@@ -133,8 +133,12 @@ impl KernelFeatures {
     /// spectral mode, `GpuRenderer::frame_features`).
     pub const SPECTRAL: KernelFeatures = part(29);
 
+    /// A volume that scatters: the random walk through it, and the lights a
+    /// collision in one whose surface bends nothing samples.
+    pub const SCATTERING: KernelFeatures = part(30);
+
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 30] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 31] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -165,6 +169,7 @@ impl KernelFeatures {
         (Self::FILM, "FEATURE_FILM"),
         (Self::DISPERSION, "FEATURE_DISPERSION"),
         (Self::SPECTRAL, "FEATURE_SPECTRAL"),
+        (Self::SCATTERING, "FEATURE_SCATTERING"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -210,7 +215,7 @@ impl KernelFeatures {
     /// The parts a scene's records reach (see the module's notes): each
     /// kept wherever a record the kernel reads could send a path into it.
     pub fn of(r: &SceneRecords) -> KernelFeatures {
-        use crate::material::{GLASS_BOUNDARY, GLASS_PANE};
+        use crate::material::{GLASS_BOUNDARY, GLASS_PANE, GLASS_SCATTERS};
         use crate::program::{PROGRAM_AT_HIT, PROGRAM_CUTS, PROGRAM_NORMAL_PROJECTED, PROGRAM_NORMAL_UV, PROGRAM_RUNS};
         use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_TRANSMITS};
         let mut f = KernelFeatures::NONE;
@@ -301,6 +306,10 @@ impl KernelFeatures {
         // number, which no program drives, whatever its transmission, which
         // a program may).
         keep(any_material(&|m| m.film[3] > 0.0), Self::DISPERSION);
+        // A medium the path is in whose material scatters (medium_scatters):
+        // one a crossing, the probe or a medium's surface that is no
+        // interface records, all by a material's record.
+        keep(any_material(&|m| m.glass & GLASS_SCATTERS != 0), Self::SCATTERING);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -579,6 +588,9 @@ mod tests {
         let mut volume = grey();
         volume.volume_glow = [0.0, 1.0, 0.0, 0.5];
         assert_eq!(one(volume), KernelFeatures::VOLUME_GLOW);
+        let mut scatters = grey();
+        scatters.glass = crate::material::GLASS_SCATTERS;
+        assert_eq!(one(scatters), KernelFeatures::SCATTERING);
 
         // The frame's flags, the lamps, the tree, the instances, the meshes.
         use crate::transport::{SCENE_CUTOUTS, SCENE_TRANSMITS};

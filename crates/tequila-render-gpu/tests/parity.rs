@@ -503,6 +503,45 @@ fn a_wall_of_driven_transmission_is_the_processors_picture() {
     same_shot(Shot { name: "driven_transmission_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
 }
 
+/// A volume that scatters: a cloudy liquid in a glass, walked through,
+/// refracting where it meets the glass.
+#[test]
+fn milk_in_glass_is_the_processors_picture() {
+    same_picture("milk_in_glass");
+}
+
+/// Volumes whose surfaces bend nothing: a haze and a wax, walked through,
+/// the lights sampled directly at each collision.
+#[test]
+fn scattering_volumes_are_the_processors_picture() {
+    same_picture("scattering_volumes");
+}
+
+/// The library's presets whose volumes scatter (milk, orange juice,
+/// coffee, translucent prints), on every other part of the Headphones, the
+/// other parts as the sample has them.
+#[test]
+fn a_wall_of_scattering_volumes_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let scattering: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| entry.graph.compile().is_ok_and(|p| p.constants.transmission_weight > 0.0 && p.constants.volume_scattering().is_some()))
+        .collect();
+    assert!(!scattering.is_empty(), "no preset's volume scatters");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate().filter(|(j, _)| j % 2 == 0) {
+        let entry = &scattering[(j / 2) % scattering.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("scattering wall ({} presets): {}", scattering.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "scattering_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {

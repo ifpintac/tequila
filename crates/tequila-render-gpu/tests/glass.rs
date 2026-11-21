@@ -303,8 +303,9 @@ fn material_from_words() -> String {
     parts.push(at(62));
     parts.push("inp(63u)".into());
     // The glow behind, then the flakes: colour and weight, size, spread,
-    // roughness and coverage, normal; then the film and the dispersion.
-    for v in [64, 68, 72, 76, 80] {
+    // roughness and coverage, normal; then the film and the dispersion;
+    // then a scattering volume's extinction and albedo.
+    for v in [64, 68, 72, 76, 80, 84, 88] {
         parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
     }
     format!("GpuMaterial({})", parts.join(", "))
@@ -348,7 +349,7 @@ fn seeing_share(roughness: f32) -> f32 {
 
 fn the_glass_stack(seed: u64, aimed: bool) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 84);
+    assert_eq!(MATERIAL_WORDS, 92);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut through, mut deltas, mut misses, mut dropped, mut inside_count) = (0, 0, 0, 0, 0);
