@@ -886,6 +886,9 @@ fn preset_wall(variant: usize) {
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 // Opaque, as the walls were before the card took glass.
                 && m.transmission_weight == 0.0
+                // Nor walked under, as the walls were before the card took
+                // subsurface: the subsurface walls wear those.
+                && m.subsurface_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
@@ -1017,6 +1020,10 @@ fn rounding_presets() -> Vec<tequila_format::library::LibraryEntry> {
                 && m.flake_weight <= 1e-4
                 // Nor glass that disperses light, for the same reason.
                 && !(m.transmission_weight > 0.0 && m.transmission_dispersion_abbe > 0.0)
+                // Nor walked in or under, as the walls were before the card
+                // took media: the subsurface and scattering walls wear those.
+                && m.subsurface_weight == 0.0
+                && !(m.transmission_weight > 0.0 && m.volume_scattering().is_some())
         })
         .collect()
 }
@@ -1216,6 +1223,9 @@ fn the_preset_walls_one_by_one() {
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 // Opaque, as the walls were before the card took glass.
                 && m.transmission_weight == 0.0
+                // Nor walked under, as the walls were before the card took
+                // subsurface: the subsurface walls wear those.
+                && m.subsurface_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
