@@ -206,13 +206,6 @@ fn light_ceiling(specular_chain: bool, found_at: u32) -> f32 {
     return frame.clamp_indirect;
 }
 
-fn trace(origin: vec3<f32>, direction: vec3<f32>) -> RayIntersection {
-    var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, 3.0e38, origin, direction));
-    rayQueryProceed(&rq);
-    return rayQueryGetCommittedIntersection(&rq);
-}
-
 // A stack that is mirrors only - every lobe it holds a smooth reflection -
 // which next-event estimation skips (BsdfFlags DELTA without GLOSSY or
 // DIFFUSE).
@@ -532,15 +525,6 @@ fn walk_exit_material(m: GpuMaterial) -> GpuMaterial {
     return e;
 }
 
-// Intersector::intersect with the ray's reach `t_max`: a walk's flight is
-// traced only as far as it goes (ic:998).
-fn trace_within(origin: vec3<f32>, direction: vec3<f32>, t_max: f32) -> RayIntersection {
-    var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, t_max, origin, direction));
-    rayQueryProceed(&rq);
-    return rayQueryGetCommittedIntersection(&rq);
-}
-
 // The colour a volume lets through, raised to `exponent` channel by
 // channel; a channel not finite lets nothing by.
 fn survive(c: f32, exponent: f32) -> f32 {
@@ -631,8 +615,8 @@ fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_n
 
 // ---- The one walk along a ray (docs/07 D5, D6) -----------------------------
 //
-// Every ray the transport traces past the path's own goes through
-// walk_ray(), which path() calls from one place: the driver inlines every
+// Every ray the transport traces goes through walk_ray(), which path()
+// calls from one place: the driver inlines every
 // function, and a query copied at each place a ray was wanted - with what
 // follows it, the opacity a program drives, the clear glass, the medium -
 // had made the kernel's cold compile grow with every port. A function that
@@ -642,6 +626,10 @@ fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_n
 // from the sampler.
 
 // What a walk is for.
+// WALK_FIRST: the closest surface of any part within `reach`
+// (Intersector::intersect): a path's ray - a walk's flight traced only as
+// far as it goes (ic:998) - the floor's mirror ray's first, a bevel's probe.
+const WALK_FIRST: u32 = 6u;
 // WALK_SHADOW: a shadow ray (shadow_transmittance_through, ic:3308-3447),
 // the parts that cast lamp `blockers`' shadow by its shadow links the
 // blockers (every part for NO_LIGHT, and for a lamp without shadow links):
@@ -706,8 +694,8 @@ struct Walk {
 // whether it passed glass that bends light; whether it stopped where it was
 // looking (the light past a part at a glowing part, the camera's coverage
 // at a shadow catcher, weight_of_glow at the surface it weighs by), the hit
-// it stopped at and that hit's place (hit_place); the media a path starts
-// inside.
+// it stopped at (the closest, for WALK_FIRST) and that hit's place
+// (hit_place); the media a path starts inside.
 struct WalkEnd {
     through: vec3<f32>,
     bent: bool,
@@ -804,12 +792,15 @@ fn walk_ray(w: Walk) -> WalkEnd {
             out.through = vec3<f32>(1.0);
             return out;
         }
-        // ---- The transport's one ray query past the path's own ----
+        // ---- The transport's one ray query ----
         var rq: ray_query;
         rayQueryInitialize(&rq, scene_tlas, RayDesc(flags, mask, 0.0, remaining, origin, direction));
         rayQueryProceed(&rq);
         let hit = rayQueryGetCommittedIntersection(&rq);
         out.hit = hit;
+        if (mode == WALK_FIRST) {
+            return out;
+        }
         if (in_medium && in_part && majorant > 0.0) {
             through = through * md_survive(sigma, select(remaining, hit.t, hit.kind != RAY_QUERY_INTERSECTION_NONE));
         }
@@ -1059,23 +1050,25 @@ const WANT_MAIN: u32 = 1u;
 const WANT_CROSSING: u32 = 2u;
 
 // Where a segment of a path stands (path()): asking which media the path
-// starts inside; setting out, its flight drawn and its ray traced; the
-// lamps met and the sky, the walk, the surface; a floor met; the medium
-// crossed, stand-ins and boundaries passed, the rounded edges and the
-// program; at the hit, its material known - the cutout and the camera's
+// starts inside; setting out, its flight drawn; its ray traced; the lamps
+// met and the sky, the walk, the surface; a floor met; the medium crossed,
+// stand-ins and boundaries passed; the rounded edges and the program; at
+// the hit, its material known - the cutout and the camera's
 // coverage, the coverage known, the light past a part, a glow, the vertex,
 // its light sample.
 const PH_MEDIA: u32 = 0u;
 const PH_START: u32 = 1u;
-const PH_TRACED: u32 = 2u;
-const PH_FLOOR: u32 = 3u;
-const PH_BODY: u32 = 4u;
-const PH_HIT: u32 = 5u;
-const PH_COVERED: u32 = 6u;
-const PH_PAST: u32 = 7u;
-const PH_GLOW: u32 = 8u;
-const PH_SHADE: u32 = 9u;
-const PH_DIRECT: u32 = 10u;
+const PH_RAY: u32 = 2u;
+const PH_TRACED: u32 = 3u;
+const PH_FLOOR: u32 = 4u;
+const PH_BODY: u32 = 5u;
+const PH_BEVEL: u32 = 6u;
+const PH_HIT: u32 = 7u;
+const PH_COVERED: u32 = 8u;
+const PH_PAST: u32 = 9u;
+const PH_GLOW: u32 = 10u;
+const PH_SHADE: u32 = 11u;
+const PH_DIRECT: u32 = 12u;
 
 // settings.rs's DEFAULT_PIXEL_SPREAD: the footprint a shadow ray's program
 // is read with.
@@ -2470,21 +2463,73 @@ fn generated_at(mesh: GpuMesh, object: vec3<f32>) -> vec3<f32> {
     return (object - center) / half * 0.5 + vec3<f32>(0.5);
 }
 
+// Where bevel_normal stands while path() walks its probes: the sample it is
+// at and whether that sample's three draws are taken - its axis, its way
+// across the disc and how far, and the height either side of it - the probe
+// of the two it is at, whether it waits on that probe's walk, and the
+// normals lent so far, weighed.
+struct BevelAt {
+    i: u32,
+    k: u32,
+    drawn: bool,
+    pending: bool,
+    axis: vec3<f32>,
+    across: vec3<f32>,
+    r: f32,
+    height: f32,
+    sum: vec3<f32>,
+};
+
+// What bevel_normal hands back: a probe to walk, or the rounded normal.
+struct BevelStep {
+    wants: bool,
+    walk: Walk,
+    normal: vec3<f32>,
+};
+
 // Rounded edges (bevel.rs's rounded_normal, ic:1680-1691), as Cycles' Bevel
 // node rounds them: the shading normal `normal` at `position` on the part
 // in slot `slot` blended with the normals of the faces of the same part
 // within `radius`, from `samples` samples. Each takes a point on a disc of
 // that radius across one of the frame's three axes - the normal half the
 // time, either tangent a quarter, on three draws of the open stream - and
-// casts a short ray through the disc from each side; what it meets of the
-// same part, near enough and not leaning the other way, lends its normal,
-// weighed down with its distance.
-fn bevel_normal(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, samples: u32, s: ptr<function, Sampler>) -> vec3<f32> {
-    let f = frame_of(normal);
+// casts a short ray through the disc from each side (WALK_FIRST: the
+// closest surface of any part, from the start to twice the height); what it
+// meets of the same part, near enough and not leaning the other way, lends
+// its normal, weighed down with its distance. A fresh BevelAt with its
+// `sum` the normal times 1e-3 starts it; each probe is path()'s walk,
+// `found` once walked.
+fn bevel_normal_step(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, samples: u32, s: ptr<function, Sampler>, at: ptr<function, BevelAt>, found: WalkEnd) -> BevelStep {
+    var out: BevelStep;
+    out.wants = false;
     let sigma = radius * 0.5;
-    var sum = normal * 1e-3;
     let count = max(samples, 1u);
-    for (var i = 0u; i < count; i++) {
+    if ((*at).pending) {
+        (*at).pending = false;
+        let near = found.hit;
+        if (!(near.kind == RAY_QUERY_INTERSECTION_NONE || near.instance_custom_data != slot)) {
+            // The far side of a thin part leans the other way: not an edge.
+            let seen = surface_of(near);
+            if (!(cy_dot3(seen.shading, normal) < -0.1)) {
+                let d = seen.position - position;
+                let distance = cy_sqrt(cy_dot3(d, d));
+                let weight = exp(cy_div(-(distance * distance), 2.0 * sigma * sigma));
+                (*at).sum += cy_exact3(seen.shading * weight);
+            }
+        }
+        (*at).k += 1u;
+    }
+    if ((*at).k >= 2u) {
+        (*at).i += 1u;
+        (*at).k = 0u;
+        (*at).drawn = false;
+    }
+    if ((*at).i >= count) {
+        out.normal = prog_normalized((*at).sum, normal);
+        return out;
+    }
+    if (!(*at).drawn) {
+        let f = frame_of(normal);
         let pick = sampler_next_unstructured(s);
         var axis = f.n;
         var across = f.t;
@@ -2502,31 +2547,39 @@ fn bevel_normal(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, 
         let phi = TAU * sampler_next_unstructured(s);
         let height = max(cy_sqrt(max(cy_exact(radius * radius) - cy_exact(r * r), 0.0)), radius * 1e-3);
         let turn = cy_sincos(phi);
-        let offset = (cy_exact3(across * turn.y) + cy_exact3(other * turn.x)) * r;
-        for (var k = 0u; k < 2u; k++) {
-            let side = select(1.0, -1.0, k == 1u);
-            let start = (position + offset) + axis * (height * side);
-            // Intersector::intersect: the closest surface of any part, from
-            // the start to twice the height.
-            var rq: ray_query;
-            rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, 2.0 * height, start, axis * -side));
-            rayQueryProceed(&rq);
-            let near = rayQueryGetCommittedIntersection(&rq);
-            if (near.kind == RAY_QUERY_INTERSECTION_NONE || near.instance_custom_data != slot) {
-                continue;
-            }
-            // The far side of a thin part leans the other way: not an edge.
-            let seen = surface_of(near);
-            if (cy_dot3(seen.shading, normal) < -0.1) {
-                continue;
-            }
-            let d = seen.position - position;
-            let distance = cy_sqrt(cy_dot3(d, d));
-            let weight = exp(cy_div(-(distance * distance), 2.0 * sigma * sigma));
-            sum += cy_exact3(seen.shading * weight);
-        }
+        (*at).axis = axis;
+        (*at).across = cy_exact3(across * turn.y) + cy_exact3(other * turn.x);
+        (*at).r = r;
+        (*at).height = height;
+        (*at).drawn = true;
     }
-    return prog_normalized(sum, normal);
+    let side = select(1.0, -1.0, (*at).k == 1u);
+    let axis = (*at).axis;
+    let height = (*at).height;
+    let offset = (*at).across * (*at).r;
+    let start = (position + offset) + axis * (height * side);
+    (*at).pending = true;
+    out.wants = true;
+    out.walk = walk_new(WALK_FIRST, start, axis * -side, 2.0 * height);
+    return out;
+}
+
+// bevel_normal_step with its probes walked at once, for the test kernels
+// (tests/bevel.rs); the transport walks them at path()'s one place.
+fn bevel_normal(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, samples: u32, s: ptr<function, Sampler>) -> vec3<f32> {
+    var at: BevelAt;
+    at.sum = normal * 1e-3;
+    var found: WalkEnd;
+    var rounded: vec3<f32>;
+    loop {
+        let step = bevel_normal_step(slot, position, normal, radius, samples, s, &at, found);
+        if (!step.wants) {
+            rounded = step.normal;
+            break;
+        }
+        found = walk_ray(step.walk);
+    }
+    return rounded;
 }
 
 // The material at `hit`, seen along `direction` by a ray of kind `ray`
@@ -3586,6 +3639,8 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var mirror_dir = vec3<f32>(0.0);
         var mirror_rise = 0.0;
         var mirror_near = 1.0;
+        // bevel_normal's place while its probes are walked.
+        var bevel_at: BevelAt;
         var seg_st: PathState;
         var seg_s: Sampler;
         var hit_st: PathState;
@@ -3719,15 +3774,22 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         seg_drawn = true;
                     }
                 }
-                var hit: RayIntersection;
+                // The floor's mirror ray's first hit, found before its path was
+                // set up; else the segment's ray, walked.
                 if (have_next && !seg_short) {
-                    hit = next;
+                    found.hit = next;
                     have_next = false;
                 } else {
                     have_next = false;
-                    hit = trace_within(st.origin, st.direction, reach);
+                    w = walk_new(WALK_FIRST, st.origin, st.direction, reach);
+                    walking = true;
+                    phase = PH_RAY;
+                    continue;
                 }
-                seg_hit = hit;
+                phase = PH_RAY;
+            }
+            if (phase == PH_RAY) {
+                seg_hit = found.hit;
                 if (programs_cut) {
                     seg_st = st;
                     seg_s = s;
@@ -4047,12 +4109,18 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         }
                         at_step = 4u;
                     }
+                    // A short reflection is gone above its fade, and one that
+                    // never fades meets nothing over most of the floor: one
+                    // intersection says so first, walked.
+                    let origin = offset_at(raw.position, normal, raw.magnitude);
                     if (at_step == 4u) {
-                        let origin = offset_at(raw.position, normal, raw.magnitude);
-                        // A short reflection is gone above its fade, and
-                        // one that never fades meets nothing over most of
-                        // the floor: one intersection says so first.
-                        let first = trace(origin, mirror_dir);
+                        w = walk_new(WALK_FIRST, origin, mirror_dir, 3.0e38);
+                        walking = true;
+                        at_step = 5u;
+                        continue;
+                    }
+                    if (at_step == 5u) {
+                        let first = found.hit;
                         let met = first.kind != RAY_QUERY_INTERSECTION_NONE;
                         let reaches = c.fade == FADE_BY_DISTANCE || (met && !(c.fade == FADE_BY_HEIGHT && first.t * mirror_rise >= c.reflection_fade));
                         if (reaches) {
@@ -4171,18 +4239,34 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     ended = false;
                     break;
                 }
-                // The material at this point (ic:1626-1710): its program run and
-                // its bump applied, ahead of the cutout and the glow it may
-                // drive and of the bounce limit, as the processor shades it
-                // there too; past the limit only where the program drives
-                // what is read before it.
                 seg_surf = facing(raw, st.direction);
+                seg_rounded = seg_surf.shading;
+                var fresh: BevelAt;
+                bevel_at = fresh;
+                bevel_at.sum = seg_surf.shading * 1e-3;
+                phase = PH_BEVEL;
+            }
+            // The material at this point (ic:1626-1710): its program run and
+            // its bump applied, ahead of the cutout and the glow it may drive
+            // and of the bounce limit, as the processor shades it there too;
+            // past the limit only where the program drives what is read
+            // before it.
+            if (phase == PH_BEVEL) {
+                let hit = seg_hit;
+                let inst = scene_instances[hit.instance_custom_data];
+                let base = scene_materials[inst.material];
                 // Rounded edges on the surface a path meets first (ic:1680-1691):
                 // their draws after the material's program (which draws none)
-                // and before the cutout's, the bump bending what they leave.
-                seg_rounded = seg_surf.shading;
+                // and before the cutout's, the bump bending what they leave;
+                // each probe walked.
                 if (FEATURE_BEVEL && (frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {
-                    seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);
+                    let rounded = bevel_normal_step(hit.instance_custom_data, seg_raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s, &bevel_at, found);
+                    if (rounded.wants) {
+                        w = rounded.walk;
+                        walking = true;
+                        continue;
+                    }
+                    seg_rounded = rounded.normal;
                 }
                 material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
                 let program = scene_programs[inst.material];
