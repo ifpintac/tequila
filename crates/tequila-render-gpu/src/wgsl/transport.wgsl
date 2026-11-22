@@ -615,15 +615,19 @@ fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_n
 
 // ---- The one walk along a ray (docs/07 D5, D6) -----------------------------
 //
-// Every ray the transport traces goes through walk_ray(), which path()
-// calls from one place: the driver inlines every
-// function, and a query copied at each place a ray was wanted - with what
-// follows it, the opacity a program drives, the clear glass, the medium -
-// had made the kernel's cold compile grow with every port. A function that
-// needs a walk halfway hands back what to walk and where it stands, path()
-// makes the walk at the top of its loop, and the function takes up again
-// from there with what the walk found (`Walk`, `WalkEnd`). No walk draws
-// from the sampler.
+// Every ray the transport traces goes through walk_ray(), the one ray
+// query, which path() calls from one place and direct_light from a second:
+// the driver inlines every function, and a query copied at each place a ray
+// was wanted - with what follows it, the opacity a program drives, the
+// clear glass, the medium - had made the kernel's cold compile grow with
+// every port. A function that needs a walk halfway hands back what to walk
+// and where it stands, path() makes the walk at the top of its loop, and the
+// function takes up again from there with what the walk found (`Walk`,
+// `WalkEnd`). The light sample walks its shadow rays itself, where its stack
+// is at hand (walk_ray's mode a constant there, so only the shadow ray's
+// handling is copied): carried over a turn of path()'s loop, the stack and a
+// source's numbers made the kernel two to six times slower to render. No
+// walk draws from the sampler.
 
 // What a walk is for.
 // WALK_FIRST: the closest surface of any part within `reach`
@@ -733,7 +737,7 @@ struct Visibility {
 };
 
 // A shadow ray's walk made at once, for the test kernels (tests/media.rs);
-// the transport makes its walks at path()'s one place.
+// the transport makes its walks at path()'s one place and direct_light's.
 fn shadow_walk(glass: u32, ray: ShadowRay, in_medium: bool, part: u32, sigma: vec3<f32>, blockers: u32) -> Visibility {
     let end = walk_ray(shadow_walk_of(glass, ray, in_medium, part, sigma, blockers));
     return Visibility(end.through, end.bent);
@@ -1061,8 +1065,8 @@ const WANT_CROSSING: u32 = 2u;
 // met and the sky, the walk, the surface; a floor met; the medium crossed,
 // stand-ins and boundaries passed; the rounded edges and the program; at
 // the hit, its material known - the cutout and the camera's
-// coverage, the coverage known, the light past a part, a glow, the vertex,
-// its light sample.
+// coverage, the coverage known, the light past a part, a glow; then the
+// vertex and its light sample.
 const PH_MEDIA: u32 = 0u;
 const PH_START: u32 = 1u;
 const PH_RAY: u32 = 2u;
@@ -1074,8 +1078,6 @@ const PH_HIT: u32 = 7u;
 const PH_COVERED: u32 = 8u;
 const PH_PAST: u32 = 9u;
 const PH_GLOW: u32 = 10u;
-const PH_SHADE: u32 = 11u;
-const PH_DIRECT: u32 = 12u;
 
 // settings.rs's DEFAULT_PIXEL_SPREAD: the footprint a shadow ray's program
 // is read with.
@@ -1897,7 +1899,7 @@ fn left_to_bounces(pdf: f32, seen_in: f32) -> vec3<f32> {
 // (sample_from), and one lamp chosen by power - not down the hierarchy, a
 // point in a medium having no normal to cull by - each weighed by the phase
 // function towards it and by what of the medium lies between
-// (shadow_walk's medium_transmittance); the sky's share against the phase
+// (WALK_SHADOW's medium_transmittance); the sky's share against the phase
 // function's density, the lamp's whole; each clamped on its own, after the
 // path's throughput. One call of this for both (path's, after the vertex
 // is shaded), for the kernel's size: the second call a collision had made
@@ -1945,43 +1947,7 @@ struct Direct {
     through: u32,
 };
 
-// What direct_light keeps while path() walks a source's shadow ray: the
-// source it waits at, and that source's numbers its shadow ray leaves to
-// weigh - its light, density and whether it is a delta, the cosine to it in
-// the shading frame, the stack's value and densities that way (all of them,
-// the seeing lobes'), the phase function's, the lamp's choice and whether
-// it is shared with the bounces; and the sums so far.
-struct DirectAt {
-    source: u32,
-    pending: bool,
-    radiance: vec3<f32>,
-    pdf: f32,
-    is_delta: bool,
-    wiz: f32,
-    value: vec3<f32>,
-    bsdf_pdf: f32,
-    seen_pdf: f32,
-    phase: f32,
-    p_select: f32,
-    is_shared: bool,
-    direct: vec3<f32>,
-    parts: Direct,
-};
-
-// What direct_light hands back: a shadow ray to walk, or the light.
-struct DirectStep {
-    wants: bool,
-    walk: Walk,
-    parts: Direct,
-};
-
-// direct_light from where `at` says, `found` the walk of the shadow ray it
-// waits on: a source's draws and its stack's evaluation, then its shadow ray
-// handed to path(), then its weighing once walked; the next source's draws
-// only after. A fresh DirectAt starts at the sky.
-fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt, at: ptr<function, DirectAt>, found: WalkEnd) -> DirectStep {
-    var out: DirectStep;
-    out.wants = false;
+fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
     let bsdf = here.bsdf;
     let f = here.f;
     let wo = here.wo;
@@ -1990,213 +1956,171 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt, at: ptr<function
     let transmissive = here.transmissive;
     let facing = here.facing;
     let medium = FEATURE_SCATTERING && here.medium;
-    var direct = (*at).direct;
-    var parts = (*at).parts;
-    for (var source = (*at).source; source < 3u; source++) {
+    var direct = vec3<f32>(0.0);
+    var parts: Direct;
+    for (var source = 0u; source < 3u; source++) {
         let sky = source == 0u;
         let glow = source == 2u;
-        // What the shadow ray leaves to weigh.
-        var radiance: vec3<f32>;
-        var pdf: f32;
-        var is_delta: bool;
-        var wiz: f32;
-        var value: vec3<f32>;
-        var bsdf_pdf: f32;
-        var seen_pdf: f32;
-        var phase: f32;
+        var draw: LightDraw;
+        var diffuse = true;
+        var specular = true;
+        var shadow = true;
         var p_select = 1.0;
         var is_shared = false;
+        // The lamp whose shadow links say which parts cast its shadow; every
+        // part for the sky and the glowing triangles.
+        var blockers = NO_LIGHT;
+        // A glowing triangle's shadow ray ends at the point chosen on it,
+        // moved off it along its normal.
+        var glow_point = vec3<f32>(0.0);
+        var glow_normal = vec3<f32>(0.0);
+        if (glow) {
+            if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {
+                continue;
+            }
+            // Chosen from here down the tree, on the bounce's light choice
+            // and light sample, as the lamp was.
+            let e = emitters_sample(surf.position, surf.geometric, transmissive, sampler_light_select(s), sampler_light_sample(s));
+            if (!e.ok) {
+                continue;
+            }
+            let to_light = e.position - surf.position;
+            let distance_squared = dot(to_light, to_light);
+            if (!(distance_squared > 0.0 && is_finite(distance_squared))) {
+                continue;
+            }
+            let direction = to_light * (1.0 / sqrt(distance_squared));
+            // It glows from the side its winding faces, to a light sample as
+            // to a bounce; seen edge on its density is no number.
+            let cos_light = -dot(direction, e.normal);
+            if (cos_light <= 1e-9) {
+                continue;
+            }
+            let pdf = e.density * distance_squared / cos_light;
+            if (!(pdf > 0.0 && is_finite(pdf))) {
+                continue;
+            }
+            draw = LightDraw(true, direction, e.radiance, 0.0, false, pdf, false);
+            glow_point = e.position;
+            glow_normal = e.normal;
+        } else if (sky) {
+            if (!medium && frame.env_intensity <= 0.0) {
+                continue;
+            }
+            // With a dome of a size, the whole sky drawn from its centre and
+            // seen from here (sample_from): the direction there, the density
+            // times the patch's jacobian, and how far the dome is.
+            let finite = dome_finite();
+            let e = env_sample_sky(select(facing, vec3<f32>(0.0), finite), sampler_light_sample(s));
+            if (!e.ok) {
+                continue;
+            }
+            var towards = e.direction;
+            var pdf = e.pdf;
+            var distance = 0.0;
+            if (finite) {
+                let seen = dome_from_centre(surf.position, e.direction);
+                if (!seen.ok) {
+                    continue;
+                }
+                towards = seen.direction;
+                pdf = e.pdf * seen.jacobian;
+                distance = seen.distance;
+                if (!(pdf > 0.0)) {
+                    continue;
+                }
+            }
+            if (pdf <= 0.0 || all(e.radiance == vec3<f32>(0.0))) {
+                continue;
+            }
+            draw = LightDraw(true, towards, e.radiance, distance, !finite, pdf, false);
+        } else {
+            if (!FEATURE_LAMPS || frame.light_count == 0u) {
+                continue;
+            }
+            // The lamp chosen from this point, facing the side the path is on
+            // (both sides for a surface that transmits), and its own variates.
+            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u && !medium, surf.position, surf.geometric, transmissive, sampler_light_select(s));
+            if (!choice.ok) {
+                continue;
+            }
+            let light = scene_lights[choice.index];
+            // Light linking: a lamp kept to other parts lights nothing here.
+            if (!lamp_lights(light, instance)) {
+                continue;
+            }
+            draw = lamp_sample(light, surf.position, sampler_light_sample(s));
+            if (!draw.ok || all(draw.radiance == vec3<f32>(0.0)) || (!draw.is_delta && draw.pdf <= 0.0)) {
+                continue;
+            }
+            diffuse = light_has(light, LF_DIFFUSE);
+            specular = light_has(light, LF_SPECULAR);
+            shadow = light_has(light, LF_SHADOW);
+            p_select = choice.probability;
+            blockers = choice.index;
+            // A collision's lamp lights by its diffuse visibility, with a
+            // density.
+            if (medium && !(diffuse && (draw.is_delta || draw.pdf > 0.0))) {
+                continue;
+            }
+            // Shared with the bounces that meet it (ic:4686).
+            is_shared = !medium && (frame.lamp_flags & LAMPS_SEEN) != 0u && frame.shadows != 0u && !draw.is_delta && lamp_met_by_bounces(light, instance);
+        }
+        // Lit from behind only through a surface that transmits. A
+        // collision's stack is the phase function; the surface's
+        // evaluation runs for it too, of an empty stack, and is left.
+        let below = dot(draw.direction, surf.geometric) <= 0.0;
+        if (!medium && below && !transmissive) {
+            continue;
+        }
+        let wi = to_local(f, draw.direction);
+        if (!medium && (wi.z == 0.0 || (wi.z < 0.0 && !transmissive))) {
+            continue;
+        }
+        let value = openpbr_eval_selective(bsdf, wo, wi, diffuse, specular);
+        if (!medium && all(value == vec3<f32>(0.0))) {
+            continue;
+        }
+        // The stack's density, and its seeing lobes', in one pass.
+        let densities = openpbr_densities(bsdf, wo, wi, SEEN_UP_TO, PASSED_FROM);
+        let phase = md_phase(md_dot(wo, draw.direction), here.g);
+        let bsdf_pdf = select(densities.x, 0.0, draw.is_delta);
         var visibility = vec3<f32>(1.0);
         var bent = false;
-        if ((*at).pending) {
-            (*at).pending = false;
-            radiance = (*at).radiance;
-            pdf = (*at).pdf;
-            is_delta = (*at).is_delta;
-            wiz = (*at).wiz;
-            value = (*at).value;
-            bsdf_pdf = (*at).bsdf_pdf;
-            seen_pdf = (*at).seen_pdf;
-            phase = (*at).phase;
-            p_select = (*at).p_select;
-            is_shared = (*at).is_shared;
-            if (!medium && all(found.through == vec3<f32>(0.0))) {
+        if (frame.shadows != 0u && shadow) {
+            // Just short of a lamp; past everything for the sky or a sun;
+            // out of the side the light is on. From a collision, from the
+            // point itself, through the medium.
+            var reach = frame.shadow_far;
+            if (!draw.infinite) {
+                reach = draw.distance * (1.0 - 1e-3);
+            }
+            var ray = ShadowRay(surf.position, draw.direction, reach);
+            if (!medium) {
+                let leaving = select(surf.geometric, -surf.geometric, below);
+                var aim = surf.position + draw.direction * reach;
+                var aim_normal = -draw.direction;
+                if (glow) {
+                    aim = glow_point;
+                    aim_normal = glow_normal;
+                }
+                ray = shadow_ray(offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
+            }
+            // The light sample's own walk (walk_ray's second place, see
+            // there): walked here, the stack still at hand.
+            let v = walk_ray(shadow_walk_of(frame.shadow_glass, ray, medium, instance, here.sigma, blockers));
+            if (!medium && all(v.through == vec3<f32>(0.0))) {
                 continue;
             }
-            visibility = found.through;
-            bent = found.bent;
-        } else {
-            var draw: LightDraw;
-            var diffuse = true;
-            var specular = true;
-            var shadow = true;
-            // The lamp whose shadow links say which parts cast its shadow;
-            // every part for the sky and the glowing triangles.
-            var blockers = NO_LIGHT;
-            // A glowing triangle's shadow ray ends at the point chosen on it,
-            // moved off it along its normal.
-            var glow_point = vec3<f32>(0.0);
-            var glow_normal = vec3<f32>(0.0);
-            if (glow) {
-                if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {
-                    continue;
-                }
-                // Chosen from here down the tree, on the bounce's light choice
-                // and light sample, as the lamp was.
-                let e = emitters_sample(surf.position, surf.geometric, transmissive, sampler_light_select(s), sampler_light_sample(s));
-                if (!e.ok) {
-                    continue;
-                }
-                let to_light = e.position - surf.position;
-                let distance_squared = dot(to_light, to_light);
-                if (!(distance_squared > 0.0 && is_finite(distance_squared))) {
-                    continue;
-                }
-                let direction = to_light * (1.0 / sqrt(distance_squared));
-                // It glows from the side its winding faces, to a light sample as
-                // to a bounce; seen edge on its density is no number.
-                let cos_light = -dot(direction, e.normal);
-                if (cos_light <= 1e-9) {
-                    continue;
-                }
-                let light_pdf = e.density * distance_squared / cos_light;
-                if (!(light_pdf > 0.0 && is_finite(light_pdf))) {
-                    continue;
-                }
-                draw = LightDraw(true, direction, e.radiance, 0.0, false, light_pdf, false);
-                glow_point = e.position;
-                glow_normal = e.normal;
-            } else if (sky) {
-                if (!medium && frame.env_intensity <= 0.0) {
-                    continue;
-                }
-                // With a dome of a size, the whole sky drawn from its centre and
-                // seen from here (sample_from): the direction there, the density
-                // times the patch's jacobian, and how far the dome is.
-                let finite = dome_finite();
-                let e = env_sample_sky(select(facing, vec3<f32>(0.0), finite), sampler_light_sample(s));
-                if (!e.ok) {
-                    continue;
-                }
-                var towards = e.direction;
-                var sky_pdf = e.pdf;
-                var distance = 0.0;
-                if (finite) {
-                    let seen = dome_from_centre(surf.position, e.direction);
-                    if (!seen.ok) {
-                        continue;
-                    }
-                    towards = seen.direction;
-                    sky_pdf = e.pdf * seen.jacobian;
-                    distance = seen.distance;
-                    if (!(sky_pdf > 0.0)) {
-                        continue;
-                    }
-                }
-                if (sky_pdf <= 0.0 || all(e.radiance == vec3<f32>(0.0))) {
-                    continue;
-                }
-                draw = LightDraw(true, towards, e.radiance, distance, !finite, sky_pdf, false);
-            } else {
-                if (!FEATURE_LAMPS || frame.light_count == 0u) {
-                    continue;
-                }
-                // The lamp chosen from this point, facing the side the path is on
-                // (both sides for a surface that transmits), and its own variates.
-                let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u && !medium, surf.position, surf.geometric, transmissive, sampler_light_select(s));
-                if (!choice.ok) {
-                    continue;
-                }
-                let light = scene_lights[choice.index];
-                // Light linking: a lamp kept to other parts lights nothing here.
-                if (!lamp_lights(light, instance)) {
-                    continue;
-                }
-                draw = lamp_sample(light, surf.position, sampler_light_sample(s));
-                if (!draw.ok || all(draw.radiance == vec3<f32>(0.0)) || (!draw.is_delta && draw.pdf <= 0.0)) {
-                    continue;
-                }
-                diffuse = light_has(light, LF_DIFFUSE);
-                specular = light_has(light, LF_SPECULAR);
-                shadow = light_has(light, LF_SHADOW);
-                p_select = choice.probability;
-                blockers = choice.index;
-                // A collision's lamp lights by its diffuse visibility, with a
-                // density.
-                if (medium && !(diffuse && (draw.is_delta || draw.pdf > 0.0))) {
-                    continue;
-                }
-                // Shared with the bounces that meet it (ic:4686).
-                is_shared = !medium && (frame.lamp_flags & LAMPS_SEEN) != 0u && frame.shadows != 0u && !draw.is_delta && lamp_met_by_bounces(light, instance);
-            }
-            // Lit from behind only through a surface that transmits. A
-            // collision's stack is the phase function; the surface's
-            // evaluation runs for it too, of an empty stack, and is left.
-            let below = dot(draw.direction, surf.geometric) <= 0.0;
-            if (!medium && below && !transmissive) {
-                continue;
-            }
-            let wi = to_local(f, draw.direction);
-            if (!medium && (wi.z == 0.0 || (wi.z < 0.0 && !transmissive))) {
-                continue;
-            }
-            value = openpbr_eval_selective(bsdf, wo, wi, diffuse, specular);
-            if (!medium && all(value == vec3<f32>(0.0))) {
-                continue;
-            }
-            // The stack's density, and its seeing lobes', in one pass.
-            let densities = openpbr_densities(bsdf, wo, wi, SEEN_UP_TO, PASSED_FROM);
-            phase = md_phase(md_dot(wo, draw.direction), here.g);
-            bsdf_pdf = select(densities.x, 0.0, draw.is_delta);
-            seen_pdf = densities.y;
-            radiance = draw.radiance;
-            pdf = draw.pdf;
-            is_delta = draw.is_delta;
-            wiz = wi.z;
-            if (frame.shadows != 0u && shadow) {
-                // Just short of a lamp; past everything for the sky or a sun;
-                // out of the side the light is on. From a collision, from the
-                // point itself, through the medium. Walked by path().
-                var reach = frame.shadow_far;
-                if (!draw.infinite) {
-                    reach = draw.distance * (1.0 - 1e-3);
-                }
-                var ray = ShadowRay(surf.position, draw.direction, reach);
-                if (!medium) {
-                    let leaving = select(surf.geometric, -surf.geometric, below);
-                    var aim = surf.position + draw.direction * reach;
-                    var aim_normal = -draw.direction;
-                    if (glow) {
-                        aim = glow_point;
-                        aim_normal = glow_normal;
-                    }
-                    ray = shadow_ray(offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
-                }
-                (*at).source = source;
-                (*at).pending = true;
-                (*at).radiance = radiance;
-                (*at).pdf = pdf;
-                (*at).is_delta = is_delta;
-                (*at).wiz = wiz;
-                (*at).value = value;
-                (*at).bsdf_pdf = bsdf_pdf;
-                (*at).seen_pdf = seen_pdf;
-                (*at).phase = phase;
-                (*at).p_select = p_select;
-                (*at).is_shared = is_shared;
-                (*at).direct = direct;
-                (*at).parts = parts;
-                out.wants = true;
-                out.walk = shadow_walk_of(frame.shadow_glass, ray, medium, instance, here.sigma, blockers);
-                return out;
-            }
+            visibility = v.through;
+            bent = v.bent;
         }
         if (medium) {
             var lit: vec3<f32>;
             if (sky) {
-                lit = (radiance * visibility) * cy_div(cy_exact(phase * mis_power(pdf, phase)), pdf);
+                lit = (draw.radiance * visibility) * cy_div(cy_exact(phase * mis_power(draw.pdf, phase)), draw.pdf);
             } else {
-                lit = (radiance * visibility) * cy_div(phase, select(pdf * p_select, p_select, is_delta));
+                lit = (draw.radiance * visibility) * cy_div(phase, select(draw.pdf * p_select, p_select, draw.is_delta));
             }
             direct += clamp_light(here.throughput * lit, here.ceiling);
             continue;
@@ -2204,24 +2128,24 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt, at: ptr<function
         var scale: vec3<f32>;
         if (!(source == 1u)) {
             // The sky, or a glowing triangle, which the bounce can meet too.
-            var weight = mis_power(pdf, bsdf_pdf);
+            var weight = mis_power(draw.pdf, bsdf_pdf);
             // Through glass that bends light, shared with the bounces that
             // pass it and those that see it.
             if (bent && (frame.lamp_flags & LAMPS_SEEN) != 0u) {
-                let left = left_to_bounces(bsdf_pdf, seen_pdf);
-                weight = left.x * mis_power(pdf, left.y) + (1.0 - left.x) * mis_power(pdf, left.z);
+                let left = left_to_bounces(bsdf_pdf, densities.y);
+                weight = left.x * mis_power(draw.pdf, left.y) + (1.0 - left.x) * mis_power(draw.pdf, left.z);
             }
-            scale = radiance * ((abs(wiz) * weight) / pdf);
+            scale = draw.radiance * ((abs(wi.z) * weight) / draw.pdf);
         } else {
             // No MIS against the bounces that cannot meet a lamp; the share
             // of one they can meet that this sample keeps.
             var share = 1.0;
             if (is_shared) {
-                let left = left_to_bounces(bsdf_pdf, seen_pdf);
-                share = left.x + (1.0 - left.x) * mis_power(pdf * p_select, left.z);
+                let left = left_to_bounces(bsdf_pdf, densities.y);
+                share = left.x + (1.0 - left.x) * mis_power(draw.pdf * p_select, left.z);
             }
-            let density = select(pdf * p_select, p_select, is_delta);
-            scale = radiance * ((abs(wiz) * share) / density);
+            let density = select(draw.pdf * p_select, p_select, draw.is_delta);
+            scale = draw.radiance * ((abs(wi.z) * share) / density);
         }
         direct += value * (scale * visibility);
         if (FEATURE_SPECTRAL) {
@@ -2236,30 +2160,12 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt, at: ptr<function
                 parts.values[2] = value;
                 parts.scales[2] = lit;
             }
-            if (wiz < 0.0) {
+            if (wi.z < 0.0) {
                 parts.through |= 1u << source;
             }
         }
     }
     parts.total = direct;
-    out.parts = parts;
-    return out;
-}
-
-// direct_light with its shadow rays walked at once, for the test kernels
-// (tests/media.rs); the transport walks them at path()'s one place.
-fn direct_light_now(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
-    var at: DirectAt;
-    var found: WalkEnd;
-    var parts: Direct;
-    loop {
-        let step = direct_light(s, here, &at, found);
-        if (!step.wants) {
-            parts = step.parts;
-            break;
-        }
-        found = walk_ray(step.walk);
-    }
     return parts;
 }
 
@@ -3633,14 +3539,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var seg_depth = 0.0;
         var seg_pre_s: Sampler;
         // The light sample of the vertex the segment ends at, or of a
-        // collision in a medium (`colliding`): direct_light's one call; where
-        // it stands while its shadow rays are walked, and what the vertex's
-        // shading decided meanwhile.
+        // collision in a medium (`colliding`): direct_light's one call.
         var light: LightSampleAt;
         var colliding = false;
-        var direct_at: DirectAt;
-        var shaded = SHADE_ON;
-        var off: SplitOff;
         // The floor's mirror ray while its nearness is walked: its way, how
         // squarely it leaves the floor and the nearness.
         var mirror_dir = vec3<f32>(0.0);
@@ -4406,28 +4307,18 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
                     }
                 }
-                phase = PH_SHADE;
             }
-            if (phase == PH_SHADE) {
-                shaded = SHADE_ON;
-                if (!colliding) {
-                    light.wanted = false;
-                    shaded = shade_vertex(&st, &s, seg_hit, seg_surf, material, &off, &light);
-                }
-                var fresh: DirectAt;
-                direct_at = fresh;
-                phase = PH_DIRECT;
+            // The vertex, then its light sample (ic:2043-2224), or the
+            // collision's (ic:4123): direct_light's one call, which walks its
+            // shadow rays itself (walk_ray).
+            var off: SplitOff;
+            var shaded = SHADE_ON;
+            if (!colliding) {
+                light.wanted = false;
+                shaded = shade_vertex(&st, &s, seg_hit, seg_surf, material, &off, &light);
             }
-            // The vertex's light sample (ic:2043-2224), or the collision's
-            // (ic:4123): direct_light's one call, its shadow rays walked.
             if (light.wanted) {
-                let step = direct_light(&s, light, &direct_at, found);
-                if (step.wants) {
-                    w = step.walk;
-                    walking = true;
-                    continue;
-                }
-                let direct = step.parts;
+                let direct = direct_light(&s, light);
                 if (FEATURE_SCATTERING && light.medium) {
                     st.radiance += direct.total;
                 } else if (FEATURE_SPECTRAL && spectral_on) {
@@ -4451,6 +4342,19 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 } else {
                     st.radiance += clamp_light(light.throughput * direct.total, light.ceiling);
                 }
+            }
+            // Its shadow rays past a cutout a program drives whose opacity
+            // this pass does not know: thrown away, back to the hit.
+            if (cut_wanted) {
+                st = hit_st;
+                s = hit_s;
+                cut_next = hit_next;
+                cut_wanted = false;
+                want = WANT_CROSSING;
+                at_i = 0u;
+                at_step = 0u;
+                phase = PH_HIT;
+                continue;
             }
             if (shaded == SHADE_ON) {
                 ended = false;

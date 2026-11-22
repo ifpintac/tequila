@@ -520,7 +520,7 @@ fn medium_light_test(@builtin(global_invocation_id) id: vec3<u32>) {
     here.ceiling = 0.0;
     here.sigma = c.xyz;
     here.g = a.w;
-    let lit = direct_light_now(&s, here).total;
+    let lit = direct_light(&s, here).total;
     let next = sampler_next_unstructured(&s);
     frame_samples[4u * k] = vec4<f32>(lit, next);
 }
