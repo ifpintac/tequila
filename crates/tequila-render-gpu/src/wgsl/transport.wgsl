@@ -771,7 +771,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
     let glows = FEATURE_EMITTERS && past && w.glows;
     let solid = mode == WALK_SHADOW && glass == GLASS_SOLID && (!FEATURE_CUTOUTS || (frame.glass_flags & SCENE_CUTOUTS) == 0u) && !linked && !in_medium;
     let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
-    let mask = select(MASK_SURFACE, select(MASK_SHADOW | MASK_FLOOR, MASK_SHADOW, w.past_floors), solid);
+    let mask = select(MASK_SURFACE, select(MASK_SHADOW | MASK_FLOOR, MASK_SHADOW, FEATURE_FLOOR && w.past_floors), solid);
     let sigma = w.sigma;
     let majorant = max(max(sigma.x, sigma.y), sigma.z);
     var origin = w.origin;
@@ -902,7 +902,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
             out.bent = bent;
             return out;
         }
-        let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (linked && !lamp_casts(lamp, inst.instance)) || (w.past_floors && (inst.flags & INSTANCE_FLOOR_PASSES) != 0u);
+        let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (linked && !lamp_casts(lamp, inst.instance)) || (FEATURE_FLOOR && w.past_floors && (inst.flags & INSTANCE_FLOOR_PASSES) != 0u);
         let at = along + hit.t;
         let m = scene_materials[inst.material];
         let bends = (m.glass & GLASS_BENDS) != 0u;
@@ -2111,9 +2111,11 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
             }
             // The light sample's own walk (walk_ray's second place, see
             // there): walked here, the stack still at hand. The sky's passes
-            // the floors the bounces pass where it sees past them.
+            // the floors the bounces pass where it sees past them (a kernel
+            // part with the floor's: with no floor nothing answers
+            // MASK_FLOOR, and either mask is the same).
             var walk = shadow_walk_of(frame.shadow_glass, ray, medium, instance, here.sigma, blockers);
-            walk.past_floors = sky && !medium && (frame.lamp_flags & LAMPS_SKY_PAST_FLOORS) != 0u;
+            walk.past_floors = FEATURE_FLOOR && sky && !medium && (frame.lamp_flags & LAMPS_SKY_PAST_FLOORS) != 0u;
             let v = walk_ray(walk);
             if (!medium && all(v.through == vec3<f32>(0.0))) {
                 continue;
