@@ -621,12 +621,12 @@ fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_n
 // was wanted - with what follows it, the opacity a program drives, the
 // clear glass, the medium - had made the kernel's cold compile grow with
 // every port. A function that needs a walk halfway hands back what to walk
-// and where it stands, path() makes the walk at the top of its loop, and the
-// function takes up again from there with what the walk found (`Walk`,
+// and where it stands, path() makes the walk at its place in its loop, and
+// the function takes up again from there with what the walk found (`Walk`,
 // `WalkEnd`). The light sample walks its shadow rays itself, where its stack
 // is at hand (walk_ray's mode a constant there, so only the shadow ray's
 // handling is copied): carried over a turn of path()'s loop, the stack and a
-// source's numbers made the kernel two to six times slower to render. No
+// source's numbers made the kernel two to three times slower to render. No
 // walk draws from the sampler.
 
 // What a walk is for.
@@ -3501,10 +3501,13 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var out: PathOut;
     loop {
         // One segment of the path: `ended` false where the path goes on.
-        // Its loop takes it a step at a time (`phase`, PH_*), and at the top
-        // of each turn makes the walk along a ray a step asked for, if one
-        // did (walk_ray, its one place): the step stops there and the next
-        // turn takes up where it stopped, with what the walk found. A pass
+        // Its loop takes it a step at a time (`phase`, PH_*), and in each
+        // turn, past the program and the segment's setting out, makes the
+        // walk along a ray a step asked for, if one did (walk_ray, its one
+        // place here): a later step stops where it asks and the next turn
+        // takes up there, with what the walk found; the segment's own ray is
+        // walked in the turn that sets it out, as a turn the driver keeps
+        // everything over costs the whole kernel a fifth of its speed. A pass
         // of the segment may also be run more than once. Where a walk - a
         // shadow ray, the camera's coverage, the floor's shadow - meets a
         // cutout a program drives whose opacity this pass has not worked out
@@ -3521,7 +3524,8 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var at_i = 0u;
         var at_step = 0u;
         var at_carried = vec3<f32>(0.0);
-        // The walk asked for, to be made at the top of the next turn.
+        // The walk asked for, made at the walk's place in this turn or the
+        // next.
         var w: Walk;
         var walking = false;
         var want = WANT_NONE;
@@ -3562,32 +3566,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var material: ProgShaded;
         let programs_cut = FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
         loop {
-            // ---- The one place a walk along a ray is made (docs/07 D5) ----
             var found: WalkEnd;
-            if (walking) {
-                found = walk_ray(w);
-                walking = false;
-                // Past a cutout a program drives whose opacity this pass does
-                // not know: the pass thrown away, back to where the segment's
-                // ray was traced or to its hit, the program run below.
-                if (cut_wanted) {
-                    cut_wanted = false;
-                    want = WANT_CROSSING;
-                    at_i = 0u;
-                    at_step = 0u;
-                    if (phase >= PH_HIT) {
-                        st = hit_st;
-                        s = hit_s;
-                        cut_next = hit_next;
-                        phase = PH_HIT;
-                    } else {
-                        st = seg_st;
-                        s = seg_s;
-                        cut_next = 0u;
-                        phase = PH_TRACED;
-                    }
-                }
-            }
             // ---- The one place a material's program runs (docs/07 §7) ----
             // The material at the segment's hit (ic:1626-1710), or a cutout's
             // opacity where a walk crossed it, as a shadow ray sees it
@@ -3616,11 +3595,6 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 }
                 want = WANT_NONE;
             }
-            // ---- The media the path starts inside (enclosing_media) ----
-            if (FEATURE_GLASS && phase == PH_MEDIA) {
-                st.media = found.media;
-                phase = PH_START;
-            }
             // ---- The segment sets out ----
             if (phase == PH_START) {
                 // Asked once where a path sets out: by a walk where anything
@@ -3631,11 +3605,13 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         w = walk_new(WALK_MEDIA, st.origin, st.direction, 3.0e38);
                         walking = true;
                         phase = PH_MEDIA;
-                        continue;
+                    } else {
+                        var none: Media;
+                        st.media = none;
                     }
-                    var none: Media;
-                    st.media = none;
                 }
+            }
+            if (phase == PH_START) {
                 // A walk through a medium that scatters draws its next
                 // flight before its ray is traced, and traces it only as
                 // far as the flight goes (ic:968-1001): most flights end
@@ -3691,10 +3667,40 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     have_next = false;
                     w = walk_new(WALK_FIRST, st.origin, st.direction, reach);
                     walking = true;
-                    phase = PH_RAY;
-                    continue;
                 }
                 phase = PH_RAY;
+            }
+            // ---- The one place a walk along a ray is made (docs/07 D5) ----
+            if (walking) {
+                found = walk_ray(w);
+                walking = false;
+                // Past a cutout a program drives whose opacity this pass does
+                // not know: the pass thrown away, back to where the segment's
+                // ray was traced or to its hit, the program run below.
+                if (cut_wanted) {
+                    cut_wanted = false;
+                    want = WANT_CROSSING;
+                    at_i = 0u;
+                    at_step = 0u;
+                    if (phase >= PH_HIT) {
+                        st = hit_st;
+                        s = hit_s;
+                        cut_next = hit_next;
+                        phase = PH_HIT;
+                    } else {
+                        st = seg_st;
+                        s = seg_s;
+                        cut_next = 0u;
+                        phase = PH_TRACED;
+                    }
+                    continue;
+                }
+            }
+            // ---- The media the path starts inside (enclosing_media) ----
+            if (FEATURE_GLASS && phase == PH_MEDIA) {
+                st.media = found.media;
+                phase = PH_START;
+                continue;
             }
             if (phase == PH_RAY) {
                 seg_hit = found.hit;
