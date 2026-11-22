@@ -119,13 +119,21 @@ pub const INSTANCE_NO_TRANSMISSION: u32 = 32;
 pub const INSTANCE_HOLDOUT: u32 = 64;
 /// Any of those: a part some ray passes, or held out.
 pub const INSTANCE_UNSEEN: u32 = INSTANCE_NO_CAMERA | INSTANCE_NO_DIFFUSE | INSTANCE_NO_GLOSSY | INSTANCE_NO_TRANSMISSION | INSTANCE_HOLDOUT;
+/// A shadow-catching floor the bounces pass (`SceneSnapshot::floor_passes`):
+/// the sky's shadow ray passes it too where it sees past such floors
+/// (`lights::LAMPS_SKY_PAST_FLOORS`).
+pub const INSTANCE_FLOOR_PASSES: u32 = 128;
 
 /// The top-level structure's instance masks, as Embree's geometry masks are
 /// (`tequila-render-cpu`'s `embree.rs`): every instance a surface, and the
 /// ones that cast shadows also in the mask shadow rays look for. A lamp's
 /// stand-in and a part that casts no shadow are passed by every shadow ray.
+/// A floor the bounces pass that casts shadows answers [`MASK_FLOOR`] in
+/// place of [`MASK_SHADOW`], which every shadow ray but the sky's past such
+/// floors also looks for.
 pub const MASK_SURFACE: u8 = 1;
 pub const MASK_SHADOW: u8 = 2;
+pub const MASK_FLOOR: u8 = 4;
 
 /// A shadow catcher (`tequila_render_core::scene::ShadowCatcher`) as the card
 /// reads it: the floor the environment's ground puts in, or a part made one.
@@ -343,6 +351,7 @@ impl GpuScene {
                         (!inst.seen_by_glossy, INSTANCE_NO_GLOSSY),
                         (!inst.seen_by_transmission, INSTANCE_NO_TRANSMISSION),
                         (inst.holdout, INSTANCE_HOLDOUT),
+                        (inst.shadow_catcher.as_ref().is_some_and(|c| c.bounce.is_none()), INSTANCE_FLOOR_PASSES),
                     ]
                     .into_iter()
                     .filter(|(on, _)| *on)
@@ -419,7 +428,12 @@ impl GpuScene {
                 r[0][0], r[0][1], r[0][2], r[0][3], r[1][0], r[1][1], r[1][2], r[1][3], r[2][0], r[2][1], r[2][2], r[2][3],
             ];
             let blas = blases[record.mesh as usize].as_ref().expect("a traced instance's mesh has triangles");
-            let shadow = if scene.instances[traced[slot]].casts_shadows { MASK_SHADOW } else { 0 };
+            let traced_instance = &scene.instances[traced[slot]];
+            let shadow = match (traced_instance.casts_shadows, traced_instance.shadow_catcher.as_ref().is_some_and(|c| c.bounce.is_none())) {
+                (false, _) => 0,
+                (true, false) => MASK_SHADOW,
+                (true, true) => MASK_FLOOR,
+            };
             tlas[slot] = Some(wgpu::TlasInstance::new(blas, transform, slot as u32, MASK_SURFACE | shadow));
         }
         {

@@ -126,6 +126,11 @@ const MASK_SURFACE: u32 = 1 << 0;
 /// inside it, so the mesh geometries take every bit and the instance alone
 /// decides.
 const MASK_SHADOW: u32 = 1 << 1;
+/// The bit a shadow-casting floor the bounces pass answers in place of
+/// [`MASK_SHADOW`] (`SceneSnapshot::floor_passes`): carried by every
+/// occlusion ray but the sky's where it sees past such floors
+/// (`Intersector::occluded_past_floors`).
+const MASK_FLOOR: u32 = 1 << 2;
 
 /// The CPU backend: an Embree two-level BVH over a scene snapshot.
 #[derive(Debug)]
@@ -138,9 +143,10 @@ pub struct EmbreeIntersector {
     /// instance that was not attached. Kept so a transform can be updated
     /// without rebuilding. See [`EmbreeIntersector::update_transforms`].
     instance_geometry: Vec<Option<u32>>,
-    /// Some instance casts no shadow and the device cannot mask it out, so
-    /// occlusion has to walk past it hit by hit. Only an Embree built without
-    /// ray masks gets here; the shipped SDK has them.
+    /// Some instance casts no shadow, or is a floor the sky's occlusion may
+    /// pass, and the device cannot mask it out, so occlusion has to walk past
+    /// it hit by hit. Only an Embree built without ray masks gets here; the
+    /// shipped SDK has them.
     walk_shadows: bool,
 }
 
@@ -273,7 +279,12 @@ impl EmbreeIntersector {
                     xfm.as_ptr().cast(),
                 );
                 if masks {
-                    let shadow = if instance.casts_shadows { MASK_SHADOW } else { 0 };
+                    let floor = instance.shadow_catcher.as_ref().is_some_and(|c| c.bounce.is_none());
+                    let shadow = match (instance.casts_shadows, floor) {
+                        (false, _) => 0,
+                        (true, false) => MASK_SHADOW,
+                        (true, true) => MASK_FLOOR,
+                    };
                     sys::rtcSetGeometryMask(geom, MASK_SURFACE | shadow);
                 }
                 sys::rtcCommitGeometry(geom);
@@ -296,7 +307,7 @@ impl EmbreeIntersector {
             tlas
         };
 
-        let walk_shadows = !masks && scene.instances.iter().any(|i| !i.casts_shadows);
+        let walk_shadows = !masks && scene.instances.iter().any(|i| !i.casts_shadows || i.shadow_catcher.as_ref().is_some_and(|c| c.bounce.is_none()));
         Ok(EmbreeIntersector {
             scene,
             top: Arc::new(RawScene {
@@ -670,6 +681,19 @@ impl EmbreeIntersector {
         }
         self.resolve(ray, &rh)
     }
+
+    /// One any-hit query between two points among the instances answering
+    /// `mask`.
+    fn raw_occluded(&self, from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3, mask: u32) -> bool {
+        let ray = shadow_ray(from, from_normal, to, to_normal);
+        let mut r = Self::to_embree_ray(&ray, mask);
+        // SAFETY: as above. `rtcOccluded1` signals a hit by writing a negative
+        // value into `tfar` rather than by filling in a hit record.
+        unsafe {
+            sys::rtcOccluded1(self.top.handle, &mut r, std::ptr::null_mut());
+        }
+        r.tfar < 0.0
+    }
 }
 
 impl Intersector for EmbreeIntersector {
@@ -688,14 +712,17 @@ impl Intersector for EmbreeIntersector {
                 self.raw_intersect(r)
             });
         }
-        let ray = shadow_ray(from, from_normal, to, to_normal);
-        let mut r = Self::to_embree_ray(&ray, MASK_SHADOW);
-        // SAFETY: as above. `rtcOccluded1` signals a hit by writing a negative
-        // value into `tfar` rather than by filling in a hit record.
-        unsafe {
-            sys::rtcOccluded1(self.top.handle, &mut r, std::ptr::null_mut());
+        self.raw_occluded(from, from_normal, to, to_normal, MASK_SHADOW | MASK_FLOOR)
+    }
+
+    fn occluded_past_floors(&self, from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3) -> bool {
+        if !self.scene.cutters().is_empty() || self.walk_shadows {
+            let scene = &self.scene;
+            return tequila_render_core::cutaway::occluded_where(scene, from, from_normal, to, to_normal, |r| self.raw_intersect(r), |instance| {
+                scene.casts_shadows(instance) && !scene.floor_passes(instance)
+            });
         }
-        r.tfar < 0.0
+        self.raw_occluded(from, from_normal, to, to_normal, MASK_SHADOW)
     }
 
     fn scene(&self) -> &SceneSnapshot {

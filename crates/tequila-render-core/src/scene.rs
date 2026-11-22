@@ -962,6 +962,18 @@ impl SceneSnapshot {
             .is_none_or(|i| i.casts_shadows)
     }
 
+    /// Whether this instance is a shadow-catching floor the bounces pass
+    /// straight through (`integrator::trace`, a catcher reached by a bounce):
+    /// one with no bounce glow of its own. Where the sky's light sample
+    /// sees past such floors too (`integrator::sky_past_floors`), its shadow
+    /// rays pass it as well.
+    #[inline]
+    pub fn floor_passes(&self, instance: InstanceId) -> bool {
+        self.instances
+            .get(instance.0 as usize)
+            .is_some_and(|i| i.shadow_catcher.as_ref().is_some_and(|c| c.bounce.is_none()))
+    }
+
     pub fn with_lights(mut self, lights: Arc<LightSet>) -> Self {
         self.lights = lights;
         self
