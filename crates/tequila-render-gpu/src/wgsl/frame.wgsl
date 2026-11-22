@@ -118,7 +118,10 @@ struct FrameParams {
     // vector, and filter_last.
     filter_width: f32,
     filter_last: f32,
-    _pad5: u32,
+    // The cutaway volumes (cutaways.rs): where their block starts in the
+    // lamps' links buffer - their count, then their records - nought for
+    // none (FEATURE_CUTAWAYS).
+    cutters: u32,
     // A dome of a size under SCENE_FINITE_DOME (Dome): its radius, its
     // centre's height, 1 where its lower cap is the ground plane.
     dome_radius: f32,

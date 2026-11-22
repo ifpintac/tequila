@@ -556,6 +556,14 @@ fn backlit_translucency_is_the_processors_picture() {
     same_picture("backlit_translucency");
 }
 
+/// Cutaways: a box, a cylinder, a sphere, a plane and a ball of the Cutaway
+/// material cutting a block and the glass ball, every walk past what they
+/// cut, their caps met.
+#[test]
+fn cutaways_are_the_processors_picture() {
+    same_picture("cutaways");
+}
+
 /// The presets of the standard library with subsurface scattering that the
 /// card renders whole (their programs lowered with their pictures none
 /// loaded, as no preset of these has one; their surfaces on the card's

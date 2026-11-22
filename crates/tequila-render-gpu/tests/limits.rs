@@ -54,10 +54,23 @@ fn the_grey_product_has_none_of_them() {
 }
 
 #[test]
-fn a_cutaway_is_said() {
+fn a_cutaway_is_not_said() {
+    use tequila_core::math::vec3;
     let document = grey();
-    let scene = snapped(&document).with_cutters(vec![Cutter::new(CutterShape::Box, tequila_core::math::Transform::IDENTITY)]);
-    assert_eq!(part_limits(&scene, &document.lighting.config()), vec!["a cutaway is left out: the parts it cuts are whole"]);
+    // A box, and a part's own closed mesh made a cutter, are cut by on the
+    // card as on the processor.
+    let shape = Cutter::new(CutterShape::Box, tequila_core::math::Transform::IDENTITY);
+    let scene = snapped(&document).with_cutters(vec![shape.clone()]);
+    assert!(part_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &document.lighting.config()));
+    let tetrahedron = tequila_render_core::cutaway::CutMesh::new(vec![
+        [vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)],
+        [vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0)],
+        [vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0)],
+        [vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0)],
+    ]);
+    let mesh = Cutter::new(CutterShape::Mesh(std::sync::Arc::new(tetrahedron)), tequila_core::math::Transform::IDENTITY);
+    let scene = snapped(&document).with_cutters(vec![shape, mesh]);
+    assert!(part_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &document.lighting.config()));
 }
 
 #[test]

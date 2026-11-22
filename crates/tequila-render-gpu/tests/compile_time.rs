@@ -205,7 +205,7 @@ fn what_emission_and_cutouts_cost_to_compile() {
         // Every walk's cutouts at walk_ray's one place since the kernel's
         // queries were made there (`r3-queries`): a surface it does not pass
         // whole stops it.
-        ("no cutouts in the walks", Box::new(replace(&[("            let opacity = crossing_opacity(hit, direction, inst.material);", "            let opacity = 1.0;")]))),
+        ("no cutouts in the walks", Box::new(replace(&[("            let opacity = crossing_opacity(hit, direction, hit_mat);", "            let opacity = 1.0;")]))),
         (
             "no programs at crossings",
             Box::new(replace(&[
@@ -795,6 +795,56 @@ fn what_the_media_cost_to_compile() {
     if let Some(before) = before {
         let again = before.clone();
         cases.push(("the whole kernel before the port".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING | KernelFeatures::SUBSURFACE), Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What cutaways cost the kernel's cold compile (`docs/07` R3, tier B's
+/// cutaways, at walk_ray's one query): the whole kernel as it is and as it
+/// was before the port (the joined source in `TEQUILA_KERNEL_BEFORE`, when
+/// given), the whole kernel with cutaways left out, and with a mesh cutter's
+/// walk left out; the grey product's variant, which has none of them, and
+/// the cutaway scene's own variant, with and without its cutaways;
+/// interleaved so the card's other work falls on all alike,
+/// `TEQUILA_COMPILE_ROUNDS` rounds (3 by default), the medians at the end.
+/// Run by hand: `cargo test --test compile_time -- --ignored --nocapture
+/// cutaways`.
+#[test]
+#[ignore]
+fn what_cutaways_cost_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let cutaways = renderer_for("cutaways").map(|r| r.features).unwrap_or(KernelFeatures::ALL);
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let no_mesh_walk = |s: String| {
+        let from = "    if (c.kind == CUT_MESH) {\n        var direction = direction_in;";
+        assert!(s.contains(from), "no mesh cutter's walk");
+        s.replace(from, "    if (false) {\n        var direction = direction_in;")
+    };
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("the whole kernel as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the whole kernel without cutaways".to_string(), KernelFeatures::ALL.without(KernelFeatures::CUTAWAYS), Box::new(|s| s)),
+        ("the whole kernel without a mesh cutter's walk".to_string(), KernelFeatures::ALL, Box::new(no_mesh_walk)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+        (format!("the cutaway scene's variant ({})", cutaways.names()), cutaways, Box::new(|s| s)),
+        ("the cutaway scene's variant without cutaways".to_string(), cutaways.without(KernelFeatures::CUTAWAYS), Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("the whole kernel before the port".to_string(), KernelFeatures::ALL, Box::new(move |_| before.clone())));
         cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
     }
     let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);

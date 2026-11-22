@@ -264,6 +264,20 @@ impl CutMesh {
         self.triangles.is_empty()
     }
 
+    /// Its triangles, in world space, in the order its hierarchy's leaves
+    /// hold them (read-only, for the graphics card's port).
+    pub fn triangles(&self) -> &[[Vec3; 3]] {
+        &self.triangles
+    }
+
+    /// Its hierarchy's nodes in order, each its box and, for a leaf, its
+    /// first triangle and how many; for an interior node, its right child
+    /// (the left follows it) and nought (read-only, for the graphics card's
+    /// port).
+    pub fn nodes(&self) -> impl Iterator<Item = (Vec3, Vec3, u32, u32)> + '_ {
+        self.nodes.iter().map(|n| (n.min, n.max, n.left, n.count))
+    }
+
     /// Inside, by the parity of crossings along a ray: an odd count is
     /// inside. The direction is deliberately not along an axis, so the ray
     /// does not graze the edges an axis-aligned CAD model is full of.

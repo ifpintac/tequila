@@ -29,6 +29,8 @@
 //!   chooses one, as `LightSet` built it (R3).
 //! - [`emitters`]: the scene's glowing triangles as lights, the tree of
 //!   them as `Emitters` built it (R3).
+//! - [`cutaways`]: the scene's cutaway volumes, which every walk's query
+//!   steps past, their caps met (R3).
 //! - [`textures`]: the pictures a scene's programs sample, every level as
 //!   `tequila-texture` keeps it, for `textures.wgsl` to filter as `mip.rs`
 //!   does (R3).
@@ -40,6 +42,7 @@
 //!   uses, which the driver compiles in a fraction of the whole kernel's
 //!   time, and gives the whole kernel's picture.
 
+pub mod cutaways;
 pub mod device;
 pub mod emitters;
 pub mod environment;

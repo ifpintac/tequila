@@ -727,7 +727,47 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: backlit_translucency,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "cutaways",
+    covers: "R3 tier B, cutaways: glass_ball_floor and a block of plastic standing clear before the product, cut              where nothing touches - a box taking the block's corner off and a cylinder bored down through it (each              capped in the block's material), a sphere scooping the glass ball (capped in a flat colour), a plane              taking the block's front off, and a ball of the Cutaway material biting the block's back, its own              closed mesh the cutter - every walk's query stepping past what they cut and meeting their caps: the              camera's, the bounces', the shadow rays', the floor's",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: cutaways,
+    lens: framed,
+    pictures: no_pictures,
 }];
+
+/// glass_ball_floor and a block of plastic before the product, cut by a box,
+/// a cylinder, a sphere, a plane and a ball of the Cutaway material. Where
+/// two faces touch - the body's top and the bezel's underside, the body's
+/// underside and the floor - which one a ray meets is a tie Embree and the
+/// ray query break differently, and inside a cut part one of them is a cap
+/// and the other not: so nothing cut touches anything.
+fn cutaways() -> SceneDocument {
+    use crate::cutaway::{CapStyle, CutShape, CutawaySettings};
+    use tequila_core::math::{Mat4, Vec3};
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let block = Material::plastic(Spectrum { r: 0.25, g: 0.45, b: 0.7 }, 0.3);
+    add_parts(&mut document, &mut bus, vec![("Block", crate::bench::rounded_box(vec3(0.13, 0.08, 0.11), 0.015, 12), MaterialType::Plastic, block, Transform::translation(vec3(0.74, 0.09, 0.96)))]);
+    let placed = |m: Mat4| Transform::from_matrix(m).expect("a cutter's place");
+    let cutters = [
+        ("Corner", CutShape::Box, CapStyle::Own, placed(Mat4::translation(vec3(0.84, 0.16, 1.03)) * Mat4::from_columns(vec3(0.95, 0.0, 0.31), Vec3::Y, vec3(-0.31, 0.0, 0.95)) * Mat4::scale(vec3(0.09, 0.06, 0.07)))),
+        ("Bore", CutShape::Cylinder, CapStyle::Own, placed(Mat4::translation(vec3(0.67, 0.13, 0.93)) * Mat4::from_columns(Vec3::X, vec3(0.0, 0.0, -1.0), Vec3::Y) * Mat4::scale(vec3(0.035, 0.035, 0.05)))),
+        ("Scoop", CutShape::Sphere, CapStyle::Color(Spectrum { r: 0.85, g: 0.25, b: 0.12 }), placed(Mat4::translation(vec3(0.38, 0.25, 0.93)) * Mat4::scale(Vec3::splat(0.11)))),
+        ("Front", CutShape::Plane, CapStyle::Own, placed(Mat4::translation(vec3(0.0, 0.0, 1.03)))),
+    ];
+    for (name, shape, cap, transform) in cutters {
+        bus.apply(&mut document, Command::AddCutaway { parent: None, name: name.into(), settings: Box::new(CutawaySettings { shape, cap, enabled: true }), transform }).expect("a cutaway");
+    }
+    // A part of the Cutaway material: its own closed mesh - a coarse ball,
+    // as cutters usually are - is the cutter.
+    let bite = crate::demo::to_document_mesh(&crate::demo::uv_sphere(0.07, 24, 12));
+    add_parts(&mut document, &mut bus, vec![("Bite", bite, MaterialType::Cutaway, MaterialType::Cutaway.defaults(), Transform::translation(vec3(0.63, 0.15, 0.87)))]);
+    document
+}
 
 /// A lamp added to `document`: its name, its settings and its place.
 fn add_lamp(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, settings: crate::lighting::LightSettings, transform: Transform) {

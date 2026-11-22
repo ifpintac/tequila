@@ -104,6 +104,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
         ("ies_lamps", F::IES | F::FLOOR | F::LAMPS),
         ("milk_in_glass", F::GLASS | F::PANES | F::SCATTERING),
         ("scattering_volumes", F::GLASS | F::LAMPS | F::SCATTERING),
+        ("cutaways", F::CUTAWAYS | F::FLOOR | F::GLASS),
     ] {
         assert!(of(name).contains(wanted), "{name} keeps {}, not all of {}", of(name).names(), wanted.names());
     }
@@ -114,10 +115,11 @@ fn each_scene_keeps_the_parts_it_reaches() {
         assert_eq!(features.contains(F::SHADOW_LINKS), ["shadow_links", "floor_lamps"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts", "spectral_options"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::IES), ["ies_lamps", "spectral_options"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::CUTAWAYS), *name == "cutaways", "{name}: {}", features.names());
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral", "scattering"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral", "scattering", "cutaways"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }

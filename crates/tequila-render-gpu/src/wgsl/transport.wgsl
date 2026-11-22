@@ -52,6 +52,16 @@ struct Surface {
 // magnitude and its geometric normal - what stepping past it asks (the
 // probe, a shadow ray's walk); its shading normal the geometric one.
 fn hit_place(hit: RayIntersection) -> Surface {
+    // A cutter's cap (cut_judge): its point, its magnitude, its flat normal.
+    if (FEATURE_CUTAWAYS && hit.primitive_index == CAP_PRIMITIVE) {
+        var cap: Surface;
+        cap.position = hit.object_to_world[1];
+        cap.magnitude = hit.object_to_world[2].x;
+        cap.geometric = hit.object_to_world[0];
+        cap.shading = cap.geometric;
+        cap.backfacing = false;
+        return cap;
+    }
     let inst = scene_instances[hit.instance_custom_data];
     let mesh = scene_meshes[inst.mesh];
     let first = mesh.first_index + 3u * hit.primitive_index;
@@ -80,12 +90,12 @@ fn hit_place(hit: RayIntersection) -> Surface {
 }
 
 // The hit as Embree's resolve builds it, its shading normal the mesh's
-// own interpolated where it has them.
+// own interpolated where it has them (not a cap's, which has no triangle).
 fn surface_of(hit: RayIntersection) -> Surface {
     var s = hit_place(hit);
     let inst = scene_instances[hit.instance_custom_data];
     let mesh = scene_meshes[inst.mesh];
-    if (mesh.has_normals != 0u) {
+    if (mesh.has_normals != 0u && !(FEATURE_CUTAWAYS && hit.primitive_index == CAP_PRIMITIVE)) {
         let first = mesh.first_index + 3u * hit.primitive_index;
         let i0 = mesh.base_vertex + scene_indices[first];
         let i1 = mesh.base_vertex + scene_indices[first + 1u];
@@ -477,8 +487,13 @@ fn exact_cross_term(a: f32, d: f32, b: f32, e: f32) -> f32 {
 // (embree.rs: Mesh::geometric_normal_scaled through Transform::normal, then
 // try_normalize), turned to face `direction`'s origin (facing_forward): down
 // to the sign of a nought, which turns a frame about the normal
-// (Onb::from_normal) the other way round. What a walk is guided about.
+// (Onb::from_normal) the other way round. What a walk is guided about; a
+// cap's (cut_judge) its own flat normal, so turned.
 fn exact_geometric(hit: RayIntersection, direction: vec3<f32>) -> vec3<f32> {
+    if (FEATURE_CUTAWAYS && hit.primitive_index == CAP_PRIMITIVE) {
+        let n = hit.object_to_world[0];
+        return select(n, -n, md_dot(direction, n) > 0.0);
+    }
     let inst = scene_instances[hit.instance_custom_data];
     let mesh = scene_meshes[inst.mesh];
     let first = mesh.first_index + 3u * hit.primitive_index;
@@ -611,6 +626,511 @@ fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_n
     let distance = sqrt(dot(delta, delta));
     let direction = select(from_normal, delta / distance, distance > 0.0);
     return ShadowRay(start, direction, distance * (1.0 - 1e-4));
+}
+
+// ---- Cutaways (cutaway.rs) -------------------------------------------------
+//
+// The cutters' block in the lamps' links buffer at frame.cutters
+// (cutaways.rs): how many, then a record each. walk_ray's query steps past
+// what they cut - a surface inside a cutter - and a cutter's boundary inside
+// a part it cuts is met as the part's cap: a surface of the cutter's cap
+// material or the part's own, flat, its normal into the cutter
+// (cutaway::intersect). A cap is a RayIntersection of primitive
+// CAP_PRIMITIVE, its material in geometry_index and its normal, point and
+// magnitude in object_to_world's first three columns, which nothing else
+// reads of a hit: hit_place, surface_of, hit_material and material_at read
+// them there, so the place every walk reads is the cap's (WalkEnd.place) and
+// a segment's hit carries its cap over the turns of path()'s loop.
+
+const CUT_PLANE: u32 = 0u;
+const CUT_BOX: u32 = 1u;
+const CUT_SPHERE: u32 = 2u;
+const CUT_CYLINDER: u32 = 3u;
+const CUT_MESH: u32 = 4u;
+const CUT_OWN_CAP: u32 = 0xFFFFFFFFu;
+const CUTTER_WORDS: u32 = 20u;
+const CAP_PRIMITIVE: u32 = 0xFFFFFFFFu;
+// cutaway.rs's MAX_STEPS: the queries one ray may take past what is cut.
+const CUT_MAX_STEPS: u32 = 128u;
+
+fn cut_inf() -> f32 {
+    return bitcast<f32>(0x7f800000u);
+}
+
+fn cut_float(at: u32) -> f32 {
+    return bitcast<f32>(scene_light_links[at]);
+}
+
+fn cut_row(at: u32) -> vec4<f32> {
+    return vec4<f32>(cut_float(at), cut_float(at + 1u), cut_float(at + 2u), cut_float(at + 3u));
+}
+
+struct Cutter {
+    kind: u32,
+    cap: u32,
+    triangles: u32,
+    triangle_count: u32,
+    nodes: u32,
+    node_count: u32,
+    inverse: array<vec4<f32>, 3>,
+};
+
+fn cutter(i: u32) -> Cutter {
+    let at = frame.cutters + 1u + i * CUTTER_WORDS;
+    var c: Cutter;
+    c.kind = scene_light_links[at];
+    c.cap = scene_light_links[at + 1u];
+    c.triangles = scene_light_links[at + 2u];
+    c.triangle_count = scene_light_links[at + 3u];
+    c.nodes = scene_light_links[at + 4u];
+    c.node_count = scene_light_links[at + 5u];
+    c.inverse = array<vec4<f32>, 3>(cut_row(at + 8u), cut_row(at + 12u), cut_row(at + 16u));
+    return c;
+}
+
+// Whether the cutters act on a part: not the floor, not a lamp's stand-in
+// (cutaway.rs's cuttable).
+fn cuttable(inst: GpuInstance) -> bool {
+    return inst.catcher == NO_CATCHER && (inst.flags & INSTANCE_STAND_IN) == 0u;
+}
+
+// step_past: a step along the ray that clears a surface at `t`.
+fn cut_step_past(origin: vec3<f32>, t: f32) -> f32 {
+    return t + cy_exact(max(max(abs(t), max(max(abs(origin.x), abs(origin.y)), abs(origin.z))), 1.0) * 2e-6);
+}
+
+// Mat4::transform_point and transform_vector of a cutter's inverse, each
+// product rounded as Rust rounds it.
+fn cut_point(m: array<vec4<f32>, 3>, p: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(md_dot(m[0].xyz, p) + m[0].w, md_dot(m[1].xyz, p) + m[1].w, md_dot(m[2].xyz, p) + m[2].w);
+}
+
+fn cut_vector(m: array<vec4<f32>, 3>, v: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(md_dot(m[0].xyz, v), md_dot(m[1].xyz, v), md_dot(m[2].xyz, v));
+}
+
+// Cutter::contains of an analytic shape.
+fn cut_contains(c: Cutter, point: vec3<f32>) -> bool {
+    let p = cut_point(c.inverse, point);
+    switch c.kind {
+        case 0u: { return p.z > 0.0; }
+        case 1u: { return abs(p.x) < 1.0 && abs(p.y) < 1.0 && abs(p.z) < 1.0; }
+        case 2u: { return md_dot(p, p) < 1.0; }
+        case 3u: { return cy_exact(p.x * p.x) + cy_exact(p.y * p.y) < 1.0 && abs(p.z) < 1.0; }
+        default: { return false; }
+    }
+}
+
+struct Interval {
+    ok: bool,
+    t_in: f32,
+    n_in: vec3<f32>,
+    t_out: f32,
+    n_out: vec3<f32>,
+};
+
+// convex_interval: where a ray from `o` along `d` (the cutter's own space,
+// not renormalized, so a distance along it is the world's) is inside the
+// shape, with its outward normals there.
+fn cut_interval(kind: u32, o: vec3<f32>, d: vec3<f32>) -> Interval {
+    let inf = cut_inf();
+    let z = vec3<f32>(0.0, 0.0, 1.0);
+    var r: Interval;
+    r.ok = false;
+    if (kind == CUT_PLANE) {
+        if (abs(d.z) < 1e-12) {
+            return Interval(o.z > 0.0, -inf, -z, inf, -z);
+        }
+        let t = -o.z / d.z;
+        if (d.z > 0.0) {
+            return Interval(true, t, -z, inf, -z);
+        }
+        return Interval(true, -inf, -z, t, -z);
+    }
+    if (kind == CUT_SPHERE) {
+        let a = md_dot(d, d);
+        let b = md_dot(o, d);
+        let c = md_dot(o, o) - 1.0;
+        let disc = cy_exact(b * b) - cy_exact(a * c);
+        if (disc <= 0.0 || a <= 0.0) {
+            return r;
+        }
+        let root = sqrt(disc);
+        let t_in = (-b - root) / a;
+        let t_out = (-b + root) / a;
+        return Interval(true, t_in, o + cy_exact3(d * t_in), t_out, o + cy_exact3(d * t_out));
+    }
+    var t_in = -inf;
+    var t_out = inf;
+    var n_in = vec3<f32>(0.0);
+    var n_out = vec3<f32>(0.0);
+    if (kind == CUT_BOX) {
+        for (var axis = 0u; axis < 3u; axis++) {
+            let oa = select(select(o.z, o.y, axis == 1u), o.x, axis == 0u);
+            let da = select(select(d.z, d.y, axis == 1u), d.x, axis == 0u);
+            let unit = vec3<f32>(select(0.0, 1.0, axis == 0u), select(0.0, 1.0, axis == 1u), select(0.0, 1.0, axis == 2u));
+            if (abs(da) < 1e-12) {
+                if (abs(oa) >= 1.0) {
+                    return r;
+                }
+                continue;
+            }
+            var near = (-1.0 - oa) / da;
+            var far = (1.0 - oa) / da;
+            var n_near = -unit;
+            var n_far = unit;
+            if (near > far) {
+                let t = near;
+                near = far;
+                far = t;
+                let n = n_near;
+                n_near = n_far;
+                n_far = n;
+            }
+            if (near > t_in) {
+                t_in = near;
+                n_in = n_near;
+            }
+            if (far < t_out) {
+                t_out = far;
+                n_out = n_far;
+            }
+        }
+        return Interval(t_in < t_out, t_in, n_in, t_out, n_out);
+    }
+    // The cylinder: the infinite one, then the slab between its ends.
+    let a = cy_exact(d.x * d.x) + cy_exact(d.y * d.y);
+    if (a < 1e-12) {
+        if (cy_exact(o.x * o.x) + cy_exact(o.y * o.y) >= 1.0) {
+            return r;
+        }
+    } else {
+        let b = cy_exact(o.x * d.x) + cy_exact(o.y * d.y);
+        let c = (cy_exact(o.x * o.x) + cy_exact(o.y * o.y)) - 1.0;
+        let disc = cy_exact(b * b) - cy_exact(a * c);
+        if (disc <= 0.0) {
+            return r;
+        }
+        let root = sqrt(disc);
+        t_in = (-b - root) / a;
+        t_out = (-b + root) / a;
+        let p_in = o + cy_exact3(d * t_in);
+        let p_out = o + cy_exact3(d * t_out);
+        n_in = vec3<f32>(p_in.x, p_in.y, 0.0);
+        n_out = vec3<f32>(p_out.x, p_out.y, 0.0);
+    }
+    if (abs(d.z) < 1e-12) {
+        if (abs(o.z) >= 1.0) {
+            return r;
+        }
+    } else {
+        var near = (-1.0 - o.z) / d.z;
+        var far = (1.0 - o.z) / d.z;
+        var n_near = -z;
+        var n_far = z;
+        if (near > far) {
+            let t = near;
+            near = far;
+            far = t;
+            let n = n_near;
+            n_near = n_far;
+            n_far = n;
+        }
+        if (near > t_in) {
+            t_in = near;
+            n_in = n_near;
+        }
+        if (far < t_out) {
+            t_out = far;
+            n_out = n_far;
+        }
+    }
+    return Interval(t_in < t_out, t_in, n_in, t_out, n_out);
+}
+
+struct Crossing {
+    ok: bool,
+    t: f32,
+    normal: vec3<f32>,
+};
+
+// A mesh cutter's triangle `i`, in world space (CutMesh's triangles).
+fn cut_mesh_triangle(c: Cutter, i: u32) -> array<vec3<f32>, 3> {
+    let at = c.triangles + 9u * i;
+    return array<vec3<f32>, 3>(
+        vec3<f32>(cut_float(at), cut_float(at + 1u), cut_float(at + 2u)),
+        vec3<f32>(cut_float(at + 3u), cut_float(at + 4u), cut_float(at + 5u)),
+        vec3<f32>(cut_float(at + 6u), cut_float(at + 7u), cut_float(at + 8u)),
+    );
+}
+
+// What CutMesh::visit found: how many triangles it crossed (counting), or
+// whether it found one (not), the nearest's distance and index.
+struct MeshWalk {
+    count: u32,
+    t: f32,
+    index: u32,
+};
+
+// CutMesh::visit: every triangle (Moller-Trumbore, both faces) the ray from
+// `origin` along `direction` crosses within (t0, t1), down the mesh's
+// hierarchy as the processor walks it - a node's box by its slabs, a leaf's
+// triangles in order, an interior node's left child before its right, the
+// interval shut to the nearest found so far - counted (`counting`), or the
+// nearest kept.
+fn cut_mesh_walk(c: Cutter, origin: vec3<f32>, direction: vec3<f32>, t0: f32, t1_in: f32, counting: bool) -> MeshWalk {
+    var out = MeshWalk(0u, 0.0, 0u);
+    if (c.node_count == 0u) {
+        return out;
+    }
+    let inf = cut_inf();
+    let inverse = vec3<f32>(
+        select(1.0 / direction.x, select(inf, -inf, (bitcast<u32>(direction.x) & 0x80000000u) != 0u), direction.x == 0.0),
+        select(1.0 / direction.y, select(inf, -inf, (bitcast<u32>(direction.y) & 0x80000000u) != 0u), direction.y == 0.0),
+        select(1.0 / direction.z, select(inf, -inf, (bitcast<u32>(direction.z) & 0x80000000u) != 0u), direction.z == 0.0),
+    );
+    var t1 = t1_in;
+    var stack: array<u32, 64>;
+    var top = 1u;
+    stack[0] = 0u;
+    while (top > 0u) {
+        top -= 1u;
+        let index = stack[top];
+        let at = c.nodes + 8u * index;
+        let lo = vec3<f32>(cut_float(at), cut_float(at + 1u), cut_float(at + 2u));
+        let hi = vec3<f32>(cut_float(at + 3u), cut_float(at + 4u), cut_float(at + 5u));
+        let left = scene_light_links[at + 6u];
+        let count = scene_light_links[at + 7u];
+        // slab: a NaN from nought times infinity lets the box through.
+        let a = (lo - origin) * inverse;
+        let b = (hi - origin) * inverse;
+        let near_v = min(a, b);
+        let far_v = max(a, b);
+        let near = max(max(max(near_v.x, near_v.y), near_v.z), t0);
+        let far = min(min(min(far_v.x, far_v.y), far_v.z), t1);
+        if (near > far) {
+            continue;
+        }
+        if (count > 0u) {
+            for (var i = left; i < left + count; i++) {
+                let tri = cut_mesh_triangle(c, i);
+                let e1 = tri[1] - tri[0];
+                let e2 = tri[2] - tri[0];
+                let p = cross(direction, e2);
+                let det = dot(e1, p);
+                if (abs(det) < 1e-12) {
+                    continue;
+                }
+                let inv = 1.0 / det;
+                let s = origin - tri[0];
+                let u = dot(s, p) * inv;
+                if (!(u >= 0.0 && u <= 1.0)) {
+                    continue;
+                }
+                let q = cross(s, e1);
+                let v = dot(direction, q) * inv;
+                if (v < 0.0 || u + v > 1.0) {
+                    continue;
+                }
+                let t = dot(e2, q) * inv;
+                if (t > t0 && t < t1) {
+                    if (counting) {
+                        out.count += 1u;
+                    } else if (out.count == 0u || t < out.t) {
+                        out.count = 1u;
+                        out.t = t;
+                        out.index = i;
+                        t1 = min(t1, t);
+                    }
+                }
+            }
+        } else if (top + 2u <= 64u) {
+            stack[top] = left;
+            stack[top + 1u] = index + 1u;
+            top += 2u;
+        }
+    }
+    return out;
+}
+
+// One question to a cutter, the one place cut_judge asks one: with
+// `crossing`, Cutter::next_crossing, the first place in (t0, t1) the ray
+// crosses its boundary, with its outward normal in world space - for a
+// mesh, CutMesh::nearest's nearest triangle, its normal by its winding,
+// which cut_judge turns outward once it is the crossing nearest of all;
+// without, Cutter::contains of `origin` (ok where it holds it) - for a mesh,
+// CutMesh::contains, by the parity of the crossings of a ray off the axes.
+// A mesh is walked at one place for either.
+fn cut_ask(c: Cutter, origin_in: vec3<f32>, direction_in: vec3<f32>, t0_in: f32, t1_in: f32, crossing: bool) -> Crossing {
+    var none: Crossing;
+    none.ok = false;
+    if (c.kind == CUT_MESH) {
+        var direction = direction_in;
+        var t0 = t0_in;
+        var t1 = t1_in;
+        if (!crossing) {
+            direction = vec3<f32>(0.5773, 0.5774, 0.5775);
+            t0 = 0.0;
+            t1 = cut_inf();
+        }
+        let walked = cut_mesh_walk(c, origin_in, direction, t0, t1, !crossing);
+        if (!crossing) {
+            none.ok = (walked.count & 1u) == 1u;
+            return none;
+        }
+        if (walked.count == 0u) {
+            return none;
+        }
+        let t = cut_mesh_triangle(c, walked.index);
+        let n = cross(t[1] - t[0], t[2] - t[0]);
+        let len2 = md_dot(n, n);
+        if (!(len2 > 0.0 && is_finite(len2))) {
+            return none;
+        }
+        return Crossing(true, walked.t, n / sqrt(len2));
+    }
+    if (!crossing) {
+        none.ok = cut_contains(c, origin_in);
+        return none;
+    }
+    let o = cut_point(c.inverse, origin_in);
+    let d = cut_vector(c.inverse, direction_in);
+    let i = cut_interval(c.kind, o, d);
+    if (!i.ok) {
+        return none;
+    }
+    var t: f32;
+    var n: vec3<f32>;
+    if (i.t_in > t0_in && i.t_in < t1_in) {
+        t = i.t_in;
+        n = i.n_in;
+    } else if (i.t_out > t0_in && i.t_out < t1_in) {
+        t = i.t_out;
+        n = i.n_out;
+    } else {
+        return none;
+    }
+    let w = rows_normal(c.inverse, n);
+    let len2 = md_dot(w, w);
+    if (!(len2 > 0.0 && is_finite(len2))) {
+        return none;
+    }
+    return Crossing(true, t, w / sqrt(len2));
+}
+
+// What cutaway::intersect makes of the closest surface `hit_in` a query met
+// along the ray from `origin` past `t_min` within `t_max` (its distances
+// from `origin`): the cap where a cutter's boundary inside a part comes
+// first; the query asked again from past a boundary, or past a surface
+// inside a cutter (`again`, from `t_min`); else the surface as it is.
+struct CutJudged {
+    hit: RayIntersection,
+    again: bool,
+    t_min: f32,
+};
+
+fn cut_judge(hit_in: RayIntersection, origin: vec3<f32>, direction: vec3<f32>, t_min: f32, t_max: f32) -> CutJudged {
+    var out = CutJudged(hit_in, false, t_min);
+    let count = scene_light_links[frame.cutters];
+    let met = hit_in.kind != RAY_QUERY_INTERSECTION_NONE;
+    let limit = select(t_max, hit_in.t, met);
+    let inst = scene_instances[hit_in.instance_custom_data];
+    let cuts_hit = met && cuttable(inst);
+    var raw: Surface;
+    if (cuts_hit) {
+        raw = hit_place(hit_in);
+    }
+    // The questions, in one loop so a cutter is asked at one place
+    // (cut_ask): first each cutter for its nearest boundary before that
+    // surface; then whether the cutters hold a point - the nearest
+    // crossing's, which only the others may hold for it to be on their
+    // union's surface, and first, for a mesh's crossing, a step off it
+    // along its face's normal, which its own mesh then holds where the
+    // normal points in (CutMesh::nearest); else the surface's point, which
+    // any may hold.
+    var best: Crossing;
+    best.ok = false;
+    var index = 0u;
+    var point = vec3<f32>(0.0);
+    var skip = 0xFFFFFFFFu;
+    var normal = vec3<f32>(0.0);
+    var held = false;
+    for (var task = 0u; task <= 2u * count; task++) {
+        var j = task;
+        var at = origin;
+        let crossing = task < count;
+        if (task == count) {
+            if (!best.ok && !cuts_hit) {
+                return out;
+            }
+            var turn = false;
+            if (best.ok) {
+                point = origin + cy_exact3(direction * best.t);
+                skip = index;
+                normal = best.normal;
+                turn = cutter(index).kind == CUT_MESH;
+            } else {
+                point = raw.position;
+            }
+            if (!turn) {
+                continue;
+            }
+            j = index;
+            at = point + cy_exact3(normal * cy_exact(max(max(max(abs(point.x), abs(point.y)), abs(point.z)), 1.0) * 1e-4));
+        } else if (task > count) {
+            j = task - count - 1u;
+            if (j == skip) {
+                continue;
+            }
+            at = point;
+        }
+        let answer = cut_ask(cutter(j), at, direction, t_min, limit, crossing);
+        if (crossing) {
+            if (answer.ok && (!best.ok || answer.t < best.t)) {
+                best = answer;
+                index = j;
+            }
+        } else if (task == count) {
+            if (answer.ok) {
+                normal = -normal;
+            }
+        } else if (answer.ok) {
+            held = true;
+        }
+    }
+    if (best.ok) {
+        // A boundary on the cutters' union, a surface behind it met from
+        // its back: the boundary was inside that part, and is its cap.
+        if (!held && cuts_hit && md_dot(direction, raw.geometric) > 0.0) {
+            let cap = cutter(index).cap;
+            var hit = hit_in;
+            hit.primitive_index = CAP_PRIMITIVE;
+            hit.barycentrics = vec2<f32>(0.0);
+            hit.t = best.t;
+            hit.geometry_index = select(cap, inst.material, cap == CUT_OWN_CAP);
+            hit.object_to_world[0] = -normal;
+            hit.object_to_world[1] = point;
+            hit.object_to_world[2] = vec3<f32>(max(max(max(abs(origin.x), abs(origin.y)), abs(origin.z)), best.t), 0.0, 0.0);
+            out.hit = hit;
+            return out;
+        }
+        out.again = true;
+        out.t_min = cut_step_past(origin, best.t);
+        return out;
+    }
+    if (held) {
+        out.again = true;
+        out.t_min = cut_step_past(origin, hit_in.t);
+    }
+    return out;
+}
+
+// The material a hit shows: a cap's own (cut_judge), else its part's.
+fn hit_material(hit: RayIntersection) -> u32 {
+    if (FEATURE_CUTAWAYS && hit.primitive_index == CAP_PRIMITIVE) {
+        return hit.geometry_index;
+    }
+    return scene_instances[hit.instance_custom_data].material;
 }
 
 // ---- The one walk along a ray (docs/07 D5, D6) -----------------------------
@@ -767,7 +1287,11 @@ fn walk_ray(w: Walk) -> WalkEnd {
     let in_medium = FEATURE_SCATTERING && mode == WALK_SHADOW && w.in_medium;
     let glows = FEATURE_EMITTERS && past && w.glows;
     let solid = mode == WALK_SHADOW && glass == GLASS_SOLID && (!FEATURE_CUTOUTS || (frame.glass_flags & SCENE_CUTOUTS) == 0u) && !linked && !in_medium;
-    let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
+    // Where there are cutters (cutaway.rs), every query is for the closest
+    // surface, the cutters' to judge - a solid shadow ray's too
+    // (cutaway::occluded).
+    let cutting = FEATURE_CUTAWAYS && frame.cutters != 0u;
+    let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid && !cutting);
     let mask = select(MASK_SURFACE, MASK_SHADOW, solid);
     let sigma = w.sigma;
     let majorant = max(max(sigma.x, sigma.y), sigma.z);
@@ -791,6 +1315,12 @@ fn walk_ray(w: Walk) -> WalkEnd {
     var counts: array<u32, 4>;
     var used = 0u;
     let limit = select(MAX_CUTOUT_CROSSINGS, 32u, mode == WALK_MEDIA);
+    // Past the cutters (cutaway::intersect): a query whose surface the
+    // cutters do not let stand is asked again from past what they cut, the
+    // same ray from the same origin (`t_min`), in a turn of this loop that is
+    // no crossing; 128 queries at most.
+    var t_min = 0.0;
+    var cut_steps = 0u;
     for (var crossing = 0u; crossing < limit; crossing++) {
         if (FEATURE_CUTOUTS && mode == WALK_COVERAGE && through.x < 1e-4) {
             out.through = vec3<f32>(1.0);
@@ -798,9 +1328,29 @@ fn walk_ray(w: Walk) -> WalkEnd {
         }
         // ---- The transport's one ray query ----
         var rq: ray_query;
-        rayQueryInitialize(&rq, scene_tlas, RayDesc(flags, mask, 0.0, remaining, origin, direction));
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(flags, mask, select(0.0, min(t_min, remaining), cutting), remaining, origin, direction));
         rayQueryProceed(&rq);
-        let hit = rayQueryGetCommittedIntersection(&rq);
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (cutting) {
+            // A step past the reach leaves nothing, as Embree finds nothing
+            // past a ray's far end.
+            if (t_min > remaining) {
+                hit.kind = RAY_QUERY_INTERSECTION_NONE;
+            }
+            let judged = cut_judge(hit, origin, direction, t_min, remaining);
+            hit = judged.hit;
+            if (judged.again) {
+                cut_steps += 1u;
+                if (cut_steps < CUT_MAX_STEPS) {
+                    t_min = judged.t_min;
+                    crossing -= 1u;
+                    continue;
+                }
+                hit.kind = RAY_QUERY_INTERSECTION_NONE;
+            }
+            t_min = 0.0;
+            cut_steps = 0u;
+        }
         out.hit = hit;
         if (mode == WALK_FIRST) {
             return out;
@@ -835,11 +1385,13 @@ fn walk_ray(w: Walk) -> WalkEnd {
         let inst = scene_instances[hit.instance_custom_data];
         let raw = hit_place(hit);
         out.place = raw;
+        // The material it shows: a cap's own (cut_judge), else its part's.
+        let hit_mat = hit_material(hit);
         let backface = dot(direction, raw.geometric) > 0.0;
         let g = select(raw.geometric, -raw.geometric, backface);
         let beyond = offset_at(raw.position, -g, raw.magnitude);
         if (FEATURE_GLASS && mode == WALK_MEDIA) {
-            if ((scene_materials[inst.material].glass & GLASS_BOUNDARY) != 0u) {
+            if ((scene_materials[hit_mat].glass & GLASS_BOUNDARY) != 0u) {
                 var found = false;
                 for (var j = 0u; j < used; j++) {
                     if (!found && solids[j] == inst.solid) {
@@ -849,7 +1401,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
                 }
                 if (!found && used < MAX_MEDIA) {
                     solids[used] = inst.solid;
-                    materials[used] = inst.material;
+                    materials[used] = hit_mat;
                     counts[used] = 1u;
                     used += 1u;
                 }
@@ -858,7 +1410,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
             continue;
         }
         if (FEATURE_EMITTERS && mode == WALK_GLOW) {
-            if ((inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (scene_materials[inst.material].glass & GLASS_PANE) != 0u || cut_out(inst.material)) {
+            if ((inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (scene_materials[hit_mat].glass & GLASS_PANE) != 0u || cut_out(hit_mat)) {
                 origin = beyond;
                 continue;
             }
@@ -867,8 +1419,8 @@ fn walk_ray(w: Walk) -> WalkEnd {
         }
         if (FEATURE_PASSES_PARTS && mode == WALK_NEARNESS) {
             if ((inst.flags & INSTANCE_STAND_IN) == 0u && inst.catcher == NO_CATCHER) {
-                var opacity = scene_materials[inst.material].geometry_opacity;
-                if ((scene_programs[inst.material].flags & PROGRAM_CUTS) != 0u) {
+                var opacity = scene_materials[hit_mat].geometry_opacity;
+                if ((scene_programs[hit_mat].flags & PROGRAM_CUTS) != 0u) {
                     opacity = 1.0;
                 }
                 through *= 1.0 - clamp(opacity, 0.0, 1.0);
@@ -901,7 +1453,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
         }
         let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (linked && !lamp_casts(lamp, inst.instance));
         let at = along + hit.t;
-        let m = scene_materials[inst.material];
+        let m = scene_materials[hit_mat];
         let bends = (m.glass & GLASS_BENDS) != 0u;
         // Whether the surface lets by what its opacity does not stop: the
         // camera's coverage any it does not pass unseen; a shadow ray any
@@ -932,7 +1484,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
             opaque = !open;
         }
         if (opaque) {
-            let opacity = crossing_opacity(hit, direction, inst.material);
+            let opacity = crossing_opacity(hit, direction, hit_mat);
             if (past && opacity >= 0.999) {
                 out.bent = bent;
                 return out;
@@ -2176,6 +2728,19 @@ fn vec_over(v: vec3<f32>, s: f32) -> vec3<f32> {
     return v * (1.0 / s);
 }
 
+// The mesh a hit's triangle reads its UVs, tangents and measures from: none
+// for a cap (cut_judge), which has no triangle, as the processor's
+// bounds-checked lookups give none.
+fn hit_mesh(hit: RayIntersection, inst: GpuInstance) -> GpuMesh {
+    var mesh = scene_meshes[inst.mesh];
+    if (FEATURE_CUTAWAYS && hit.primitive_index == CAP_PRIMITIVE) {
+        mesh.uv_base = NO_DATA;
+        mesh.tangent_base = NO_DATA;
+        mesh.attribute_base = NO_DATA;
+    }
+    return mesh;
+}
+
 // A hit triangle's corners, as indices into its mesh.
 fn corners_of(mesh: GpuMesh, primitive: u32) -> vec3<u32> {
     let first = mesh.first_index + 3u * primitive;
@@ -2265,7 +2830,7 @@ fn frame_along(n: vec3<f32>, tangent: vec3<f32>) -> Frame {
 // turned by the rotation, in half turns.
 fn anisotropic_frame(hit: RayIntersection, surf: Surface, n: vec3<f32>, drawn: vec3<f32>, rotation: f32) -> Frame {
     let inst = scene_instances[hit.instance_custom_data];
-    let mesh = scene_meshes[inst.mesh];
+    let mesh = hit_mesh(hit, inst);
     let c = corners_of(mesh, hit.primitive_index);
     var along = drawn;
     var have = cy_dot3(drawn, drawn) > 1e-12;
@@ -2503,8 +3068,9 @@ fn bevel_normal(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, 
 // they do not.
 fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32, spread: f32, rounded: vec3<f32>) -> ProgShaded {
     let inst = scene_instances[hit.instance_custom_data];
-    let p = scene_programs[inst.material];
-    let base = scene_materials[inst.material];
+    let hit_mat = hit_material(hit);
+    let p = scene_programs[hit_mat];
+    let base = scene_materials[hit_mat];
     var s: ProgSurface;
     s.normal = rounded;
     s.geometric = surf.geometric;
@@ -2512,7 +3078,7 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     if ((p.flags & PROGRAM_RUNS) == 0u) {
         return prog_shade(p, pt, base, s);
     }
-    let mesh = scene_meshes[inst.mesh];
+    let mesh = hit_mesh(hit, inst);
     let c = corners_of(mesh, hit.primitive_index);
     let u = hit.barycentrics.x;
     let v = hit.barycentrics.y;
@@ -2869,7 +3435,7 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
-            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, walking, albedo);
+            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, hit_material(hit), walking, albedo);
             (*st).media = media;
             if (walking) {
                 (*st).guide = md_no_guide();
@@ -3634,17 +4200,17 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // flight before its ray is traced, and traces it only as
                 // far as the flight goes (ic:968-1001): most flights end
                 // inside the part. Not past a seeing bounce, whose lamps
-                // are looked for along the whole ray: its flight is the
-                // one the processor draws after the ray (ic:1110),
-                // drawn here for one call site, the sampler put back
-                // where the ray leaves the part.
+                // are looked for along the whole ray, nor where there are
+                // cutters (ic:976): its flight is the one the processor
+                // draws after the ray (ic:1110), drawn here for one call
+                // site, the sampler put back where the ray leaves the part.
                 seg_drawn = false;
                 seg_short = false;
                 var reach = 3.0e38;
                 if (FEATURE_SCATTERING || FEATURE_SUBSURFACE) {
                     let top = media_top(st.media, NO_MEDIUM);
                     if (top != NO_MEDIUM && medium_scatters(st.media.media[top])) {
-                        seg_short = !st.seen.valid;
+                        seg_short = !st.seen.valid && !(FEATURE_CUTAWAYS && frame.cutters != 0u);
                         seg_pre_s = s;
                         if (seg_short) {
                             st.walk_steps += 1u;
@@ -4158,13 +4724,14 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // wall inside the liquid it holds - is no interface: the path
                 // goes straight on, and only the media it is in change
                 // (ic:1581-1599).
-                let base = scene_materials[inst.material];
+                let seg_mat = hit_material(hit);
+                let base = scene_materials[seg_mat];
                 if (FEATURE_GLASS && (base.glass & GLASS_BOUNDARY) != 0u
                     && st.crossings < MAX_CUTOUT_CROSSINGS
                     && media_beyond(st.media, inst.solid, base.medium_priority) == media_solid(st.media, top)) {
                     st.crossings += 1u;
                     var media = st.media;
-                    media_cross(&media, inst.solid, base.medium_priority, base.base_ior, inst.material);
+                    media_cross(&media, inst.solid, base.medium_priority, base.base_ior, seg_mat);
                     st.media = media;
                     let g = select(raw.geometric, -raw.geometric, dot(st.direction, raw.geometric) > 0.0);
                     st.origin = offset_at(raw.position, -g, raw.magnitude);
@@ -4185,8 +4752,8 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // before it.
             if (phase == PH_BEVEL) {
                 let hit = seg_hit;
-                let inst = scene_instances[hit.instance_custom_data];
-                let base = scene_materials[inst.material];
+                let seg_mat = hit_material(hit);
+                let base = scene_materials[seg_mat];
                 // Rounded edges on the surface a path meets first (ic:1680-1691):
                 // their draws after the material's program (which draws none)
                 // and before the cutout's, the bump bending what they leave;
@@ -4201,7 +4768,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     seg_rounded = rounded.normal;
                 }
                 material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
-                let program = scene_programs[inst.material];
+                let program = scene_programs[seg_mat];
                 if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
                     want = WANT_MAIN;
                 }

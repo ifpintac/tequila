@@ -160,7 +160,10 @@ pub struct FrameParams {
     /// values four to a vector and `filter_last` the 1025th.
     pub filter_width: f32,
     pub filter_last: f32,
-    pub _pad5: u32,
+    /// The cutaway volumes (`crate::cutaways`): where their block starts in
+    /// the lamps' links buffer - their count, then their records - nought
+    /// for none.
+    pub cutters: u32,
     /// A dome of a size under [`SCENE_FINITE_DOME`] (`Dome`): its radius in
     /// scene units, its centre's height above the floor, and 1 where its
     /// lower cap is the ground plane.
@@ -441,12 +444,6 @@ impl GlassScene {
 /// other `*_limits`; nothing here depends on `config`.
 pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'static str> {
     let mut limits = Vec::new();
-    // The cutaway volumes (`cutaway.rs`): every ray the processor traces
-    // steps past what they cut; the card's acceleration structure has the
-    // parts whole.
-    if !scene.cutters().is_empty() {
-        limits.push("a cutaway is left out: the parts it cuts are whole");
-    }
     // The fibres a material grows (`fuzz_density`, the Fuzz node) are curves
     // the card's acceleration structure does not hold.
     if scene.instances.iter().any(|i| scene.meshes.get(i.mesh.index()).is_some_and(|m| m.fibres.is_some())) {
@@ -548,6 +545,9 @@ pub struct GpuRenderer {
     background: [f32; 3],
     /// The environment's dome.
     dome: tequila_render_core::environment::Dome,
+    /// Where the cutaway volumes' block starts in the links buffer, nought
+    /// for none (`crate::cutaways`).
+    cutters: u32,
     /// The kernel widened to the frame's parts a frame asked for that it
     /// left out ([`KernelFeatures::of_frame`]), each built once.
     widened: std::sync::Mutex<Vec<(KernelFeatures, wgpu::ComputePipeline)>>,
@@ -818,7 +818,9 @@ impl GpuRenderer {
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
-        let light_records = LightRecords::of(scene);
+        let mut light_records = LightRecords::of(scene);
+        // The cutaway volumes after the lamps' lists in the same buffer.
+        let cutters = crate::cutaways::pack(scene.cutters(), &mut light_records.links);
         let lights = GpuLights::upload(device, &light_records);
         let materials = wgpu::util::DeviceExt::create_buffer_init(
             device,
@@ -935,6 +937,7 @@ impl GpuRenderer {
                 l.flags & FLAG_CAN_BE_MET != 0 && (l.flags & FLAG_SHADOW == 0 || l.flags & (FLAG_SHADOW_LINKS_ONLY | FLAG_SHADOW_LINKS_ALL_BUT) != 0)
             }),
             emitters: has_emitters,
+            cutters: cutters != 0,
             glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 } | background_flags,
         });
         let started = std::time::Instant::now();
@@ -1020,6 +1023,7 @@ impl GpuRenderer {
             aside,
             background_flags,
             dome: scene.environment.dome(),
+            cutters,
             widened: std::sync::Mutex::new(Vec::new()),
             background: match &scene.background {
                 Background::Color(c) => [c.r, c.g, c.b],
@@ -1326,7 +1330,7 @@ impl GpuRenderer {
             shift_y: shift.1,
             filter_width: filter.width(),
             filter_last,
-            _pad5: 0,
+            cutters: self.cutters,
             filter_table,
             dome_radius: self.dome.radius.unwrap_or(0.0),
             dome_height: self.dome.height,

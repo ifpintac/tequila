@@ -139,9 +139,11 @@ impl KernelFeatures {
     /// Subsurface scattering: the walk's doorway, the walk under a surface
     /// and its way out.
     pub const SUBSURFACE: KernelFeatures = part(31);
+    /// Cutaway volumes: every walk's query past what they cut, their caps.
+    pub const CUTAWAYS: KernelFeatures = part(32);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 32] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 33] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -174,6 +176,7 @@ impl KernelFeatures {
         (Self::SPECTRAL, "FEATURE_SPECTRAL"),
         (Self::SCATTERING, "FEATURE_SCATTERING"),
         (Self::SUBSURFACE, "FEATURE_SUBSURFACE"),
+        (Self::CUTAWAYS, "FEATURE_CUTAWAYS"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -317,6 +320,9 @@ impl KernelFeatures {
         // The subsurface lobe (openpbr_build, a material's subsurface
         // weight) and the walk it opens.
         keep(any_material(&|m| m.subsurface_color[3] != 0.0), Self::SUBSURFACE);
+        // cut_judge at walk_ray's query (the frame's `cutters`, which the
+        // scene's cutters set).
+        keep(r.cutters, Self::CUTAWAYS);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -400,6 +406,8 @@ pub struct SceneRecords<'a> {
     pub lamps_met_past: bool,
     /// Whether the glowing triangles' tree has leaves.
     pub emitters: bool,
+    /// Whether the card cuts by cutaway volumes (`FrameParams::cutters`).
+    pub cutters: bool,
     /// `FrameParams::glass_flags` as the scene sets them, whatever the
     /// configuration: `SCENE_TRANSMITS`, `SCENE_PANES`, `SCENE_CUTOUTS`,
     /// `SCENE_CUT_PROGRAMS`, `SCENE_BACKGROUND_COLOUR`, `SCENE_BACKPLATE`,
@@ -554,7 +562,7 @@ mod tests {
     }
 
     fn features(materials: &[GpuMaterial], programs: &ProgramTable, instances: &[GpuInstance], meshes: &[GpuMesh], lamps: u32, emitters: bool, glass_flags: u32) -> KernelFeatures {
-        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, lamp_flags: 0, lamps_met_past: false, emitters, glass_flags })
+        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, lamp_flags: 0, lamps_met_past: false, emitters, cutters: false, glass_flags })
     }
 
     /// A program of one instruction `op` with `operands` operands, writing
