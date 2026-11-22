@@ -821,6 +821,13 @@ fn walk_ray(w: Walk) -> WalkEnd {
         if (solid) {
             return out;
         }
+        // Where nothing is cut out, no glass is let by, no lamp has shadow
+        // links, nothing scatters, no part is walked past and neither the
+        // media nor a glow's surface is asked for, every walk is the one
+        // query above: what follows is left out of such a variant.
+        if (!(FEATURE_PANES || FEATURE_CUTOUTS || FEATURE_SHADOW_LINKS || FEATURE_SCATTERING || FEATURE_PASSES_PARTS || FEATURE_GLASS || FEATURE_EMITTERS)) {
+            return out;
+        }
         let inst = scene_instances[hit.instance_custom_data];
         let raw = hit_place(hit);
         out.place = raw;
@@ -3709,7 +3716,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 want = WANT_NONE;
             }
             // ---- The media the path starts inside (enclosing_media) ----
-            if (phase == PH_MEDIA) {
+            if (FEATURE_GLASS && phase == PH_MEDIA) {
                 st.media = found.media;
                 phase = PH_START;
             }
@@ -4021,7 +4028,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 phase = select(PH_BODY, PH_FLOOR, FEATURE_FLOOR && inst.catcher != NO_CATCHER);
             }
             // ---- A floor met ----
-            if (phase == PH_FLOOR) {
+            if (FEATURE_FLOOR && phase == PH_FLOOR) {
                 let raw = seg_raw;
                 let inst = scene_instances[seg_hit.instance_custom_data];
                 let c = scene_catchers[inst.catcher];
