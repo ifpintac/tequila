@@ -3498,6 +3498,14 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     // reflection then took its place.
     var floor_wavelength = 0.0;
     var floor_alone = false;
+    // Where the segment set out, kept where a program drives a cutout: its
+    // light sample's shadow rays meeting one whose opacity the pass does not
+    // know, the segment is run again from there, what its walks have learnt
+    // of the opacities kept (`keep_cut`), so the vertex is no turn of the
+    // segment's loop and the driver keeps nothing over it.
+    var start_st: PathState;
+    var start_s: Sampler;
+    var keep_cut = false;
     var out: PathOut;
     loop {
         // One segment of the path: `ended` false where the path goes on.
@@ -3513,8 +3521,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         // cutout a program drives whose opacity this pass has not worked out
         // yet, the pass is thrown away: the path and the sampler are put back
         // as they were where the segment's ray was traced, or where it stood
-        // at its hit; the program runs, at the one place a program runs; and
-        // the pass runs again, the opacity known (crossing_opacity). Each
+        // at its hit, or - past the light sample's shadow rays - where the
+        // segment set out; the program runs, at the one place a program runs;
+        // and the pass runs again, the opacity known (crossing_opacity). Each
         // pass meets the same crossings in the same order, so the opacities
         // are remembered by their place in it.
         var ended = true;
@@ -3529,8 +3538,17 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var w: Walk;
         var walking = false;
         var want = WANT_NONE;
-        cut_known = 0u;
+        if (keep_cut) {
+            want = WANT_CROSSING;
+        } else {
+            cut_known = 0u;
+        }
+        keep_cut = false;
         cut_wanted = false;
+        if (FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u) {
+            start_st = st;
+            start_s = s;
+        }
         var seg_hit: RayIntersection;
         // A walk's flight drawn before the segment's ray was traced: whether
         // it was, each channel's chance and the optical depth (ic:975);
@@ -4350,17 +4368,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 }
             }
             // Its shadow rays past a cutout a program drives whose opacity
-            // this pass does not know: thrown away, back to the hit.
+            // this pass does not know: the segment run again (below).
             if (cut_wanted) {
-                st = hit_st;
-                s = hit_s;
-                cut_next = hit_next;
-                cut_wanted = false;
-                want = WANT_CROSSING;
-                at_i = 0u;
-                at_step = 0u;
-                phase = PH_HIT;
-                continue;
+                keep_cut = true;
+                break;
             }
             if (shaded == SHADE_ON) {
                 ended = false;
@@ -4375,6 +4386,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 ended = false;
             }
             break;
+        }
+        if (keep_cut) {
+            st = start_st;
+            s = start_s;
+            continue;
         }
         if (!ended) {
             continue;
