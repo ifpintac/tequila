@@ -201,14 +201,11 @@ fn what_emission_and_cutouts_cost_to_compile() {
         ("everything", Box::new(|s| s)),
         ("no light sample of the glowing triangles", Box::new(replace(&[("            if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
         ("no glow at a hit", Box::new(replace(&[("if (!colliding && FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
-        ("no cutout at a hit", Box::new(replace(&[("if (!colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
-        (
-            "no cutouts in the walks",
-            Box::new(replace(&[
-                ("        } else if (!open) {\n            through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);", "        } else if (!open) {\n            return Visibility(vec3<f32>(0.0), false);"),
-                ("        through = cutout_walk(from_point, normal, aim, -direction);", "        through = 0.0;"),
-            ])),
-        ),
+        ("no cutout at a hit", Box::new(replace(&[("let cutout = !colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999;", "let cutout = false;")]))),
+        // Every walk's cutouts at walk_ray's one place since the kernel's
+        // queries were made there (`r3-queries`): a surface it does not pass
+        // whole stops it.
+        ("no cutouts in the walks", Box::new(replace(&[("            let opacity = crossing_opacity(hit, direction, inst.material);", "            let opacity = 1.0;")]))),
         (
             "no programs at crossings",
             Box::new(replace(&[
@@ -225,9 +222,10 @@ fn what_emission_and_cutouts_cost_to_compile() {
 }
 
 /// What rounded edges cost the kernel's cold compile: the kernel with and
-/// without the bevel's one call site, interleaved so the card's other work
-/// falls on both alike, `TEQUILA_COMPILE_ROUNDS` rounds (3 by default). Run
-/// by hand: `cargo test --test compile_time -- --ignored --nocapture bevel`.
+/// without the bevel's one place (its step, its probes walked at path()'s
+/// one walk), interleaved so the card's other work falls on both alike,
+/// `TEQUILA_COMPILE_ROUNDS` rounds (3 by default). Run by hand: `cargo test
+/// --test compile_time -- --ignored --nocapture bevel`.
 #[test]
 #[ignore]
 fn what_rounded_edges_cost_to_compile() {
@@ -239,13 +237,13 @@ fn what_rounded_edges_cost_to_compile() {
     let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
     let renderer = GpuRenderer::new(gpu, &snapshot);
     let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
-    let call = "seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);";
+    let call = "if (FEATURE_BEVEL && (frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {";
     let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
     for round in 0..rounds {
         for (k, without) in [false, true].into_iter().enumerate() {
             let edit = move |s: String| {
-                assert!(s.contains(call), "no bevel call");
-                if without { s.replace(call, "") } else { s }
+                assert!(s.contains(call), "no bevel step");
+                if without { s.replace(call, "if (false) {") } else { s }
             };
             let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * 2 + k as u32) * 7919), &edit);
             eprintln!("round {round}, {}: {:.2} s", if without { "without rounded edges" } else { "with rounded edges" }, t.as_secs_f64());
@@ -425,7 +423,7 @@ fn what_every_variant_keeps_costs_to_compile() {
         ("no metal arms", Box::new(arms("2u"))),
         ("no sky sample", Box::new(replace(&[("            if (!medium && frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
         ("no light sample at all", Box::new(replace(&[("                let direct = direct_light(&s, light);", "                let direct = Direct();")]))),
-        ("no meeting and escaping", Box::new(replace(&[("                    sky = meet_and_escape(&st, hit);", "                    sky = vec3<f32>(0.0);")]))),
+        ("no meeting and escaping", Box::new(replace(&[("                    let met = meet_and_escape(&st, hit, at_i, at_step == 1u, found);", "                    var met: Paused;")]))),
         ("no Filter Glossy rebuild", Box::new(replace(&[("        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {", "        if (false) {")]))),
         ("no aiming", Box::new(replace(&[("        bsdf = openpbr_aim(openpbr_build(lobes, roughness_floor, true, from_inside), wo);", "        bsdf = openpbr_build(lobes, roughness_floor, false, from_inside);")]))),
     ];
