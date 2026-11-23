@@ -211,7 +211,7 @@ impl LightingTab {
                         crate::theme::note(
                             ui,
                             "Blender's Light Paths, for a studio that must match one. Unticked, Cycles takes \
-                             what it always has; with diffuse or glossy set, Ray bounces is the total.",
+                             Tequila's own; with diffuse or glossy set, Ray bounces is the total.",
                         );
                         let automatic = config.max_bounces.max(4);
                         optional_count(ui, "Diffuse bounces", &mut config.cycles.diffuse_bounces, automatic);
@@ -228,7 +228,7 @@ impl LightingTab {
                             }
                         })
                         .response
-                        .on_hover_text("Blur glossy reflections seen after a diffuse bounce, which cuts their noise. Blender's is 0.5; unticked, 1.");
+                        .on_hover_text("Blur glossy reflections seen after a diffuse bounce, which cuts their noise but darkens what is seen through glass. Blender's is 0.5; unticked, none.");
                         optional_flag(ui, "Reflective caustics", &mut config.cycles.caustics_reflective);
                         optional_flag(ui, "Refractive caustics", &mut config.cycles.caustics_refractive);
                     });
