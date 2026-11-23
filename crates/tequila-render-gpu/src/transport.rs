@@ -218,6 +218,9 @@ pub const SCENE_BACKPLATE: u32 = 256;
 /// up, sampled and weighed from where a path is, and a shadow ray towards
 /// it stops at it.
 pub const SCENE_FINITE_DOME: u32 = 512;
+/// Some floor shows the light the product sends onto it
+/// (`ShadowCatcher::product_light`, with its shadows on).
+pub const SCENE_PRODUCT_LIGHT: u32 = 1024;
 
 /// [`FrameParams::camera_flags`]: the camera is a thin lens with an opening
 /// (`Camera::aperture_radius` over nought): each ray starts on the opening,
@@ -922,7 +925,8 @@ impl GpuRenderer {
             Background::Environment => 0,
             Background::Color(_) => SCENE_BACKGROUND_COLOUR,
             Background::Backplate { .. } => SCENE_BACKPLATE,
-        } | if scene.environment.dome().is_infinite() { 0 } else { SCENE_FINITE_DOME };
+        } | if scene.environment.dome().is_infinite() { 0 } else { SCENE_FINITE_DOME }
+            | if uploaded.catcher_records.iter().any(|c| c.product_light != 0 && c.shadows != 0) { SCENE_PRODUCT_LIGHT } else { 0 };
         let features = KernelFeatures::of(&SceneRecords {
             materials: &records,
             programs: &programs,

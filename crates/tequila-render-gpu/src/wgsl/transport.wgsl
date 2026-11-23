@@ -3093,6 +3093,8 @@ struct FloorShadow {
     walks: bool,
     walk: Walk,
     share: f32,
+    // open_irradiance (#171), where asked for.
+    open: f32,
 };
 
 // shadow_at (ic:3087-3177): the share of the light onto this point of the
@@ -3107,11 +3109,21 @@ struct FloorShadow {
 // the configuration's shadow rays pass, as blocked_towards with the
 // configuration's glass does (ic:3141), a lamp's by its shadow links, and a
 // lamp that casts no shadow blocks nothing.
-fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32, s: ptr<function, Sampler>, instance: u32) -> FloorShadow {
+//
+// And, where `opens` asks (#171), open_irradiance (ic:3105-3121): the light,
+// as luminance, the environment and the lamps bring onto the point with
+// nothing in the way, which the product's light on the floor is measured
+// against - the sky's bound, and each lamp's light from its middle (a light
+// sample at (0.5, 0.5)), through the draws' one lamp_sample, ahead of them;
+// with `draws` false (a floor that takes its shadow as occlusion) that
+// alone, drawing nothing.
+fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32, s: ptr<function, Sampler>, instance: u32, draws: bool, opens: bool) -> FloorShadow {
     var none: FloorShadow;
     none.walks = false;
     none.share = 0.0;
-    if (frame.shadows == 0u) {
+    none.open = 0.0;
+    let shadows = draws && frame.shadows != 0u;
+    if (!shadows && !(FEATURE_PRODUCT_LIGHT && opens)) {
         return none;
     }
     // With a dome of a size, the sky's light onto a point grows by up to
@@ -3124,31 +3136,41 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
         total *= spread;
     }
     let sky = total;
+    var open = sky;
     var lamps = 0u;
     if (FEATURE_LAMPS) {
         lamps = frame.light_count;
-        for (var i = 0u; i < lamps; i++) {
-            total += floor_lamp_bound(i, position, normal, instance);
+        if (shadows) {
+            for (var i = 0u; i < lamps; i++) {
+                total += floor_lamp_bound(i, position, normal, instance);
+            }
         }
     }
-    if (!(total > 0.0)) {
-        return none;
-    }
-    for (var draw = 0u; draw < MAX_SHADOW_DRAWS; draw++) {
-        sampler_begin_bounce(s, bounce + draw);
-        // Drawn in the processor's order, the open stream's past the Sobol'
-        // limit.
-        let pick = sampler_light_select(s);
-        let u = sampler_light_sample(s);
-        let chance = sampler_bsdf_lobe(s);
-        let last = draw + 1u == MAX_SHADOW_DRAWS;
+    let lit = select(0u, lamps, FEATURE_PRODUCT_LIGHT && opens);
+    let count = lit + select(0u, MAX_SHADOW_DRAWS, shadows && total > 0.0);
+    for (var k = 0u; k < count; k++) {
+        let opening = k < lit;
+        let draw = k - lit;
+        var pick = 0.0;
+        var u = vec2<f32>(0.5);
+        var chance = 0.0;
+        var last = false;
+        if (!opening) {
+            sampler_begin_bounce(s, bounce + draw);
+            // Drawn in the processor's order, the open stream's past the
+            // Sobol' limit.
+            pick = sampler_light_select(s);
+            u = sampler_light_sample(s);
+            chance = sampler_bsdf_lobe(s);
+            last = draw + 1u == MAX_SHADOW_DRAWS;
+        }
         var keep: f32;
         var towards: vec3<f32>;
         var reach = frame.shadow_far;
         var blockers = NO_LIGHT;
         var casts = true;
         var along = pick * total;
-        if (lamps == 0u || along < sky) {
+        if (!opening && (lamps == 0u || along < sky)) {
             let sample = env_sample_irradiance(normal, u);
             if (!sample.ok) {
                 continue;
@@ -3168,20 +3190,25 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
                 reach = seen.distance * (1.0 - 1e-3);
             }
         } else {
-            // The lamp the pick falls in, rounding past the end the last.
-            along -= sky;
-            var chosen = lamps - 1u;
-            var bound = 0.0;
-            for (var i = 0u; i < lamps; i++) {
-                bound = floor_lamp_bound(i, position, normal, instance);
-                if (along < bound) {
-                    chosen = i;
-                    break;
+            // The lamp the pick falls in, rounding past the end the last;
+            // or, for the open light, each in turn.
+            var chosen = k;
+            var bound = 1.0;
+            if (!opening) {
+                along -= sky;
+                chosen = lamps - 1u;
+                bound = 0.0;
+                for (var i = 0u; i < lamps; i++) {
+                    bound = floor_lamp_bound(i, position, normal, instance);
+                    if (along < bound) {
+                        chosen = i;
+                        break;
+                    }
+                    along -= bound;
                 }
-                along -= bound;
-            }
-            if (bound <= 0.0) {
-                continue;
+                if (bound <= 0.0) {
+                    continue;
+                }
             }
             let light = scene_lights[chosen];
             let sample = lamp_sample(light, position, u);
@@ -3190,6 +3217,10 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
             }
             let density = select(sample.pdf, 1.0, sample.is_delta);
             if (!(density > 0.0)) {
+                continue;
+            }
+            if (opening) {
+                open += cy_div(cy_exact(luminance(sample.radiance) * max(dot(sample.direction, normal), 0.0)), density);
                 continue;
             }
             keep = luminance(sample.radiance) * max(dot(sample.direction, normal), 0.0) / density / bound;
@@ -3202,14 +3233,18 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
         }
         if (chance < keep || (last && keep > 0.0)) {
             if (!casts) {
+                none.open = open;
                 return none;
             }
             var shadow: FloorShadow;
             shadow.walks = true;
             shadow.walk = shadow_through_walk(frame.shadow_glass, offset_at(position, normal, magnitude), normal, position + towards * reach, -towards, blockers);
+            shadow.share = 0.0;
+            shadow.open = open;
             return shadow;
         }
     }
+    none.open = open;
     return none;
 }
 
@@ -3541,6 +3576,21 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     // Whether `st` is the floor's reflection's path; whether that escaped
     // at its first segment, and how far that went.
     var mirror = false;
+    // Whether `st` is the path towards the product from a floor that shows
+    // the product's light (#171, light_from_the_product), the light the
+    // floor would get in the open there, and the floor's hit and the path
+    // that met it as the floor's reflection takes them up once it is done
+    // (`floor_resume`: the next segment is the floor's again, from its
+    // reflection).
+    var product = false;
+    var product_open = 0.0;
+    var floor_resume = false;
+    var floor_raw: Surface;
+    var floor_slot = 0u;
+    var floor_max_bounces = 0u;
+    var floor_reflected = false;
+    var floor_alone_at = false;
+    var floor_wavelength_at = 0.0;
     var escaped = false;
     var depth = 0.0;
     // The mirror ray's first hit, found before its path is set up.
@@ -3655,6 +3705,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var seg_turn = false;
         var material: ProgShaded;
         let programs_cut = FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
+        if (FEATURE_PRODUCT_LIGHT && floor_resume) {
+            seg_raw = floor_raw;
+            seg_hit.instance_custom_data = floor_slot;
+            phase = PH_FLOOR;
+            at_step = 8u;
+        }
         loop {
             var found: WalkEnd;
             // ---- The one place a material's program runs (docs/07 §7) ----
@@ -3778,6 +3834,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         s = hit_s;
                         cut_next = hit_next;
                         phase = PH_HIT;
+                    } else if (FEATURE_PRODUCT_LIGHT && floor_resume) {
+                        st = start_st;
+                        s = start_s;
+                        cut_next = 0u;
+                        at_step = 8u;
                     } else {
                         st = seg_st;
                         s = seg_s;
@@ -3974,7 +4035,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     if (st.bounce == 0u) {
                         if (mirror) {
                             escaped = true;
-                        } else if (!st.reflected) {
+                        } else if (!st.reflected && !product) {
                             background = sky;
                             // Past cutouts, the coverage they settled; else
                             // none (ic:1308).
@@ -3998,14 +4059,14 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 if (st.bounce == 0u) {
                     if (mirror) {
                         depth = hit.t;
-                    } else if (!st.reflected) {
+                    } else if (!st.reflected && !product) {
                         coverage = select(1.0, settled, settled >= 0.0);
                     }
                     // Held out (ic:1377-1382): a hole where a path first meets
                     // it, nothing past it, and where it is the camera's, no
                     // alpha.
                     if (FEATURE_UNSEEN && (seen_flags & INSTANCE_HOLDOUT) != 0u) {
-                        if (!mirror && !st.reflected) {
+                        if (!mirror && !st.reflected && !product) {
                             coverage = 0.0;
                         }
                         break;
@@ -4048,13 +4109,16 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         floor.behind = past_the_scene(st.specular_chain, st.bounce == 0u && !st.reflected, st.in_floor, st.origin, view);
                         at_step = 2u;
                         if (c.shadows != 0u) {
+                            // The shadow's draws, and the open light the
+                            // product's light is measured against (#171).
+                            let shadow = shadow_at(raw.position, raw.magnitude, normal, st.bounce, &s, inst.instance, c.occlusion_only == 0u, c.product_light != 0u);
+                            product_open = shadow.open;
                             if (c.occlusion_only != 0u) {
                                 w = occlusion_walk(raw.position, raw.magnitude, normal, c.occlusion_radius, &s);
                                 walking = true;
                                 at_step = 1u;
                                 continue;
                             }
-                            let shadow = shadow_at(raw.position, raw.magnitude, normal, st.bounce, &s, inst.instance);
                             if (shadow.walks) {
                                 w = shadow.walk;
                                 walking = true;
@@ -4078,6 +4142,56 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         let caught = Caught(lerp3(floor.behind, c.shadow_color.xyz, share), share);
                         floor = FloorSeen(st.radiance, st.throughput, st.rad4, st.tp4, st.alone, st.bounce, floor.behind, caught, c, normal, view, 0.0, 1.0, !st.reflected);
                         on_floor = true;
+                        at_step = 8u;
+                        // What the product sends onto the floor (#171,
+                        // ic:3019-3024): where the floor shows it and its
+                        // shadows are on.
+                        if (FEATURE_PRODUCT_LIGHT && c.product_light != 0u && c.shadows != 0u) {
+                            at_step = 6u;
+                        }
+                    }
+                    // light_from_the_product (ic:3065-3103): against the light
+                    // the floor would get in the open, one direction from the
+                    // floor by its cosine (two draws of the open stream);
+                    // where it meets the product - not the floor, not clear
+                    // glass, whose light straight on is the shadow's - the
+                    // light coming back along it is a path of its own, four
+                    // bounces at most, seeing no floor as the camera would.
+                    // Its first hit is walked here and handed to it.
+                    if (FEATURE_PRODUCT_LIGHT && at_step == 6u) {
+                        at_step = 8u;
+                        if (product_open > 0.0) {
+                            let u0 = sampler_next_unstructured(&s);
+                            let u1 = sampler_next_unstructured(&s);
+                            mirror_dir = to_world(frame_of(normal), sample_cosine_hemisphere(vec2<f32>(u0, u1)));
+                            w = walk_new(WALK_FIRST, offset_at(raw.position, normal, raw.magnitude), mirror_dir, 3.0e38);
+                            walking = true;
+                            at_step = 7u;
+                            continue;
+                        }
+                    }
+                    if (FEATURE_PRODUCT_LIGHT && at_step == 7u) {
+                        at_step = 8u;
+                        let first = found.hit;
+                        if (first.kind != RAY_QUERY_INTERSECTION_NONE) {
+                            let met = scene_instances[first.instance_custom_data];
+                            if (met.catcher == NO_CATCHER && (scene_materials[met.material].glass & GLASS_PANE) == 0u) {
+                                floor_raw = raw;
+                                floor_slot = seg_hit.instance_custom_data;
+                                floor_max_bounces = st.max_bounces;
+                                floor_reflected = st.reflected;
+                                floor_alone_at = st.alone;
+                                floor_wavelength_at = st.wavelength;
+                                st = path_start(offset_at(raw.position, normal, raw.magnitude), mirror_dir, min(st.max_bounces, 4u), st.reflected, true);
+                                product = true;
+                                next = first;
+                                have_next = true;
+                                ended = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (at_step == 8u) {
                         if (c.reflections <= 0.0) {
                             break;
                         }
@@ -4298,7 +4412,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // is the light through every surface along the ray, averaged (a
             // walk, camera_coverage).
             let cutout = !colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999;
-            let covers = cutout && st.bounce == 0u && !st.reflected && !mirror && settled < 0.0;
+            let covers = cutout && st.bounce == 0u && !st.reflected && !mirror && !product && settled < 0.0;
             if (phase == PH_HIT) {
                 if (seg_turn) {
                     material.normal = valid_for_reflection(seg_surf.geometric, -st.direction, material.normal);
@@ -4473,6 +4587,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             s = start_s;
             continue;
         }
+        floor_resume = false;
         if (!ended) {
             continue;
         }
@@ -4484,6 +4599,24 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var alone = st.alone;
         if (FEATURE_SPECTRAL && spectral_on) {
             result = spectral_rgb(st.rad4);
+        }
+        // The path towards the product, done (ic:3023): what it brought, as
+        // irradiance over the open light (a cosine draw's is pi times the
+        // radiance), times what is behind the floor, onto what the floor
+        // shows; and the floor's segment taken up again at its reflection,
+        // the path that met it as it was there.
+        if (FEATURE_PRODUCT_LIGHT && product) {
+            floor.caught.radiance += floor.behind * (finished(result) * cy_div(PI, product_open));
+            product = false;
+            floor_resume = true;
+            st.direction = floor.view;
+            st.max_bounces = floor_max_bounces;
+            st.reflected = floor_reflected;
+            st.in_floor = false;
+            st.catcher_view = true;
+            st.alone = floor_alone_at;
+            st.wavelength = floor_wavelength_at;
+            continue;
         }
         if (on_floor) {
             var caught = floor.caught;
