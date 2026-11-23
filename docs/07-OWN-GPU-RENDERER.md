@@ -140,7 +140,9 @@ Sizes are relative: S is a pull request or two, M a handful, L a dozen or more.
 *Test:* `scripts/look-refs/compare.py` fetches the archive and reports, per picture, the mean absolute difference and correlation against any engine; run against Cycles itself it reports zero.
 
 **R0.3 Name the parity set.**
-One list, in `tequila-render-core/tests/parity_set.rs` or beside it, of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
+One list of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
+- *As built:* `tequila_scene::parity::SET` (`crates/tequila-scene/src/parity.rs`), generated as the benchmark scenes are, each entry saying what it covers. In `tequila-scene` rather than a renderer's crate so both backends' tests read the same list. Its first scene is `grey_product`, `simple_product` in grey diffuse under the default environment, 320×180, 256 samples, seed 7: what R2.5 renders.
+- The processor's half of the test, `crates/tequila-render-cpu/tests/parity_set.rs`: every scene renders, finite, not black, and the same twice from its seed. R2.6 adds the card's half beside it.
 
 **R0.4 The look audit, and its repairs, on the processor.**
 Run R0.2's comparison with Tequila's renderer against the Cycles archive over the whole set, and put every picture whose correlation is under 0.98 or whose mean differs by more than 5% on one sheet, worst first, for the owner. For each: find the cause, decide with the owner which engine is right, and fix Tequila's renderer where it is the one that is wrong, each fix with a test that holds it (`docs/05` §2). Start with the palma P8 (§2.1): establish whether its dark shell is light not reaching the inside (shadow rays and the lights behind clear plastic), the shell's medium being applied to everything it encloses, or a bounce limit, by rendering it with each of the three changed in turn. Second on the list, found by R0.1's `subsurface_product`: the Translucent type at its defaults (subsurface colour 0.9, 0.75, 0.7; radius 5 cm) comes out pink in Tequila's renderer and mid grey in Cycles, on the same scene and settings; which is right is for the owner to judge against what the type is meant to be. The card is ported from the processor renderer, so a look that is wrong here would be copied faithfully in R3; this step comes first for that reason.
@@ -188,7 +190,7 @@ A helper, `run_wgsl(function, inputs) -> outputs`, that wraps any WGSL function 
 Camera (perspective, thin lens), instanced triangles, one grey diffuse surface for everything, the environment sampled by its existing tables (`environment.rs`) with next-event estimation and MIS, Russian roulette and the bounce limit as `integrator.rs` has them. Samples go back to `Framebuffer` (D8).
 
 **R2.6 The parity test.**
-`Headphones` with every material grey diffuse under the sample HDRI, 256 samples, fixed seed: mean absolute difference under 0.002 in scene-linear, and at most 0.1% of pixels more than 0.02 apart (those are silhouette pixels where the two intersectors round differently; `docs/01` §10.4's "no pixel" becomes this, in the same pull request).
+`grey_product` from the parity set (R0.3), at its size, samples and seed: mean absolute difference under 0.002 in scene-linear, and at most 0.1% of pixels more than 0.02 apart (those are silhouette pixels where the two intersectors round differently; `docs/01` §10.4's "no pixel" becomes this, in the same pull request).
 
 *Exit:* R2.6 passes on both machines; `tequila -i Headphones.tequila --engine tequila --device GPU` writes the picture (`--device` is read only for Cycles today); R0.1 has a first graphics-card row.
 

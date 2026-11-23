@@ -230,6 +230,17 @@ pub fn simple_product() -> SceneDocument {
 /// `simple_product`, with its body in `body_material` when given, and the bus that
 /// built it for whatever is added after.
 fn simple_product_with(body_material: Option<(&'static str, MaterialType, Material)>) -> (SceneDocument, CommandBus) {
+    simple_product_mapped(&|(name, material_type, material)| match (&body_material, name) {
+        (Some(body), "Body") => body.clone(),
+        _ => (name, material_type, material),
+    })
+}
+
+/// A material of `simple_product`'s: its name, type and parameters.
+pub(crate) type BenchMaterial = (&'static str, MaterialType, Material);
+
+/// `simple_product` with each of its eight materials passed through `map`.
+pub(crate) fn simple_product_mapped(map: &dyn Fn(BenchMaterial) -> BenchMaterial) -> (SceneDocument, CommandBus) {
     let mut document = SceneDocument::new();
     let mut bus = CommandBus::new();
 
@@ -245,12 +256,12 @@ fn simple_product_with(body_material: Option<(&'static str, MaterialType, Materi
 
     let meshes = vec![body, bezel, screen, lens, button, foot, ground];
     // Eight, as §4.1 specifies: one per visible part plus the ground.
-    let materials = vec![
-        body_material.unwrap_or((
+    let materials: Vec<BenchMaterial> = vec![
+        (
             "Body",
             MaterialType::Plastic,
             Material::plastic(Spectrum::from_srgb_encoded(vec3(0.16, 0.17, 0.19)), 0.28),
-        )),
+        ),
         ("Bezel", MaterialType::Metal, Material::metal(metals::ALUMINIUM, 0.14)),
         (
             "Screen",
@@ -279,6 +290,8 @@ fn simple_product_with(body_material: Option<(&'static str, MaterialType, Materi
             Material::plastic(Spectrum::from_srgb_encoded(Vec3::splat(0.55)), 0.35),
         ),
     ];
+
+    let materials: Vec<BenchMaterial> = materials.into_iter().map(map).collect();
 
     // Body, bezel, screen, lens, four buttons, four feet, ground, plus a root.
     let parts: Vec<(usize, usize, Transform)> = {
@@ -411,6 +424,27 @@ pub fn lamp_lit() -> SceneDocument {
         bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
     }
     document
+}
+
+/// A camera framed on a generated scene's product: on every part but the
+/// ground, which these scenes name "Ground". Framed on everything, the
+/// camera fits the 80 m ground and the product is a speck in the middle of
+/// it, and what a render measures is mostly floor.
+pub fn product_camera(document: &SceneDocument, aspect: f32) -> tequila_render_core::camera::Camera {
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(document, &product);
+    let centre = bounds.center();
+    let radius = (bounds.diagonal().length() * 0.5).max(1e-4);
+    let mut camera =
+        tequila_render_core::camera::Camera::look_at(centre + vec3(0.75, 0.45, 1.0).normalize() * radius * 2.6, centre, Vec3::Y);
+    camera.set_vertical_fov(0.62, aspect);
+    camera
 }
 
 /// §4.1's `cad_assembly`: 5M triangles, 400 parts, heavy instancing.
