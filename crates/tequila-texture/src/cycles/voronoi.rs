@@ -130,6 +130,9 @@ struct Params {
     randomness: f32,
     max_distance: f32,
     normalize: bool,
+    /// Whether the cells' colour is wanted: the hash for it is half of what
+    /// a cell costs, and a graph that reads the distance never looks at it.
+    colour: bool,
 }
 
 #[inline]
@@ -197,11 +200,18 @@ fn position4<const N: usize>(p: [f32; N]) -> [f32; 4] {
 fn offsets<const N: usize>(reach: i32) -> impl Iterator<Item = [i32; N]> {
     let width = 2 * reach + 1;
     let count = (width as usize).pow(N as u32);
-    (0..count).map(move |mut index| {
-        let mut out = [0; N];
-        for slot in out.iter_mut() {
-            *slot = (index % width as usize) as i32 - reach;
-            index /= width as usize;
+    // Counted up like an odometer, the first axis fastest: the same order
+    // as dividing the index down, without a division a cell - which, at 125
+    // cells for a smooth F1, was a good part of what each cost.
+    let mut next = [-reach; N];
+    (0..count).map(move |_| {
+        let out = next;
+        for slot in next.iter_mut() {
+            if *slot < reach {
+                *slot += 1;
+                break;
+            }
+            *slot = -reach;
         }
         out
     })
@@ -237,7 +247,7 @@ fn f1<const N: usize>(p: &Params, coord: [f32; N]) -> VoronoiOutput {
     }
     VoronoiOutput {
         distance: distance(target, local, p),
-        color: cell_color(add_i(cell, target_offset)),
+        color: if p.colour { cell_color(add_i(cell, target_offset)) } else { [0.0; 3] },
         position: position4(std::array::from_fn::<f32, N, _>(|i| target[i] + floor[i])),
         radius: 0.0,
     }
@@ -254,8 +264,10 @@ fn smooth_f1<const N: usize>(p: &Params, coord: [f32; N]) -> VoronoiOutput {
         let mut correction = p.smoothness * h * (1.0 - h);
         smooth_distance = mix(smooth_distance, d, h) - correction;
         correction /= 1.0 + 3.0 * p.smoothness;
-        let color = cell_color(add_i(cell, offset));
-        smooth_color = std::array::from_fn(|i| mix(smooth_color[i], color[i], h) - correction);
+        if p.colour {
+            let color = cell_color(add_i(cell, offset));
+            smooth_color = std::array::from_fn(|i| mix(smooth_color[i], color[i], h) - correction);
+        }
         smooth_position = std::array::from_fn(|i| mix(smooth_position[i], point[i], h) - correction);
     }
     VoronoiOutput {
@@ -290,7 +302,7 @@ fn f2<const N: usize>(p: &Params, coord: [f32; N]) -> VoronoiOutput {
     let _ = (off1, pos1);
     VoronoiOutput {
         distance: d2,
-        color: cell_color(add_i(cell, off2)),
+        color: if p.colour { cell_color(add_i(cell, off2)) } else { [0.0; 3] },
         position: position4(std::array::from_fn::<f32, N, _>(|i| pos2[i] + floor[i])),
         radius: 0.0,
     }
@@ -565,6 +577,7 @@ impl VoronoiSettings {
             randomness: self.randomness.clamp(0.0, 1.0),
             max_distance: 0.0,
             normalize: self.normalize,
+            colour: true,
         }
     }
 
@@ -572,7 +585,14 @@ impl VoronoiSettings {
     /// `dims` dimensions: 1 reads `w`, 2 the first two of `coord`, 3 all of
     /// it, 4 `coord` and `w`.
     pub fn texture(&self, dims: u8, coord: [f32; 3], w: f32) -> VoronoiOutput {
+        self.texture_for(dims, coord, w, true)
+    }
+
+    /// [`Self::texture`], leaving the cells' colour out where `colour` says
+    /// it is not wanted: every other output is the same to the bit.
+    pub fn texture_for(&self, dims: u8, coord: [f32; 3], w: f32, colour: bool) -> VoronoiOutput {
         let mut p = self.params();
+        p.colour = colour;
         let reach = 0.5 + 0.5 * p.randomness;
         let c2 = [coord[0], coord[1]];
         let c4 = [coord[0], coord[1], coord[2], w];
