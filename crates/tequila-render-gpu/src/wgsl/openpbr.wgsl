@@ -224,6 +224,11 @@ struct OpenPbr {
     subsurface_walk: bool,
     coat_weight: f32,
     coat_darkening: f32,
+    // The coat's hemispherical transmittance from outside at its weight,
+    // which its two crossings of the substrate's light are divided by
+    // (coat_through, #190): they shape that light by angle, and the
+    // substrate lobes' darkening alone sets how much of it gets out.
+    coat_through: f32,
     // The hemispherical response of what the coat sits on, and of the
     // coat's whole answer (what the fuzz sits on).
     base_response: f32,
@@ -280,6 +285,41 @@ fn openpbr_push(b: ptr<function, OpenPbr>, slot: u32, scale_in: vec3<f32>, weigh
     }
 }
 
+// base_ior (#190, OpenPBR's Coat section): the index of the base's interface
+// relative to what is over it, the air or a coat of `coat_ior` at
+// `coat_weight`, lerp(n_b, n_b / n_c, C); turned over where the coat is the
+// denser.
+fn openpbr_base_ior(specular_ior: f32, coat_ior: f32, coat_weight: f32) -> f32 {
+    let n_b = max(specular_ior, 1.0);
+    let n_c = max(coat_ior, 1.0);
+    let eta = n_b + cy_exact((cy_div(n_b, n_c) - n_b) * clamp(coat_weight, 0.0, 1.0));
+    if (eta < 1.0) {
+        return cy_div(1.0, max(eta, 1e-3));
+    }
+    return eta;
+}
+
+// reflects (#190): whether an interface of relative index `eta` reflects
+// enough to be worth a lobe, a millionth face on.
+fn openpbr_reflects(eta: f32) -> bool {
+    let f0 = cy_div(eta - 1.0, eta + 1.0);
+    return cy_exact(f0 * f0) > 1e-6;
+}
+
+// coat_darkening (#190, Saunderson's correction): how much darker a coat
+// makes what the substrate under it spreads, per channel of the base's
+// albedo `base`, at `amount`, `escapes` the share of the light spread under
+// the coat that gets out through it at the first try (coat_escapes).
+fn openpbr_coat_darkening(escapes_in: f32, amount_in: f32, base: vec3<f32>) -> vec3<f32> {
+    let escapes = clamp(escapes_in, 0.0, 1.0);
+    let turned_back = 1.0 - escapes;
+    let amount = clamp(amount_in, 0.0, 1.0);
+    let albedo = clamp(base, vec3<f32>(0.0), vec3<f32>(1.0));
+    let kept = vec3<f32>(1.0) - cy_exact3(albedo * turned_back);
+    let delta = vec3<f32>(cy_div(escapes, max(kept.x, 1e-3)), cy_div(escapes, max(kept.y, 1e-3)), cy_div(escapes, max(kept.z, 1e-3)));
+    return vec3<f32>(1.0) + cy_exact3((delta - vec3<f32>(1.0)) * amount);
+}
+
 // layer_response: a layer over a substrate, its own reflection, what it
 // passes down and gets back, and everything trapped between.
 fn openpbr_layer_response(layer_in: f32, substrate_in: f32) -> f32 {
@@ -292,13 +332,14 @@ fn openpbr_layer_response(layer_in: f32, substrate_in: f32) -> f32 {
 // stack_transmittance: the cosine-weighted average of the product of the
 // transmittances of every layer over the substrate, measured over sixteen
 // midpoints of mu when there is more than one layer to correlate.
-fn openpbr_stack_transmittance(b: OpenPbr, coat_average: f32, coat_weight: f32, specular_average: f32, specular_scale: f32) -> f32 {
-    let layers = u32(b.has_fuzz) + u32(b.has_coat) + u32(b.has_specular);
+fn openpbr_stack_transmittance(b: OpenPbr, with_coat: bool, coat_average: f32, coat_weight: f32, specular_average: f32, specular_scale: f32) -> f32 {
+    let has_coat = with_coat && b.has_coat;
+    let layers = u32(b.has_fuzz) + u32(has_coat) + u32(b.has_specular);
     if (layers <= 1u) {
         var reflected = 0.0;
         if (b.has_fuzz) {
             reflected = sheen_hemispherical_albedo(b.fuzz);
-        } else if (b.has_coat) {
+        } else if (has_coat) {
             reflected = coat_average * coat_weight;
         } else if (b.has_specular) {
             reflected = specular_average * specular_scale;
@@ -313,7 +354,7 @@ fn openpbr_stack_transmittance(b: OpenPbr, coat_average: f32, coat_weight: f32, 
         if (b.has_fuzz) {
             transmitted *= sheen_transmittance(b.fuzz, mu);
         }
-        if (b.has_coat) {
+        if (has_coat) {
             transmitted *= clamp(1.0 - specular_directional_albedo(b.coat, wo) * coat_weight, 0.0, 1.0);
         }
         if (b.has_specular) {
@@ -624,8 +665,12 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
             let transmission_weight = m.transmission_color.w;
             let opaque = 1.0 - transmission_weight;
             let specular_weight = m.specular_weight * opaque;
-            if (specular_weight > 1e-4) {
-                b.specular = specular_new(openpbr_rough(m.specular_roughness, roughness_floor), m.specular_ior);
+            // Under a coat the interface is between the coat and the base,
+            // not air and the base (#190): a lacquer of the plastic's own
+            // index leaves no surface between the two to reflect.
+            let ior = openpbr_base_ior(m.specular_ior, m.coat_ior, select(0.0, m.coat_weight, b.has_coat));
+            if (specular_weight > 1e-4 && (openpbr_reflects(ior) || film.x > 1e-4)) {
+                b.specular = specular_new(openpbr_rough(m.specular_roughness, roughness_floor), ior);
                 b.specular.tint = m.specular_color.xyz;
                 b.specular.film = film;
                 b.has_specular = true;
@@ -644,11 +689,35 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
             // bounces against both, the walk's at the colour it gives back.
             let remainder = dielectric * opaque;
             let subsurface = clamp(m.subsurface_color.w, 0.0, 1.0);
-            diffuse_albedo = clamp(spectrum_luminance(m.base_color.xyz * (1.0 - subsurface) + m.subsurface_color.xyz * subsurface), 0.0, 1.0);
+            let substrate = m.base_color.xyz * (1.0 - subsurface) + m.subsurface_color.xyz * subsurface;
+            diffuse_albedo = clamp(spectrum_luminance(substrate), 0.0, 1.0);
+            // Under a coat, what the substrate spreads is darkened by the
+            // light the coat turns back down (#190, coat_darkening): what the
+            // coat sits on, channel by channel, its albedo; the share that
+            // gets out at the first try what the coat lets in from outside
+            // over the square of its index (coat_escapes, the coat's own
+            // lobe: build's `rough` keeps it within 0-1, specular_new its
+            // index from 1 up).
+            var under_coat = vec3<f32>(1.0);
+            if (b.has_coat) {
+                let transmission = clamp(m.transmission_color.w, 0.0, 1.0);
+                var reflected = 0.0;
+                if (b.has_specular) {
+                    reflected = specular_hemispherical_albedo(b.specular) * specular_scale;
+                }
+                let metallic = clamp(metalness, 0.0, 1.0);
+                let under = cy_exact3(substrate * (1.0 - transmission)) + cy_exact3(m.transmission_color.xyz * transmission);
+                let returned = vec3<f32>(openpbr_layer_response(reflected, under.x), openpbr_layer_response(reflected, under.y), openpbr_layer_response(reflected, under.z));
+                let base = cy_exact3(m.base_color.xyz * metallic) + cy_exact3(returned * (1.0 - metallic));
+                let sits_on = cy_exact3(base * (1.0 - flake)) + cy_exact3(m.flake_color.xyz * flake);
+                let n = max(m.coat_ior, 1.0);
+                let escapes = clamp(cy_div(1.0 - specular_hemispherical_albedo(b.coat), cy_exact(n * n)), 0.0, 1.0);
+                under_coat = openpbr_coat_darkening(escapes, m.coat_weight * m.coat_darkening, sits_on);
+            }
             let diffuse_weight = remainder * (1.0 - subsurface);
             if (diffuse_weight > 1e-4) {
                 b.diffuse = diffuse_new(m.base_color.xyz, m.base_diffuse_roughness);
-                openpbr_push(&b, LOBE_DIFFUSE, base_scale, diffuse_weight, occlusion);
+                openpbr_push(&b, LOBE_DIFFUSE, base_scale * under_coat, diffuse_weight, occlusion);
             }
             // The doorway into the random walk, white; on a thin wall, which
             // has no inside, the light the sheet scatters through to its far
@@ -659,7 +728,7 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
                 b.subsurface_walk = !thin;
                 b.subsurface_tint = select(vec3<f32>(1.0), m.subsurface_color.xyz, thin);
                 b.subsurface_appearance = m.subsurface_color.xyz;
-                openpbr_push(&b, LOBE_SUBSURFACE, base_scale, walk_weight, occlusion);
+                openpbr_push(&b, LOBE_SUBSURFACE, base_scale * under_coat, walk_weight, occlusion);
             }
         }
     }
@@ -699,9 +768,18 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
         base_response = base_response * (1.0 - flake) + clamp(spectrum_luminance(m.flake_color.xyz), 0.0, 1.0) * flake;
     }
 
+    // The coat's own trapped light is in the substrate lobes' darkening,
+    // which knows the coat turns back far more from inside than from
+    // outside, so it is left out of this one (#190).
     var substrate_internal = 0.0;
-    if (diffuse_albedo > 0.0 && (b.has_fuzz || b.has_coat || b.has_specular)) {
-        substrate_internal = 1.0 - openpbr_stack_transmittance(b, coat_average, m.coat_weight, specular_average, specular_scale);
+    if (diffuse_albedo > 0.0 && (b.has_fuzz || b.has_specular)) {
+        substrate_internal = 1.0 - openpbr_stack_transmittance(b, false, 0.0, 0.0, specular_average, specular_scale);
+    }
+    // What the coat lets through from the whole hemisphere outside, for the
+    // shape of what it lets out of the substrate.
+    var coat_through = 1.0;
+    if (b.has_coat) {
+        coat_through = clamp(1.0 - coat_average * m.coat_weight, 1e-3, 1.0);
     }
     var coat_response = base_response;
     if (b.has_coat) {
@@ -710,6 +788,7 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
 
     b.coat_weight = m.coat_weight;
     b.coat_darkening = m.coat_darkening;
+    b.coat_through = coat_through;
     b.base_response = base_response;
     b.coat_response = coat_response;
     b.specular_scale = specular_scale;
@@ -766,14 +845,17 @@ fn openpbr_attenuation(b: OpenPbr, depth: u32, wo: vec3<f32>, wi: vec3<f32>) -> 
     if (depth > DEPTH_COAT && b.has_coat) {
         let down = 1.0 - specular_directional_albedo(b.coat, wo) * b.coat_weight;
         let up = 1.0 - specular_directional_albedo(b.coat, wi) * b.coat_weight;
-        var physical: f32;
         if (spreads) {
-            physical = clamp(down * up, 0.0, 1.0);
+            // In at `wo`, out at `wi`, shaped by the two crossings; how much
+            // gets out at all, after the light the coat turns back, is the
+            // substrate lobes' darkening (#190).
+            through *= clamp(cy_div(down * up, b.coat_through), 0.0, 1.0);
         } else {
-            physical = openpbr_trapped(down, up, 1.0 - up, b.base_response);
+            // §2.2's coat_darkening from the physical result down to the coat
+            // taking only its own reflection's share, as OpenPBR's boost does.
+            let physical = openpbr_trapped(down, up, 1.0 - up, b.base_response);
+            through *= down + (physical - down) * b.coat_darkening;
         }
-        // §2.2's coat_darkening, between the physical result and none.
-        through *= physical * b.coat_darkening + (1.0 - b.coat_darkening);
     }
     if (spreads) {
         if (b.has_specular) {
