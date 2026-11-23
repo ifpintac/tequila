@@ -69,7 +69,7 @@ fn records_have_one_layout_on_both_sides() {
             off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
             regularization_start, regularization_roughness, off_marginal, off_upward, env_upward_sum, shadows,
             ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, max_transmission_bounces, shadow_glass,
-            glass_flags, _pad3,
+            glass_flags, row_base, row_stride,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });

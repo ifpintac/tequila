@@ -125,7 +125,10 @@ pub struct FrameParams {
     /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`],
     /// [`SCENE_CUT_PROGRAMS`] and [`SCENE_BEVEL`].
     pub glass_flags: u32,
-    pub _pad3: [u32; 2],
+    /// The rows a dispatch draws: `row_base` and every `row_stride`-th row
+    /// after it (`render_pass`); 0 and 1 for the whole frame.
+    pub row_base: u32,
+    pub row_stride: u32,
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -393,9 +396,18 @@ pub fn camera_limits(camera: &Camera, config: &IntegratorConfig) -> Vec<&'static
     limits
 }
 
-/// How many samples a dispatch draws: a bounded buffer and a bounded time
-/// for the card to run without the display.
+/// The most samples a dispatch draws: a bounded buffer.
 const SAMPLES_PER_DISPATCH: u32 = 16;
+
+/// How long a dispatch should keep the card from the display, in seconds.
+/// Windows resets a card whose one piece of work runs past two seconds
+/// (its TDR), and on any system the display waits on it meanwhile.
+const DISPATCH_SECONDS: f64 = 0.1;
+
+/// A first dispatch's work in pixel samples, before the card's pace on the
+/// scene is known: small enough for the heaviest scene to finish in well
+/// under two seconds.
+const FIRST_DISPATCH_WORK: u64 = 1 << 18;
 
 /// A scene on one card, ready to render.
 pub struct GpuRenderer {
@@ -428,6 +440,11 @@ pub struct GpuRenderer {
     /// configuration is known (the first pass), and whether it has been.
     floor_scene: FloorScene,
     said_floor_limits: std::sync::atomic::AtomicBool,
+    /// How much work, in pixel samples, a dispatch of this scene can do in
+    /// [`DISPATCH_SECONDS`], as the dispatches so far have timed it; and the
+    /// seconds the last timed one took, as `f64` bits.
+    dispatch_work: std::sync::atomic::AtomicU64,
+    dispatch_seconds: std::sync::atomic::AtomicU64,
     /// The scene's lamps, which the scene's bind group reads, and what
     /// [`crate::lights::lamp_limits`] and the lamp flags read of the scene.
     pub lights: GpuLights,
@@ -738,6 +755,8 @@ impl GpuRenderer {
             frame_layout,
             floor_scene: FloorScene::of(scene),
             said_floor_limits: std::sync::atomic::AtomicBool::new(false),
+            dispatch_work: std::sync::atomic::AtomicU64::new(FIRST_DISPATCH_WORK),
+            dispatch_seconds: std::sync::atomic::AtomicU64::new(f64::INFINITY.to_bits()),
             lights,
             lamp_scene: LampScene::of(scene),
             glass_scene: GlassScene::of(scene),
@@ -842,7 +861,8 @@ impl GpuRenderer {
                 | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
                 | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 }
                 | if self.bevels { SCENE_BEVEL } else { 0 },
-            _pad3: [0; 2],
+            row_base: 0,
+            row_stride: 1,
         }
     }
 
@@ -932,31 +952,61 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: pixel_buffer.as_entire_binding() },
             ],
         });
+        // The most a dispatch may do: every pixel, `batch` samples each.
+        let most = pixels as u64 * batch as u64;
         let mut done = 0u32;
         while done < samples {
-            let count = batch.min(samples - done);
-            let params = self.params(settings, width, height, start + done, count);
-            self.gpu.queue.write_buffer(&uniform, 0, bytemuck::bytes_of(&params));
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("transport") });
-            {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("transport"), timestamp_writes: None });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.scene_group, &[]);
-                pass.set_bind_group(1, &self.tables.bind_group, &[]);
-                pass.set_bind_group(2, &self.environment_group, &[]);
-                pass.set_bind_group(3, &frame_group, &[]);
-                pass.dispatch_workgroups((width as u32).div_ceil(8), (height as u32).div_ceil(8), 1);
+            // As many samples and rows as the card does in DISPATCH_SECONDS:
+            // up to `batch` samples of the whole frame, else one sample of
+            // every `stride`-th row at a time. Each pixel still takes its
+            // samples in order, so the picture is the same however it is cut.
+            let work = self.dispatch_work.load(std::sync::atomic::Ordering::Relaxed).clamp(width as u64, most);
+            let count = ((work / pixels as u64) as u32).clamp(1, batch.min(samples - done));
+            let rows = if count > 1 { height } else { ((work / width as u64) as usize).clamp(1, height) };
+            let stride = height.div_ceil(rows);
+            for base in 0..stride {
+                let drawn = (height - base).div_ceil(stride);
+                let mut params = self.params(settings, width, height, start + done, count);
+                params.row_base = base as u32;
+                params.row_stride = stride as u32;
+                self.gpu.queue.write_buffer(&uniform, 0, bytemuck::bytes_of(&params));
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("transport") });
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("transport"), timestamp_writes: None });
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_bind_group(0, &self.scene_group, &[]);
+                    pass.set_bind_group(1, &self.tables.bind_group, &[]);
+                    pass.set_bind_group(2, &self.environment_group, &[]);
+                    pass.set_bind_group(3, &frame_group, &[]);
+                    pass.dispatch_workgroups((width as u32).div_ceil(8), (drawn as u32).div_ceil(8), 1);
+                }
+                let begun = std::time::Instant::now();
+                self.gpu.queue.submit(Some(encoder.finish()));
+                // Timed while the pace is being found, and wherever a
+                // dispatch came near its time; at full size and well inside
+                // it, dispatches queue up without a wait between them.
+                let last = f64::from_bits(self.dispatch_seconds.load(std::sync::atomic::Ordering::Relaxed));
+                if !on_card || work < most || last > DISPATCH_SECONDS / 4.0 {
+                    self.gpu.wait();
+                    self.check_device();
+                    self.timed(drawn as u64 * width as u64 * count as u64, begun.elapsed().as_secs_f64(), most);
+                }
             }
             if on_card {
-                self.gpu.queue.submit(Some(encoder.finish()));
                 done += count;
                 continue;
             }
             let used = (pixels * count as usize * 2 * 16) as u64;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read back") });
             encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, used);
             self.gpu.queue.submit(Some(encoder.finish()));
-            readback.slice(..used).map_async(wgpu::MapMode::Read, |r| r.expect("the samples map"));
+            readback.slice(..used).map_async(wgpu::MapMode::Read, |r| {
+                if let Err(why) = r {
+                    eprintln!("  the card's samples did not come back: {why}");
+                }
+            });
             self.gpu.wait();
+            self.check_device();
             {
                 let view = readback.slice(..used).get_mapped_range().expect("the samples are mapped");
                 let values: &[[f32; 4]] = bytemuck::cast_slice(&view[..]);
@@ -983,8 +1033,13 @@ impl GpuRenderer {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read back") });
             encoder.copy_buffer_to_buffer(&pixel_buffer, 0, &readback, 0, pixel_bytes);
             self.gpu.queue.submit(Some(encoder.finish()));
-            readback.slice(..pixel_bytes).map_async(wgpu::MapMode::Read, |r| r.expect("the pixels map"));
+            readback.slice(..pixel_bytes).map_async(wgpu::MapMode::Read, |r| {
+                if let Err(why) = r {
+                    eprintln!("  the card's pixels did not come back: {why}");
+                }
+            });
             self.gpu.wait();
+            self.check_device();
             {
                 let view = readback.slice(..pixel_bytes).get_mapped_range().expect("the pixels are mapped");
                 let back: &[PixelSums] = bytemuck::cast_slice(&view[..]);
@@ -999,6 +1054,34 @@ impl GpuRenderer {
             }
             readback.unmap();
         }
+    }
+
+    /// A lost card hands back nothing to trust (a black picture, once, with
+    /// no other sign): say so rather than pass it on.
+    fn check_device(&self) {
+        if self.gpu.is_lost() {
+            panic!("the graphics card was lost during the render: the system reset it, or its driver failed (see above)");
+        }
+    }
+
+    /// What a dispatch of `work` pixel samples that took `seconds` says of
+    /// the card's pace: the next dispatches' work, aimed at
+    /// [`DISPATCH_SECONDS`], at most twice the last and at most `most`.
+    fn timed(&self, work: u64, seconds: f64, most: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let pace = work as f64 / seconds.max(1e-6);
+        let last = self.dispatch_work.load(Relaxed);
+        let next = ((pace * DISPATCH_SECONDS) as u64).min(last.saturating_mul(2)).clamp(1, most.max(1));
+        self.dispatch_work.store(next, Relaxed);
+        self.dispatch_seconds.store(seconds.to_bits(), Relaxed);
+    }
+
+    /// Sets the work, in pixel samples, the next dispatch starts from, as
+    /// [`GpuRenderer::render_pass`] would have learnt it: for tests that cut
+    /// a frame finely, and for a caller that knows the card's pace already.
+    pub fn set_dispatch_work(&self, work: u64) {
+        self.dispatch_work.store(work.max(1), std::sync::atomic::Ordering::Relaxed);
+        self.dispatch_seconds.store(f64::INFINITY.to_bits(), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// For differential tests of what reads the scene (`docs/07` R2.4): the
