@@ -17,13 +17,26 @@
 //! part: half a millimetre deep is half a millimetre on a watch and on a car,
 //! however each was scaled on import and however its UVs were laid out.
 //!
-//! The step is a tenth of the ray's footprint, [`BUMP_FILTER_WIDTH`]: what
-//! Cycles' bump node takes by default, and so what Tequila's Cycles
-//! translation renders. Detail near a pixel's size is measured where each
-//! sample lands, and the pixel's samples average it, in both engines alike.
-//! A whole footprint either side, as it was, smoothed the slope over two
-//! pixels: a 3D print's 0.2 mm layer lines, four pixels apart in a close-up,
-//! shaded a third shallower here than in Cycles and in Blender.
+//! The step is a thousandth of the ray's footprint, [`BUMP_FILTER_WIDTH`]:
+//! short enough that the slope is the slope at the point the sample landed
+//! on, and the pixel's samples average detail smaller than the pixel the way
+//! a camera does. A longer step smooths that detail away before the samples
+//! see it, by however much of a pixel the detail is, so a bumped part looked
+//! brighter and flatter the smaller it was in the frame. Measured on a tile
+//! of 0.6 mm polished pyramids (Silver Clous de Paris) seen from above: a
+//! tenth of a footprint (Cycles' default, and Tequila's until November 20)
+//! read 0.90, 0.57 and 0.42 at 48, 128 and 512 pixels across; a thousandth
+//! reads 0.375 at all three, as the same pyramids modelled as geometry keep
+//! to one value (0.55: a bump's faces do not hide one another as real ones
+//! do, so it keeps the geometry's light, within 4% in a white world, but not
+//! its look from every side). A whole
+//! footprint either side, as it was before the tenth, smoothed a 3D print's
+//! layer lines four pixels apart.
+//!
+//! The step never goes below what `f32` can tell apart at the point
+//! ([`PRECISION_STEP`] of the distance from the part's origin): far from its
+//! origin, in a close-up, a thousandth of a footprint would be a few units in
+//! the last place, and the slope would come out as noise.
 
 use crate::intersect::Hit;
 use crate::material::Material;
@@ -38,7 +51,11 @@ use tequila_texture::TangentFrame;
 use std::sync::Arc;
 
 /// The share of the ray's footprint a bump's slope is measured across.
-pub const BUMP_FILTER_WIDTH: f32 = 0.1;
+pub const BUMP_FILTER_WIDTH: f32 = 0.001;
+
+/// The shortest step, as a share of the point's distance from its part's
+/// origin: about 64 units in the last place of an `f32` there.
+pub const PRECISION_STEP: f32 = 8e-6;
 
 /// What drives a material's Bump socket.
 #[derive(Debug)]
@@ -185,9 +202,10 @@ pub fn bumped_normal(
                 .unwrap_or_else(|| TangentFrame::from_normal(n).tangent);
             let bitangent = n.cross(tangent);
             let transform = &scene.instance(hit.instance).transform;
-            // A tenth of a footprint in world units, floored so a sharp view
-            // still has something to difference across.
-            let step = (point.footprint * point.scale * BUMP_FILTER_WIDTH).max(1e-6);
+            // A thousandth of a footprint in world units, but never so short
+            // that the positions either side round to nearly the same `f32`.
+            let precise = point.position.length() * point.scale * PRECISION_STEP;
+            let step = (point.footprint * point.scale * BUMP_FILTER_WIDTH).max(precise).max(1e-8);
 
             // The height a world-space offset along the surface away.
             let mut height = |offset: Vec3| -> f32 {
