@@ -3693,15 +3693,20 @@ impl Builder<'_> {
         Ok(sum)
     }
 
-    /// Glass that disperses (an Abbe number), as Cycles can have it. It
-    /// has no dispersion of its own, so three glasses, each passing one
-    /// colour channel at the index that channel bends by
-    /// (`dispersion::channel_iors`), added: their reflections come to white
-    /// and their refractions part, in fringes where Tequila's renderer has
-    /// a spectrum. Each crossing tints by the square root of `base`, as
-    /// Cycles' principled glass does. `None` without an Abbe number, or for
-    /// a material that is more than `plain` glass, which disperses only in
-    /// Tequila's renderer.
+    /// Glass that disperses (an Abbe number), as Cycles can have it: three
+    /// glasses, each passing one colour channel at the index that channel
+    /// bends by (`dispersion::channel_iors`), added, so their refractions
+    /// part in fringes where Tequila's renderer has a spectrum. Each is
+    /// Cycles' principled glass, which tints what it lets through by the
+    /// square root of `base` at each crossing and reflects untinted, as the
+    /// undispersed glass does; its reflection is its own channel's, so the
+    /// three come to white. Cycles' Glass BSDF, used here before, tints its
+    /// reflections by its colour too: a garnet's face reflected red, and
+    /// every reflection inside the stone darkened it again - its middle in a
+    /// white world read 0.37, 0.095, 0.092 against the 0.41, 0.16, 0.15 a
+    /// tinted sphere passes (`tests/dispersed_glass.rs`). `None` without an
+    /// Abbe number, or for a material that is more than `plain` glass, which
+    /// disperses only in Tequila's renderer.
     fn dispersed_glass(
         &mut self,
         shader: Shader,
@@ -3718,32 +3723,21 @@ impl Builder<'_> {
             self.out.warn("dispersion reaches Cycles for clear glass only: on this material it is left out");
             return Ok(None);
         }
-        let tint = match base {
-            Slot::Value(colour) => {
-                let c = colour.as_color();
-                Slot::Value(Value::Color(Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() }))
-            }
-            link => {
-                let root = self.session.node(shader, "gamma")?;
-                self.feed(shader, root, "Color", link, true)?;
-                self.session.set_float(root, "Gamma", 0.5)?;
-                Slot::Link(root, "Color")
-            }
-        };
         let iors = tequila_materials::dispersion::channel_iors(m.specular_ior, m.transmission_dispersion_abbe);
         let channels = [Spectrum { r: 1.0, g: 0.0, b: 0.0 }, Spectrum { r: 0.0, g: 1.0, b: 0.0 }, Spectrum { r: 0.0, g: 0.0, b: 1.0 }];
         let mut sum: Option<(Node, &'static str)> = None;
         for (ior, channel) in iors.into_iter().zip(channels) {
-            let glass = self.session.node(shader, "glass_bsdf")?;
-            self.session.set_string(glass, "distribution", "multi_ggx")?;
-            let colour = self.apply(shader, &NodeKind::Multiply, &[tint, Slot::Value(Value::Color(channel))], 0)?;
-            self.feed(shader, glass, "Color", colour, true)?;
-            self.feed(shader, glass, "Roughness", roughness, false)?;
+            let glass = self.session.node(shader, "principled_bsdf")?;
+            let colour = self.apply(shader, &NodeKind::Multiply, &[base, Slot::Value(Value::Color(channel))], 0)?;
+            self.feed(shader, glass, "base_color", colour, true)?;
+            self.feed(shader, glass, "roughness", roughness, false)?;
             let index = self.against_outside(shader, num(ior))?;
-            self.feed(shader, glass, "IOR", index, false)?;
+            self.feed(shader, glass, "ior", index, false)?;
+            self.session.set_float3(glass, "specular_tint", rgb(channel))?;
+            self.session.set_float(glass, "transmission_weight", 1.0)?;
             if m.thin_film_weight > 0.0 {
-                self.session.set_float(glass, "Thin Film Thickness", m.thin_film_thickness * m.thin_film_weight)?;
-                self.session.set_float(glass, "Thin Film IOR", m.thin_film_ior)?;
+                self.session.set_float(glass, "thin_film_thickness", m.thin_film_thickness * m.thin_film_weight)?;
+                self.session.set_float(glass, "thin_film_ior", m.thin_film_ior)?;
             }
             if let Some((node, socket)) = normal {
                 self.session.connect(shader, node, socket, glass, "Normal")?;
