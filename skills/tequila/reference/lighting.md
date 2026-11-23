@@ -115,6 +115,7 @@ The floor is part of the environment and set the same way:
 | `ground_enabled` | The floor at all |
 | `ground_shadows`, `ground_shadow_color` | The product's shadow on it |
 | `ground_occlusion` | A soft contact shadow where the product touches |
+| `ground_product_light` | `true` (the default) lets the floor show light the product sends onto it: off a white part, a glowing part's glow, light through frosted glass |
 | `ground_reflections` | The product mirrored in the floor, 0 to 1: 0.3-0.6 typical |
 | `ground_reflection_blur` | 0 a mirror; 0.05-0.2 polished |
 | `ground_reflection_length` | 1 the whole reflection; 0.2-0.35 the short one that fades out under the product |

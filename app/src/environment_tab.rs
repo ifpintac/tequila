@@ -65,6 +65,7 @@ const GROUPS: [(&str, &[EnvParam]); 3] = [
             EnvParam::GroundEnabled,
             EnvParam::GroundShadows,
             EnvParam::GroundOcclusion,
+            EnvParam::GroundProductLight,
             EnvParam::GroundShadowColor,
             EnvParam::GroundReflections,
             EnvParam::GroundReflectionBlur,
@@ -258,7 +259,7 @@ impl EnvironmentTab {
             EnvParam::GroundReflectionLength => {
                 settings.ground.enabled && settings.ground.reflections > 0.0 && settings.ground.reflection_fade_distance <= 0.0
             }
-            EnvParam::GroundShadowColor | EnvParam::GroundOcclusion => {
+            EnvParam::GroundShadowColor | EnvParam::GroundOcclusion | EnvParam::GroundProductLight => {
                 settings.ground.enabled && settings.ground.shadows
             }
             // The reflection's look, once there is a reflection to look at.
