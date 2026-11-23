@@ -199,7 +199,7 @@ pub fn run(options: &Options, name: &str) -> Result<(), String> {
         "CPU".to_string()
     };
     let reject_fireflies = if project { settings.reject_fireflies } else { true };
-    let clamp = if project { settings.clamp_indirect } else { None };
+    let clamp = if project { (settings.clamp_indirect, settings.clamp_direct) } else { (None, None) };
     let picture = options.output_set.then_some(options.output.as_str());
     let measure = |samples: u32, picture: Option<&str>| {
         if cycles {
@@ -284,7 +284,7 @@ fn with_tequila(
     samples: u32,
     config: IntegratorConfig,
     reject_fireflies: bool,
-    clamp_sample: Option<f32>,
+    (clamp_indirect, clamp_direct): (Option<f32>, Option<f32>),
     style: &tequila_color::ImageStyle,
     picture: Option<&str>,
 ) -> Result<Measurement, String> {
@@ -299,7 +299,7 @@ fn with_tequila(
     let mut developed = Vec::new();
     let mut render_seconds = [0.0; 2];
     for (i, seed) in SEEDS.into_iter().enumerate() {
-        let context = RenderContext { camera, config: config.clone(), scene_seed: seed, reject_fireflies, clamp_sample, region: None, ..Default::default() };
+        let context = RenderContext { camera, config: config.clone(), scene_seed: seed, reject_fireflies, clamp_indirect, clamp_direct, region: None, ..Default::default() };
         let mut framebuffer = Framebuffer::new(width, height);
         let start = Instant::now();
         let mut done = 0;

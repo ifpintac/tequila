@@ -1376,7 +1376,8 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         scene_seed: 0,
         // The project's own, as the Render window renders with.
         reject_fireflies: if project { settings.reject_fireflies } else { true },
-        clamp_sample: if project { settings.clamp_indirect } else { None },
+        clamp_indirect: if project { settings.clamp_indirect } else { None },
+        clamp_direct: if project { settings.clamp_direct } else { None },
         region: None,
         ..Default::default()
     };

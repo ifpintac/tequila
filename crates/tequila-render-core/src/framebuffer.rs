@@ -636,6 +636,9 @@ impl Pixel {
         }
         let mut radiance = result.radiance;
         let original = radiance.luminance();
+        // What the path's own clamps took off as it went
+        // (`IntegratorConfig::clamp_indirect`).
+        self.clamped_energy += result.clamped_energy;
         // How bright the sample is, for the clamp and the rejection to judge.
         // Its luminance, except that a path carrying one wavelength is
         // coloured by it, and a green wavelength is three times as luminous

@@ -368,7 +368,8 @@ fn run(
         config,
         scene_seed: 0,
         reject_fireflies: settings.reject_fireflies,
-        clamp_sample: settings.clamp_indirect,
+        clamp_indirect: settings.clamp_indirect,
+        clamp_direct: settings.clamp_direct,
         region: settings.region.map(|r| tequila_render_core::scheduler::Tile {
             x0: r.x,
             y0: r.y,
