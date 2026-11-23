@@ -393,7 +393,9 @@ pub fn all() -> Vec<Preset> {
     out.push(preset("Nylon Glass Filled Black", "Plastic", &["nylon", "pa66", "glass filled", "engineering", "black"], MaterialType::Generic, r));
 
     // Tortoiseshell acetate: amber and brown blotches deep in a glossy
-    // translucent slab.
+    // translucent slab. The light that goes into it comes back the blotches'
+    // colour, so they colour the subsurface as well as the base: under the
+    // cloudy type's own milky subsurface they were washed pale.
     let mut r = Recipe::new(base(MaterialType::PlasticCloudy, |m| {
         m.base_color = srgb("#8A4A1E");
         m.specular_roughness = 0.05;
@@ -404,6 +406,7 @@ pub fn all() -> Vec<Preset> {
     let tone = plus(&mut r, fine, 0.22, blotch);
     let colour = r.ramp(tone, Linear, &[(0.32, srgb("#1E0D06")), (0.45, srgb("#4A220C")), (0.56, srgb("#8C4614")), (0.66, srgb("#C27726")), (0.76, srgb("#DDA54E"))]);
     r.to(Param::BaseColor, colour);
+    r.to(Param::SubsurfaceColor, colour);
     out.push(preset("Acetate Tortoiseshell", "Plastic", &["acetate", "tortoiseshell", "eyewear", "amber", "translucent"], MaterialType::PlasticCloudy, r));
 
     out.push(soft_touch("Soft Touch Grey", &["soft touch", "rubberised", "matte", "grey"], srgb("#55585D")));
