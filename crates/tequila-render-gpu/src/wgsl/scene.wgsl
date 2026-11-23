@@ -31,9 +31,12 @@ struct GpuInstance {
     // The lamp it stands in for, by its place among the scene's lamps;
     // NO_LIGHT for any other instance.
     light: u32,
-    // INSTANCE_STAND_IN for a lamp's stand-in.
+    // INSTANCE_STAND_IN for a lamp's stand-in, INSTANCE_CASTS_SHADOWS for a
+    // part that casts shadows.
     flags: u32,
-    _pad: vec2<u32>,
+    // The solid a medium is keyed by (scene.rs).
+    solid: u32,
+    _pad: u32,
     // What Object Info reads, and the part's scale as the shading point
     // holds it (scene.rs's GpuInstance).
     object_color: vec4<f32>,
@@ -46,6 +49,7 @@ struct GpuInstance {
 const NO_CATCHER: u32 = 0xFFFFFFFFu;
 const NO_LIGHT: u32 = 0xFFFFFFFFu;
 const INSTANCE_STAND_IN: u32 = 1u;
+const INSTANCE_CASTS_SHADOWS: u32 = 2u;
 // The top-level structure's masks (scene.rs's MASK_*): every instance is a
 // surface, and those that cast shadows are in the shadow rays' mask too.
 const MASK_SURFACE: u32 = 1u;

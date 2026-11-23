@@ -2,18 +2,22 @@
 //! `tequila_materials::openpbr::Material` that `openpbr.wgsl`'s stack reads,
 //! laid out for a storage buffer.
 //!
-//! For now the stack on the card is the opaque one - fuzz, coat, metal,
-//! dielectric specular and the diffuse substrate - and this holds exactly
-//! what that reads. Transmission, subsurface, thin film, flakes and
-//! thin walls are not on the card yet, so their parameters are not here;
-//! [`GpuMaterial::supports`] says whether a material is one the card's stack
-//! is the processor's for. Cutout opacity is the integrator's, not the
-//! BSDF's, and is not here either; emission is the integrator's too, and is
-//! here for it to read (`transport.wgsl`: a lamp's stand-in glowing).
+//! The stack on the card is fuzz, coat, metal, dielectric specular, the
+//! transmission lobe (glass, thin-walled or solid) and the diffuse
+//! substrate, and this holds what that reads; and what the integrator reads
+//! of glass besides - the medium a solid part is (its priority, its index as
+//! the scene has it, whether its volume absorbs) and the clear glass a
+//! shadow ray passes (`Pane`). Subsurface, thin film and flakes are not on
+//! the card yet, so their parameters are not here; [`GpuMaterial::supports`]
+//! says whether a material is one the card's stack is the processor's for.
+//! Cutout opacity is the integrator's, not the BSDF's, and is not here
+//! either; emission is the integrator's too, and is here for it to read
+//! (`transport.wgsl`: a lamp's stand-in glowing).
 
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::openpbr::Material;
+use tequila_render_core::scene::Pane;
 
 /// `openpbr.wgsl`'s `GpuMaterial`, member for member: colours as four
 /// floats (the fourth unused) so each starts on sixteen bytes as WGSL's
@@ -51,16 +55,93 @@ pub struct GpuMaterial {
     /// `Material::emission`, in nits, and in `[3]` 1 where the material
     /// `is_emissive`.
     pub emission: [f32; 4],
+    /// `transmission_color`, and in `[3]` `transmission_weight`.
+    pub transmission_color: [f32; 4],
+    /// The transmission lobe's tint at each crossing, the square root of
+    /// the colour the surface wears (`transmission_tint`, times
+    /// `transmission_color` where there is no volume to absorb it), worked
+    /// out here as the processor rounds it; and in `[3]`
+    /// `transmission_depth`.
+    pub transmission_tint: [f32; 4],
+    pub volume_density: f32,
+    pub medium_priority: f32,
+    /// The index the scene's own material has (`SceneSnapshot::material`,
+    /// not the program's), which a medium entered through a surface that is
+    /// no interface records (integrator.rs's null crossing).
+    pub base_ior: f32,
+    /// [`GLASS_THIN`] and the rest.
+    pub glass: u32,
+    /// The clear glass a shadow ray passes (`SceneSnapshot::pane`), where
+    /// [`GLASS_PANE`] says there is one: what reaches its transmission
+    /// lobe, its cutout's opacity, its index, its coat and the coat's index,
+    /// and the depth its volume reaches its colour in (`volume_depth`).
+    pub pane_weight: f32,
+    pub pane_opacity: f32,
+    pub pane_ior: f32,
+    pub pane_coat: f32,
+    pub pane_coat_ior: f32,
+    pub pane_depth: f32,
+    pub _pad2: [f32; 2],
 }
+
+/// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
+pub const GLASS_THIN: u32 = 1;
+/// The scene's own material is the boundary of a medium: transmissive and
+/// not thin-walled (integrator.rs's `is_boundary`).
+pub const GLASS_BOUNDARY: u32 = 2;
+/// The medium behind the surface absorbs along the path (`Medium::of`'s
+/// volume: a volume that does not scatter).
+pub const GLASS_VOLUME: u32 = 4;
+/// Clear glass a shadow ray passes (`Pane`).
+pub const GLASS_PANE: u32 = 8;
+/// Plain glass, which the camera splits at (`Pane::plain`).
+pub const GLASS_PLAIN: u32 = 16;
+/// Glass that bends the light through it (`Pane::bends`).
+pub const GLASS_BENDS: u32 = 32;
+/// The pane's volume absorbs between its way in and its way out
+/// (`Pane::has_volume`).
+pub const GLASS_PANE_VOLUME: u32 = 64;
 
 fn colour(s: Spectrum) -> [f32; 4] {
     [s.r, s.g, s.b, 0.0]
 }
 
 impl GpuMaterial {
-    /// The parameters the card's stack reads, as they are. What it does not
-    /// read yet is left behind: see [`Self::supports`].
+    /// The parameters the card's stack reads, as they are, with no clear
+    /// glass and `m` its own scene material. What it does not read yet is
+    /// left behind: see [`Self::supports`].
     pub fn from_material(m: &Material) -> GpuMaterial {
+        GpuMaterial::with_glass(m, m, Pane::of(m).as_ref())
+    }
+
+    /// The same for a material of a scene: `m` the parameters its surface
+    /// is shaded with (a program's constants), `scene` the scene's own
+    /// material (`SceneSnapshot::material`, which the integrator asks which
+    /// surfaces are a medium's boundary, and of the medium a surface that is
+    /// no interface leads into), `pane` the clear glass it is to a shadow
+    /// ray (`SceneSnapshot::pane`).
+    pub fn with_glass(m: &Material, scene: &Material, pane: Option<&Pane>) -> GpuMaterial {
+        // As OpenPbrBsdf::build has the transmission lobe's tint: the
+        // surface's own tint where the volume takes the colour, both where
+        // there is no volume, a square root at each crossing.
+        let has_depth = !m.geometry_thin_walled && m.transmission_depth > 0.0;
+        let c = if has_depth { m.transmission_tint } else { m.transmission_color * m.transmission_tint };
+        let tint = [c.r.max(0.0).sqrt(), c.g.max(0.0).sqrt(), c.b.max(0.0).sqrt(), m.transmission_depth];
+        let mut glass = 0;
+        for (on, flag) in [
+            (m.geometry_thin_walled, GLASS_THIN),
+            (scene.is_transmissive() && !scene.geometry_thin_walled, GLASS_BOUNDARY),
+            (m.has_volume() && m.volume_scattering().is_none(), GLASS_VOLUME),
+            (pane.is_some(), GLASS_PANE),
+            (pane.is_some_and(|p| p.plain), GLASS_PLAIN),
+            (pane.is_some_and(|p| p.bends()), GLASS_BENDS),
+            (pane.is_some_and(|p| p.has_volume()), GLASS_PANE_VOLUME),
+        ] {
+            if on {
+                glass |= flag;
+            }
+        }
+        let p = pane.copied();
         GpuMaterial {
             base_color: colour(m.base_color),
             metal_n: colour(m.metal_ior.n),
@@ -88,18 +169,36 @@ impl GpuMaterial {
                 let e = m.emission();
                 [e.r, e.g, e.b, if m.is_emissive() { 1.0 } else { 0.0 }]
             },
+            transmission_color: [m.transmission_color.r, m.transmission_color.g, m.transmission_color.b, m.transmission_weight],
+            transmission_tint: tint,
+            volume_density: m.volume_density,
+            medium_priority: m.medium_priority,
+            base_ior: scene.specular_ior,
+            glass,
+            pane_weight: p.map_or(0.0, |p| p.weight),
+            pane_opacity: p.map_or(0.0, |p| p.opacity),
+            pane_ior: p.map_or(1.0, |p| p.ior),
+            pane_coat: p.map_or(0.0, |p| p.coat),
+            pane_coat_ior: p.map_or(1.0, |p| p.coat_ior),
+            pane_depth: p.and_then(|p| p.volume).map_or(0.0, |(_, depth)| depth),
+            _pad2: [0.0; 2],
         }
     }
 
-    /// Whether `OpenPbrBsdf` builds `m` as the card's stack does: no
-    /// transmission and no subsurface at all (even a share too small for
-    /// their own lobes takes from the interface and the diffuse), no thin
-    /// film the processor would put on, and no flake under this point.
-    /// Thin walls change only the transmission and subsurface lobes.
+    /// Whether the card renders `m` as the processor does: no subsurface at
+    /// all (even a share too small for its own lobe takes from the diffuse),
+    /// no thin film the processor would put on, no flake under this point;
+    /// and as glass, none that scatters in its volume (a random walk), that
+    /// disperses light (a wavelength of its own), whose volume glows, or
+    /// that a cutout makes holes in.
     pub fn supports(m: &Material) -> bool {
-        m.transmission_weight == 0.0
-            && m.subsurface_weight == 0.0
+        let glass = m.transmission_weight > 0.0;
+        m.subsurface_weight == 0.0
             && m.thin_film_weight <= 1e-4
             && (m.flake_weight <= 1e-4 || m.flake_coverage <= 0.0)
+            && !(glass && m.volume_scattering().is_some())
+            && !(glass && m.transmission_dispersion_abbe > 0.0)
+            && !(m.has_volume() && m.volume_emission_strength > 0.0)
+            && !(glass && m.geometry_opacity < 0.999)
     }
 }

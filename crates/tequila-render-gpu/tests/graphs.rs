@@ -98,7 +98,7 @@ fn kernel_body() -> String {
     for (var k = 0u; k < 40u; k++) {{
         b[k] = inf(83u + k);
     }}
-    let r = prog_shade(p, pt, prog_material_from(b), s);
+    let r = prog_shade(p, pt, prog_material_from(b, GpuMaterial()), s);
     let f = prog_material_floats(r.material);
     for (var k = 0u; k < 40u; k++) {{
         outf(k, f[k]);
@@ -132,7 +132,7 @@ fn kernel_body() -> String {
 /// GpuMaterial's floats before its emission, which no stage-1 program
 /// drives (the kernel leaves it at nought).
 fn floats(m: &GpuMaterial) -> [f32; 40] {
-    let all: [f32; 44] = bytemuck::cast(*m);
+    let all: &[f32] = bytemuck::cast_slice(std::slice::from_ref(m));
     all[..40].try_into().expect("forty floats")
 }
 

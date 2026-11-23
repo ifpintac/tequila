@@ -66,8 +66,27 @@ struct FrameParams {
     // IntegratorConfig::pixel_spread: a footprint is the hit's distance times
     // it, for a material's program and its bump.
     pixel_spread: f32,
-    _pad2: u32,
+    // IntegratorConfig::max_transmission_bounces: how many times a path may
+    // go through a surface.
+    max_transmission_bounces: u32,
+    // IntegratorConfig::shadow_glass: the clear glass shadow rays pass
+    // (GLASS_SOLID, GLASS_CLEAR, GLASS_UNBENT).
+    shadow_glass: u32,
+    // SCENE_TRANSMITS: some material transmits (SceneSnapshot::
+    // has_transmissive), so a path starts by asking which media it is in;
+    // SCENE_PANES: some material is clear glass a shadow ray passes.
+    glass_flags: u32,
+    _pad3: vec2<u32>,
 };
+
+// FrameParams::shadow_glass (settings.rs's ShadowGlass).
+const GLASS_SOLID: u32 = 0u;
+const GLASS_CLEAR: u32 = 1u;
+const GLASS_UNBENT: u32 = 2u;
+
+// FrameParams::glass_flags.
+const SCENE_TRANSMITS: u32 = 1u;
+const SCENE_PANES: u32 = 2u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;
@@ -77,6 +96,9 @@ const LAMPS_SEEN: u32 = 1u;
 const LAMPS_MET: u32 = 2u;
 const LAMPS_IN_MIRRORS: u32 = 4u;
 const LAMPS_FOR_REFLECTIONS: u32 = 8u;
+// Shadow rays pass all clear glass and there is some, so a bounce that sees
+// meets glass that bends light as glass (the integrator's meets_glass).
+const LAMPS_MEETS_GLASS: u32 = 16u;
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;
 // Two vec4s a sample: radiance (and in w, 1 if the camera ray met

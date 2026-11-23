@@ -1400,7 +1400,10 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     let card = if on_card {
         let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
             .map_err(|why| format!("--device GPU: {why}"))?;
-        println!("  on the graphics card, {}: opaque materials and their procedural patterns and bumps, the floor and the lamps; image textures and glass are still to come (docs/07 R3)", gpu.describe());
+        println!(
+            "  on the graphics card, {}: materials, glass among them, and their procedural patterns and bumps, the floor and the lamps; image textures, subsurface, thin film, flakes, dispersion and caustics are still to come (docs/07 R3)",
+            gpu.describe()
+        );
         let settings = tequila_render_gpu::transport::FrameSettings {
             camera: context.camera,
             config: context.config.clone(),

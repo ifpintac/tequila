@@ -58,9 +58,15 @@ pub struct GpuInstance {
     /// The lamp it stands in for (`Instance::light`), by its place among
     /// the scene's lamps; [`NO_LIGHT`] for any other instance.
     pub light: u32,
-    /// [`INSTANCE_STAND_IN`] for a lamp's stand-in (`Instance::light_proxy`).
+    /// [`INSTANCE_STAND_IN`] for a lamp's stand-in (`Instance::light_proxy`),
+    /// [`INSTANCE_CASTS_SHADOWS`] for a part that casts shadows.
     pub flags: u32,
-    pub _pad: [u32; 2],
+    /// The solid a medium is keyed by: what a path is inside of, what the
+    /// probe counts crossings of, what a shadow ray's walk pairs its way
+    /// into a volume with. The instance here (integrator.rs keys media by
+    /// instance); a solid split into parts would share one.
+    pub solid: u32,
+    pub _pad: u32,
     /// What Object Info reads: the colour set on the part (the fourth float
     /// unused).
     pub object_color: [f32; 4],
@@ -79,6 +85,9 @@ pub const NO_CATCHER: u32 = u32::MAX;
 pub const NO_LIGHT: u32 = u32::MAX;
 /// [`GpuInstance::flags`]: a lamp's visible stand-in.
 pub const INSTANCE_STAND_IN: u32 = 1;
+/// [`GpuInstance::flags`]: the part casts shadows (`Instance::casts_shadows`):
+/// a shadow ray's walk through glass passes one that does not.
+pub const INSTANCE_CASTS_SHADOWS: u32 = 2;
 
 /// The top-level structure's instance masks, as Embree's geometry masks are
 /// (`tequila-render-cpu`'s `embree.rs`): every instance a surface, and the
@@ -261,8 +270,9 @@ impl GpuScene {
                     instance: n as u32,
                     catcher,
                     light: inst.light.unwrap_or(NO_LIGHT),
-                    flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 },
-                    _pad: [0; 2],
+                    flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 } | if inst.casts_shadows { INSTANCE_CASTS_SHADOWS } else { 0 },
+                    solid: n as u32,
+                    _pad: 0,
                     object_color: [inst.colour.r, inst.colour.g, inst.colour.b, 0.0],
                     inv_length_scale: inst.transform.inv_length_scale(),
                     scale: 1.0 / inst.transform.inv_length_scale(),

@@ -73,3 +73,52 @@ fn what_the_programs_cost_to_compile() {
         eprintln!("{name}: {:.2} s", t.as_secs_f64());
     }
 }
+
+/// What each part of glass costs the kernel's cold compile, each measured
+/// by leaving it out. Run by hand:
+/// `cargo test --test compile_time -- --ignored --nocapture glass`.
+#[test]
+#[ignore]
+fn what_glass_costs_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let replace = |from: &'static str, to: &'static str| {
+        move |s: String| {
+            assert!(s.contains(from), "no {from:?}");
+            s.replace(from, to)
+        }
+    };
+    let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
+        ("everything", Box::new(|s| s)),
+        ("no walk through glass", Box::new(replace("    if (glass == GLASS_SOLID) {\n        return Visibility(", "    if (true) {\n        return Visibility("))),
+        ("no seen weight", Box::new(replace("        if (weigh) {", "        if (false) {"))),
+        ("no probe", Box::new(replace("    if ((frame.glass_flags & SCENE_TRANSMITS) == 0u) {\n        return md;", "    if (true) {\n        return md;"))),
+        ("no split", Box::new(replace("    if (bounce == 0u && !(*st).reflected && !(*st).in_floor", "    if (false && bounce == 0u && !(*st).reflected && !(*st).in_floor"))),
+        ("no whole sky", Box::new(replace("    if (!all(normal == vec3<f32>(0.0))) {\n        return env_sample_facing(normal, u);", "    if (true) {\n        return env_sample_facing(normal, u);"))),
+        (
+            "no transmission lobe",
+            Box::new(|s: String| {
+                let mut s = s;
+                for arm in [
+                    "        case 4u: { return transmission_eval(b.transmission, wo, wi); }\n",
+                    "        case 4u: { return transmission_pdf(b.transmission, wo, wi); }\n",
+                    "        case 4u: { return transmission_sample(b.transmission, wo, u, uc); }\n",
+                ] {
+                    assert!(s.contains(arm), "no {arm:?}");
+                    s = s.replace(arm, "");
+                }
+                s
+            }),
+        ),
+    ];
+    for (i, (name, edit)) in cases.iter().enumerate() {
+        let t = cold_compile_time_edited(&renderer, salt.wrapping_add(i as u32 * 7919), edit.as_ref());
+        eprintln!("{name}: {:.2} s", t.as_secs_f64());
+    }
+}

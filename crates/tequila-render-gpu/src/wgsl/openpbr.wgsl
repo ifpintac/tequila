@@ -3,22 +3,23 @@
 // base mixing metal, specular and diffuse by weight (docs/02 §2.1). Shading
 // frame, z along the normal; the material is a GpuMaterial (material.rs).
 //
-// For now only the opaque part of the stack: the fuzz (Sheen), the coat
-// (DielectricSpecular with its tint and weight), the metal (Conductor with
-// metal_ior, tinted by base_color, anisotropic), the dielectric specular
-// interface and the diffuse substrate (EON), with base_weight and
-// geometry_occlusion in the lobes' scales. NOT here, and not in GpuMaterial
-// (GpuMaterial::supports refuses a material that has them):
-// - transmission: the stack reads it as transmission_weight = 0, so the
-//   interface and the diffuse get all of the dielectric base (`opaque` = 1)
-//   and what is under the interface is the diffuse albedo alone;
+// The fuzz (Sheen), the coat (DielectricSpecular with its tint and weight),
+// the metal (Conductor with metal_ior, tinted by base_color, anisotropic),
+// the dielectric specular interface, the transmission lobe (glass, solid or
+// thin-walled, its reflect-or-refract choice the stack's rescaled lobe
+// variate) and the diffuse substrate (EON), with base_weight and
+// geometry_occlusion in the lobes' scales; the interface and the diffuse
+// share what the transmission leaves (`opaque`), and the coat traps light
+// against the transmission colour as well as the diffuse. Six lobes in their
+// slots, at most five of them in a stack, as the processor's MAX_LOBES drops
+// the sixth pushed. NOT here, and not in GpuMaterial (GpuMaterial::supports
+// refuses a material that has them):
 // - subsurface: subsurface_weight = 0, no walk doorway, and the diffuse
 //   albedo the trapped light bounces against is base_color's alone;
 // - thin film: no film over the metal or the interface (thin_film_weight at
 //   or below the 1e-4 the processor ignores);
 // - flakes: flake coverage 0, so no Depth::Flake lobe, no flake frame, and
 //   the base's scale and response are the base's whole;
-// - thin-walled: only the transmission and subsurface lobes read it;
 // - emission and geometry_opacity: not the BSDF's at all (the integrator's;
 //   GpuMaterial carries emission for it).
 //
@@ -26,10 +27,10 @@
 // (DielectricSpecular's Seen, aimed by OpenPbrBsdf::aim): the same reads
 // with the same arguments, so here the reads are simply made.
 //
-// Ported: build (new, to_aim), aim, attenuation and its trapped-light
-// series, eval, eval_selective, pdf, pdf_reflection, sample and
-// sample_reflection, albedo, and of the flags whether there is a delta lobe.
-// Not yet: from_inside (only transmission reads it).
+// Ported: build (new, to_aim, from_inside, from_inside_to_aim), aim,
+// attenuation and its trapped-light series, eval, eval_selective, pdf,
+// pdf_reflection, sample and sample_reflection, albedo, and of the flags
+// whether there is a delta lobe and whether the stack transmits.
 //#include sheen
 
 // Which layer of §2.1's stack a lobe belongs to (openpbr.rs's Depth), in
@@ -47,8 +48,13 @@ const LOBE_FUZZ: u32 = 0u;
 const LOBE_COAT: u32 = 1u;
 const LOBE_METAL: u32 = 2u;
 const LOBE_SPECULAR: u32 = 3u;
-const LOBE_DIFFUSE: u32 = 4u;
-const OPENPBR_LOBES: u32 = 5u;
+const LOBE_TRANSMISSION: u32 = 4u;
+const LOBE_DIFFUSE: u32 = 5u;
+const OPENPBR_LOBES: u32 = 6u;
+// How many of them a stack holds at once (openpbr.rs's MAX_LOBES): a sixth
+// pushed is dropped, so with fuzz, coat, metal, interface and transmission
+// all there, the diffuse is not.
+const OPENPBR_MAX_LOBES: u32 = 5u;
 
 // material.rs's GpuMaterial, member for member (tests/layouts.rs holds the
 // two to one layout). Colours are vec4s whose w is unused.
@@ -80,7 +86,38 @@ struct GpuMaterial {
     // Material::emission, in nits; w 1 where the material is_emissive. Not
     // the stack's: the integrator reads it.
     emission: vec4<f32>,
+    // transmission_color, and in w transmission_weight.
+    transmission_color: vec4<f32>,
+    // The transmission lobe's tint at each crossing (the square root of
+    // the colour the surface wears, worked out on the processor), and in w
+    // transmission_depth.
+    transmission_tint: vec4<f32>,
+    volume_density: f32,
+    medium_priority: f32,
+    // The scene's own material's index, for a medium entered where no
+    // interface is (the integrator's).
+    base_ior: f32,
+    // GLASS_* (material.rs).
+    glass: u32,
+    // The clear glass a shadow ray passes (SceneSnapshot::pane), the
+    // integrator's: its weight, opacity, index, coat and coat index, and
+    // the depth its volume reaches its colour in.
+    pane_weight: f32,
+    pane_opacity: f32,
+    pane_ior: f32,
+    pane_coat: f32,
+    pane_coat_ior: f32,
+    pane_depth: f32,
+    _pad2: vec2<f32>,
 };
+
+const GLASS_THIN: u32 = 1u;
+const GLASS_BOUNDARY: u32 = 2u;
+const GLASS_VOLUME: u32 = 4u;
+const GLASS_PANE: u32 = 8u;
+const GLASS_PLAIN: u32 = 16u;
+const GLASS_BENDS: u32 = 32u;
+const GLASS_PANE_VOLUME: u32 = 64u;
 
 // The assembled stack for one shading point.
 struct OpenPbr {
@@ -91,9 +128,9 @@ struct OpenPbr {
     last: u32,
     // Each lobe's scale and weight, and its selection probability
     // (normalized), by slot.
-    scales: array<vec3<f32>, 5>,
-    weights: array<f32, 5>,
-    probabilities: array<f32, 5>,
+    scales: array<vec3<f32>, 6>,
+    weights: array<f32, 6>,
+    probabilities: array<f32, 6>,
     // The lobes. The fuzz, the coat and the interface are also the layers
     // over the base, kept so their attenuation is evaluated for the actual
     // pair of directions: `has_*` says the layer is there, which it can be
@@ -106,6 +143,7 @@ struct OpenPbr {
     metal: Conductor,
     specular: Specular,
     has_specular: bool,
+    transmission: Transmission,
     diffuse: Diffuse,
     coat_weight: f32,
     coat_darkening: f32,
@@ -140,7 +178,7 @@ fn openpbr_depth(slot: u32) -> u32 {
     switch slot {
         case 0u: { return DEPTH_FUZZ; }
         case 1u: { return DEPTH_COAT; }
-        case 4u: { return DEPTH_SUBSTRATE; }
+        case 5u: { return DEPTH_SUBSTRATE; }
         default: { return DEPTH_BASE; }
     }
 }
@@ -155,7 +193,7 @@ fn openpbr_rough(r: f32, roughness_floor: f32) -> f32 {
 // no scale is not there.
 fn openpbr_push(b: ptr<function, OpenPbr>, slot: u32, scale_in: vec3<f32>, weight: f32, occlusion: f32) {
     let scale = scale_in * occlusion;
-    if ((*b).count < OPENPBR_LOBES && weight > 1e-4 && !all(scale == vec3<f32>(0.0))) {
+    if ((*b).count < OPENPBR_MAX_LOBES && weight > 1e-4 && !all(scale == vec3<f32>(0.0))) {
         (*b).present |= 1u << slot;
         (*b).count += 1u;
         (*b).last = slot;
@@ -215,6 +253,7 @@ fn openpbr_lobe_albedo(b: OpenPbr, slot: u32, wo: vec3<f32>) -> vec3<f32> {
         case 1u: { return b.coat.tint * specular_directional_albedo(b.coat, wo); }
         case 2u: { return conductor_albedo(b.metal, wo); }
         case 3u: { return b.specular.tint * specular_directional_albedo(b.specular, wo); }
+        case 4u: { return transmission_albedo(b.transmission); }
         default: { return b.diffuse.albedo; }
     }
 }
@@ -225,6 +264,7 @@ fn openpbr_lobe_eval(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> vec
         case 1u: { return specular_eval(b.coat, wo, wi); }
         case 2u: { return conductor_eval(b.metal, wo, wi); }
         case 3u: { return specular_eval(b.specular, wo, wi); }
+        case 4u: { return transmission_eval(b.transmission, wo, wi); }
         default: { return diffuse_eval(b.diffuse, wo, wi); }
     }
 }
@@ -235,17 +275,22 @@ fn openpbr_lobe_pdf(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> f32 
         case 1u: { return specular_pdf(b.coat, wo, wi); }
         case 2u: { return conductor_pdf(b.metal, wo, wi); }
         case 3u: { return specular_pdf(b.specular, wo, wi); }
+        case 4u: { return transmission_pdf(b.transmission, wo, wi); }
         default: { return diffuse_pdf(b.diffuse, wo, wi); }
     }
 }
 
-fn openpbr_lobe_sample(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+// A lobe's draw (lobes.wgsl's diffuse_draw): its sample, but for the check
+// of its own density and value, which the stack makes from its own
+// evaluation in the direction drawn.
+fn openpbr_lobe_draw(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     switch slot {
-        case 0u: { return sheen_sample(b.fuzz, wo, u); }
-        case 1u: { return specular_sample(b.coat, wo, u, uc); }
-        case 2u: { return conductor_sample(b.metal, wo, u, uc); }
-        case 3u: { return specular_sample(b.specular, wo, u, uc); }
-        default: { return diffuse_sample(b.diffuse, wo, u); }
+        case 0u: { return sheen_draw(b.fuzz, wo, u); }
+        case 1u: { return specular_draw(b.coat, wo, u, uc); }
+        case 2u: { return conductor_draw(b.metal, wo, u, uc); }
+        case 3u: { return specular_draw(b.specular, wo, u, uc); }
+        case 4u: { return transmission_draw(b.transmission, wo, u, uc); }
+        default: { return diffuse_draw(b.diffuse, wo, u); }
     }
 }
 
@@ -261,9 +306,9 @@ fn openpbr_reflection_roughness(b: OpenPbr, slot: u32) -> f32 {
 }
 
 // face_on_probabilities: each lobe by its albedo seen face on (§2.4), the
-// interfaces floored at 0.05.
-fn openpbr_face_on(b: OpenPbr) -> array<f32, 5> {
-    var probabilities: array<f32, 5>;
+// interfaces floored at 0.05 (not the transmission).
+fn openpbr_face_on(b: OpenPbr) -> array<f32, 6> {
+    var probabilities: array<f32, 6>;
     var total = 0.0;
     let z = vec3<f32>(0.0, 0.0, 1.0);
     for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
@@ -286,8 +331,12 @@ fn openpbr_face_on(b: OpenPbr) -> array<f32, 5> {
     return probabilities;
 }
 
-// OpenPbrBsdf::build, for the restricted stack (see the top of this file).
-fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool) -> OpenPbr {
+// OpenPbrBsdf::build, for the restricted stack (see the top of this file):
+// `from_inside` for a path already inside the material, which only the
+// transmission lobe reads. `m.specular_ior` is the index the integrator
+// gives the interface (the relative one between two media), which the
+// interface and the transmission both read.
+fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside: bool) -> OpenPbr {
     var b: OpenPbr;
     let occlusion = clamp(m.geometry_occlusion, 0.0, 1.0);
 
@@ -324,9 +373,12 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool) -> OpenPbr 
         }
         let dielectric = 1.0 - metalness;
         if (dielectric > 1e-4) {
-            // No transmission: `opaque` is one, so the interface keeps its
-            // whole weight and the diffuse the whole remainder.
-            let specular_weight = m.specular_weight;
+            // Where the base transmits, the interface is the transmission
+            // lobe's own reflect-or-refract split, so it and the diffuse
+            // share what the transmission leaves.
+            let transmission_weight = m.transmission_color.w;
+            let opaque = 1.0 - transmission_weight;
+            let specular_weight = m.specular_weight * opaque;
             if (specular_weight > 1e-4) {
                 b.specular = specular_new(openpbr_rough(m.specular_roughness, roughness_floor), m.specular_ior);
                 b.specular.tint = m.specular_color.xyz;
@@ -334,9 +386,17 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool) -> OpenPbr 
                 specular_scale = specular_weight;
                 openpbr_push(&b, LOBE_SPECULAR, base_scale, dielectric * specular_weight, occlusion);
             }
-            // No subsurface: the substrate returns base_color.
+            if (transmission_weight > 1e-4) {
+                // Isotropic whatever the anisotropy; its tint the square
+                // root of what the surface wears, worked out on the
+                // processor (material.rs).
+                b.transmission = transmission_new(openpbr_rough(m.specular_roughness, roughness_floor), m.specular_ior, m.transmission_tint.xyz, (m.glass & GLASS_THIN) != 0u, from_inside);
+                openpbr_push(&b, LOBE_TRANSMISSION, base_scale, dielectric * transmission_weight, occlusion);
+            }
+            // No subsurface: the substrate returns base_color, and has
+            // whatever the transmission did not take.
             diffuse_albedo = clamp(spectrum_luminance(m.base_color.xyz), 0.0, 1.0);
-            let diffuse_weight = dielectric;
+            let diffuse_weight = dielectric * opaque;
             if (diffuse_weight > 1e-4) {
                 b.diffuse = diffuse_new(m.base_color.xyz, m.base_diffuse_roughness);
                 openpbr_push(&b, LOBE_DIFFUSE, base_scale, diffuse_weight, occlusion);
@@ -353,8 +413,10 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool) -> OpenPbr 
 
     // --- what each layer sits on, from the bottom up.
     let metalness = clamp(m.base_metalness, 0.0, 1.0);
-    // Under the interface: the diffuse substrate (no transmission).
-    let under_interface = clamp(diffuse_albedo, 0.0, 1.0);
+    // Under the interface: the diffuse substrate, or what the transmission
+    // carries away where the base transmits (its colour, not the tint).
+    let transmission = clamp(m.transmission_color.w, 0.0, 1.0);
+    let under_interface = clamp(diffuse_albedo * (1.0 - transmission) + spectrum_luminance(m.transmission_color.xyz) * transmission, 0.0, 1.0);
     var specular_average = 0.0;
     if (b.has_specular) {
         specular_average = specular_hemispherical_albedo(b.specular);
@@ -390,12 +452,21 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool) -> OpenPbr 
 
 // OpenPbrBsdf::new: `roughness_floor` is path regularization.
 fn openpbr_new(m: GpuMaterial, roughness_floor: f32) -> OpenPbr {
-    return openpbr_build(m, roughness_floor, false);
+    return openpbr_build(m, roughness_floor, false, false);
 }
 
 // OpenPbrBsdf::to_aim: the same stack, for openpbr_aim next.
 fn openpbr_to_aim(m: GpuMaterial, roughness_floor: f32) -> OpenPbr {
-    return openpbr_build(m, roughness_floor, true);
+    return openpbr_build(m, roughness_floor, true, false);
+}
+
+// OpenPbrBsdf::from_inside and ::from_inside_to_aim.
+fn openpbr_from_inside(m: GpuMaterial, roughness_floor: f32) -> OpenPbr {
+    return openpbr_build(m, roughness_floor, false, true);
+}
+
+fn openpbr_from_inside_to_aim(m: GpuMaterial, roughness_floor: f32) -> OpenPbr {
+    return openpbr_build(m, roughness_floor, true, true);
 }
 
 // trapped: the light that crosses a layer, comes back off the assembly
@@ -503,10 +574,17 @@ fn openpbr_has_delta(b: OpenPbr) -> bool {
             case 1u: { if (ggx_is_smooth(b.coat.distribution)) { return true; } }
             case 2u: { if (ggx_is_smooth(b.metal.distribution)) { return true; } }
             case 3u: { if (ggx_is_smooth(b.specular.distribution)) { return true; } }
+            case 4u: { if (ggx_is_smooth(b.transmission.distribution)) { return true; } }
             default: {}
         }
     }
     return false;
+}
+
+// flags().contains(TRANSMISSION): the transmission lobe is in the stack (a
+// transmission weight whose lobe was dropped transmits nothing).
+fn openpbr_transmits(b: OpenPbr) -> bool {
+    return openpbr_has(b, LOBE_TRANSMISSION);
 }
 
 // The share of a reflection of roughness `r` kept, faded out between
@@ -623,7 +701,7 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
         return none;
     }
     let roughness = openpbr_reflection_roughness(b, chosen);
-    let s = openpbr_lobe_sample(b, chosen, wo, u, lobe_uc);
+    let s = openpbr_lobe_draw(b, chosen, wo, u, lobe_uc);
     if (!s.ok) {
         return none;
     }
@@ -631,17 +709,55 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
     if (s.is_delta) {
         let through = openpbr_attenuation(b, openpbr_depth(chosen), wo, s.wi);
         let f = s.f * (b.scales[chosen] * (b.weights[chosen] * through / probability));
-        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true), roughness, 0.0, f, chosen);
+        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true, s.is_transmission, s.eta), roughness, 0.0, f, chosen);
     }
-    let densities = openpbr_densities(b, wo, s.wi, up_to, passed_from);
-    if (densities.x <= 0.0) {
+    // The whole stack's value and density in the direction drawn, in one
+    // pass, and the drawn lobe's own, which keep its draw or not as its own
+    // sample would (a density above nought; a transmission's value not
+    // black).
+    var total = 0.0;
+    var seen = 0.0;
+    var value = StackValue(vec3<f32>(0.0), vec3<f32>(0.0));
+    var own_pdf = 0.0;
+    var own_value = vec3<f32>(0.0);
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        let density = openpbr_lobe_pdf(b, slot, wo, s.wi);
+        let raw = openpbr_lobe_eval(b, slot, wo, s.wi);
+        if (slot == chosen) {
+            own_pdf = density;
+            own_value = raw;
+        }
+        let p = b.probabilities[slot];
+        if (p > 0.0) {
+            total += p * density;
+            let reflection = openpbr_reflection_roughness(b, slot);
+            if (reflection >= 0.0) {
+                let kept = openpbr_seeing_share(reflection, up_to, passed_from);
+                if (kept > 0.0) {
+                    seen += p * kept * density;
+                }
+            }
+        }
+        let through = openpbr_attenuation(b, openpbr_depth(slot), wo, s.wi);
+        let term = raw * (b.scales[slot] * (b.weights[slot] * through));
+        value.total += term;
+        if (slot != LOBE_DIFFUSE) {
+            value.glossy += term;
+        }
+    }
+    if (own_pdf <= 0.0 || (chosen == LOBE_TRANSMISSION && all(own_value == vec3<f32>(0.0)))) {
         return none;
     }
-    let value = openpbr_values(b, wo, s.wi);
+    if (total <= 0.0) {
+        return none;
+    }
     if (all(value.total == vec3<f32>(0.0))) {
         return none;
     }
-    return ReflectionSample(LobeSample(true, s.wi, value.total, densities.x, false), roughness, densities.y, value.glossy, chosen);
+    return ReflectionSample(LobeSample(true, s.wi, value.total, total, false, s.is_transmission, s.eta), roughness, seen, value.glossy, chosen);
 }
 
 fn openpbr_sample(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
@@ -662,7 +778,7 @@ fn openpbr_albedo(b: OpenPbr, wo: vec3<f32>) -> vec3<f32> {
 
 struct AimChoice {
     ok: bool,
-    probabilities: array<f32, 5>,
+    probabilities: array<f32, 6>,
 };
 
 // aim_choosing: each lobe by its albedo towards `wo` through the layers
