@@ -951,7 +951,32 @@ fn trace<C: PathColour>(
     let mut after_manifold = false;
 
     loop {
-        let hit = intersector.intersect(&ray);
+        // A walk through a uniform medium draws its next flight before the
+        // ray is traced, and traces it only as far as the flight goes: most
+        // of a walk's flights end inside the part, short of its surface, and
+        // a ray that must find the nearest surface however far away it is
+        // costs several that need only know whether there is one within a
+        // flight's length (`docs/07` R1). The surface it meets is the same
+        // one, when it is that close.
+        let mut drawn: Option<WalkFlight<C::Value>> = None;
+        if ray.t_max == f32::INFINITY && seen_from.is_none() && scene.cutters().is_empty() {
+            if let Some((walk, recipe)) = media.top(None).filter(|m| m.density.is_none()).and_then(|m| Some((m.scattering?, m.recipe)))
+            {
+                walk_steps += 1;
+                if walk_steps > MAX_WALK_STEPS {
+                    break;
+                }
+                let (sigma, albedo) = walk_medium_cached(colour, &walk, recipe.as_ref(), &mut walk_spectra);
+                let draws = (sampler.next_unstructured(), sampler.next_unstructured());
+                let (chance, depth) = walk_flight(throughput, sigma, draws);
+                drawn = Some(WalkFlight { sigma, albedo, chance, depth });
+            }
+        }
+        let flight = drawn.as_ref().map(|d| d.depth);
+        let hit = match flight {
+            Some(depth) => intersector.intersect(&Ray { t_max: depth, ..ray }),
+            None => intersector.intersect(&ray),
+        };
 
         // The lamps a seeing bounce meets (`SeenFrom`): no geometry, they are
         // looked for along the ray - straight on from the surface, past
@@ -1011,69 +1036,6 @@ fn trace<C: PathColour>(
             }
         }
 
-        // ---- Escaped: the environment ----------------------------------
-        let Some(hit) = hit else {
-            // From the ray's origin, not from the world's: with a finite dome
-            // the two differ, and using the wrong one would light the scene
-            // from a sky that nothing in it can see.
-            //
-            // A background mode replaces this only on a path the camera can
-            // still see along — directly, or through glass and mirrors. Every
-            // other path is carrying light *to* a surface, and a solid colour
-            // or a backplate must not light anything (§1.5). Which is which
-            // is `past_the_scene`'s, shared with what a shadow catcher shows
-            // behind it.
-            let emitted = past_the_scene(scene, config, &ray, film, bounce, specular_chain);
-            // Light reached through mirror-smooth surfaces after reading the
-            // photons: theirs, not this path's.
-            let emitted = if read_caustics && smooth_since > 0 { Spectrum::ZERO } else { emitted };
-            if !emitted.is_black() {
-                // MIS combines two strategies. If the path arrived here by a
-                // delta bounce, or if next-event estimation is switched off
-                // entirely, there is no counterpart strategy that could also
-                // have found this direction — so BSDF sampling takes the full
-                // weight. Applying a MIS weight anyway silently discards the
-                // half of the estimator that was never gathered.
-                let weight = if lit_from_medium.is_some() {
-                    // Straight out of a medium whose last event sampled the
-                    // sky too: its phase function and the sky's own
-                    // sampling are the two strategies.
-                    let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
-                    mis_power(lit_phase_pdf, pdf_light)
-                } else if specular_chain || !config.direct_lighting {
-                    1.0
-                } else if let Some(from) = seen_from.filter(|from| from.met) {
-                    // Past glass a glossy bounce saw: weighed against the sky's
-                    // sample there, straight on the way it left (`SeenFrom`).
-                    from.weight(intersector, scene.environment.pdf_from(from.position, from.direction), f32::INFINITY)
-                } else {
-                    let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
-                    mis_power(prev_pdf_solid_angle, pdf_light)
-                };
-                let contribution = throughput * colour.unbounded(emitted) * weight;
-                radiance += contribution;
-                if bounce == 0 {
-                    out.background += colour.rgb(contribution);
-                }
-                // The environment is a light, so the path ends at one — which
-                // is what puts a camera ray that sees the sky into the beauty
-                // pass and out of every component pass.
-                aovs.contribute(colour.rgb(contribution), crate::lpe::ENVIRONMENT);
-            }
-            if bounce == 0 {
-                out.escaped = true;
-                out.coverage = settled_coverage.unwrap_or(0.0);
-            }
-            if !guides_captured {
-                // A path that never hit anything: hand the denoiser the
-                // environment radiance as albedo and the ray direction as a
-                // normal, rather than zeros it would try to sharpen.
-                out.albedo = emitted;
-                out.normal = -ray.direction;
-            }
-            break;
-        };
-
         // ---- The random walk (§6.4) --------------------------------------
         //
         // Inside a part's subsurface medium the path may scatter before it
@@ -1082,21 +1044,34 @@ fn trace<C: PathColour>(
         // all three — §6.2's spectral MIS, which keeps a medium whose
         // channels differ from turning into colour noise. A spectral path
         // does the same over its four wavelengths.
+        //
+        // How far the surface ahead is: where it is, or, past a flight drawn
+        // and traced short (above), further than that flight, which then
+        // collides where it ends. A ray traced in full that meets nothing
+        // has left the part and goes to the sky; one traced short cannot
+        // tell, and collides, as Cycles' walk does. The two differ only for
+        // a path that got out of its part some other way - through a part
+        // pushed into it, as a lens into a body - which flies on in the
+        // medium either way, but no longer goes to the sky where nothing
+        // lies ahead of it.
         let field = media.top(None).and_then(|m| m.density.clone());
-        if let Some(walk) = media.top(None).and_then(|m| m.scattering) {
-            walk_steps += 1;
-            if walk_steps > MAX_WALK_STEPS {
-                break;
+        let surface_at = match (&hit, flight) {
+            (Some(hit), _) => Some(hit.t),
+            (None, Some(_)) => Some(f32::INFINITY),
+            (None, None) => None,
+        };
+        if let (Some(walk), Some(surface_at)) = (media.top(None).and_then(|m| m.scattering), surface_at) {
+            if drawn.is_none() {
+                walk_steps += 1;
+                if walk_steps > MAX_WALK_STEPS {
+                    break;
+                }
             }
             // The medium as the path carries it, read once per medium rather
             // than at each of a walk's thousands of steps.
-            let (sigma, albedo) = match walk_spectra {
-                Some((extinction, albedo, sigma, carried)) if extinction == walk.extinction && albedo == walk.albedo => (sigma, carried),
-                _ => {
-                    let read = walk_medium(colour, &walk, media.top(None).and_then(|m| m.recipe.as_ref()));
-                    walk_spectra = Some((walk.extinction, walk.albedo, read.0, read.1));
-                    read
-                }
+            let (sigma, albedo) = match &drawn {
+                Some(d) => (d.sigma, d.albedo),
+                None => walk_medium_cached(colour, &walk, media.top(None).and_then(|m| m.recipe.as_ref()), &mut walk_spectra),
             };
             let channels = <C::Value as Carried>::CHANNELS;
             let survive = |t: f32| C::Value::from_channels(|c| (-sigma.channel(c) * t).exp());
@@ -1109,31 +1084,11 @@ fn trace<C: PathColour>(
             let mut collided_at: Option<f32> = None;
             let mut lost = false;
             loop {
-                let weights = C::Value::from_channels(|c| throughput.channel(c).max(0.0));
-                let mut total = weights.channel(0);
-                for c in 1..channels {
-                    total += weights.channel(c);
-                }
-                let chance = if total > 0.0 {
-                    C::Value::from_channels(|c| weights.channel(c) / total)
-                } else {
-                    C::Value::from_channels(|_| 1.0 / channels as f32)
+                let (chance, depth) = match drawn.take() {
+                    Some(d) => (d.chance, d.depth),
+                    None => walk_flight(throughput, sigma, (sampler.next_unstructured(), sampler.next_unstructured())),
                 };
-                let pick = sampler.next_unstructured();
-                let mut channel = channels - 1;
-                let mut below = 0.0f32;
-                for c in 0..channels - 1 {
-                    below += chance.channel(c);
-                    if pick < below {
-                        channel = c;
-                        break;
-                    }
-                }
-                // An optical depth to fly, in density times distance: plain
-                // distance in a uniform medium, and through a Volume Map
-                // each majorant block's bound times the length crossed.
-                let depth = -(1.0 - sampler.next_unstructured()).max(1e-12).ln() / sigma.channel(channel).max(1e-9);
-                let (t, bound) = match fly(field.as_deref(), &ray, travelled, hit.t, depth) {
+                let (t, bound) = match fly(field.as_deref(), &ray, travelled, surface_at, depth) {
                     Flight::Collided { t, bound } => (t, bound),
                     Flight::Reached { depth } => {
                         let kept = survive(depth);
@@ -1243,6 +1198,69 @@ fn trace<C: PathColour>(
                 continue;
             }
         }
+
+        // ---- Escaped: the environment ----------------------------------
+        let Some(hit) = hit else {
+            // From the ray's origin, not from the world's: with a finite dome
+            // the two differ, and using the wrong one would light the scene
+            // from a sky that nothing in it can see.
+            //
+            // A background mode replaces this only on a path the camera can
+            // still see along — directly, or through glass and mirrors. Every
+            // other path is carrying light *to* a surface, and a solid colour
+            // or a backplate must not light anything (§1.5). Which is which
+            // is `past_the_scene`'s, shared with what a shadow catcher shows
+            // behind it.
+            let emitted = past_the_scene(scene, config, &ray, film, bounce, specular_chain);
+            // Light reached through mirror-smooth surfaces after reading the
+            // photons: theirs, not this path's.
+            let emitted = if read_caustics && smooth_since > 0 { Spectrum::ZERO } else { emitted };
+            if !emitted.is_black() {
+                // MIS combines two strategies. If the path arrived here by a
+                // delta bounce, or if next-event estimation is switched off
+                // entirely, there is no counterpart strategy that could also
+                // have found this direction — so BSDF sampling takes the full
+                // weight. Applying a MIS weight anyway silently discards the
+                // half of the estimator that was never gathered.
+                let weight = if lit_from_medium.is_some() {
+                    // Straight out of a medium whose last event sampled the
+                    // sky too: its phase function and the sky's own
+                    // sampling are the two strategies.
+                    let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
+                    mis_power(lit_phase_pdf, pdf_light)
+                } else if specular_chain || !config.direct_lighting {
+                    1.0
+                } else if let Some(from) = seen_from.filter(|from| from.met) {
+                    // Past glass a glossy bounce saw: weighed against the sky's
+                    // sample there, straight on the way it left (`SeenFrom`).
+                    from.weight(intersector, scene.environment.pdf_from(from.position, from.direction), f32::INFINITY)
+                } else {
+                    let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
+                    mis_power(prev_pdf_solid_angle, pdf_light)
+                };
+                let contribution = throughput * colour.unbounded(emitted) * weight;
+                radiance += contribution;
+                if bounce == 0 {
+                    out.background += colour.rgb(contribution);
+                }
+                // The environment is a light, so the path ends at one — which
+                // is what puts a camera ray that sees the sky into the beauty
+                // pass and out of every component pass.
+                aovs.contribute(colour.rgb(contribution), crate::lpe::ENVIRONMENT);
+            }
+            if bounce == 0 {
+                out.escaped = true;
+                out.coverage = settled_coverage.unwrap_or(0.0);
+            }
+            if !guides_captured {
+                // A path that never hit anything: hand the denoiser the
+                // environment radiance as albedo and the ray direction as a
+                // normal, rather than zeros it would try to sharpen.
+                out.albedo = emitted;
+                out.normal = -ray.direction;
+            }
+            break;
+        };
 
         // Whether a light's stand-in shows here: where the camera sees it
         // straight on. Past the first surface the camera sees, through glass
@@ -3626,6 +3644,63 @@ enum Flight {
     /// The end of the stretch, having crossed this much optical depth —
     /// density times distance — without colliding.
     Reached { depth: f32 },
+}
+
+/// A walk's medium as the path carries it, `walk_medium`'s, read once per
+/// medium rather than at each of a walk's thousands of steps.
+fn walk_medium_cached<C: PathColour>(
+    colour: &C,
+    walk: &tequila_materials::openpbr::SubsurfaceMedium,
+    recipe: Option<&MediumRecipe>,
+    cache: &mut Option<(Spectrum, Spectrum, C::Value, C::Value)>,
+) -> (C::Value, C::Value) {
+    match *cache {
+        Some((extinction, albedo, sigma, carried)) if extinction == walk.extinction && albedo == walk.albedo => (sigma, carried),
+        _ => {
+            let read = walk_medium(colour, walk, recipe);
+            *cache = Some((walk.extinction, walk.albedo, read.0, read.1));
+            read
+        }
+    }
+}
+
+/// A uniform walk's next flight, drawn before its ray is traced: the medium
+/// as the path carries it, the chance of each channel, and the distance.
+struct WalkFlight<V> {
+    sigma: V,
+    albedo: V,
+    chance: V,
+    depth: f32,
+}
+
+/// A walk's next flight from two uniform draws: the chance of each channel
+/// it may be sampled in, in proportion to the path's `throughput`, and the
+/// optical depth it flies in the one chosen, in density times distance -
+/// plain distance in a uniform medium, and through a Volume Map each
+/// majorant block's bound times the length crossed.
+fn walk_flight<V: Carried>(throughput: V, sigma: V, (pick, along): (f32, f32)) -> (V, f32) {
+    let channels = V::CHANNELS;
+    let weights = V::from_channels(|c| throughput.channel(c).max(0.0));
+    let mut total = weights.channel(0);
+    for c in 1..channels {
+        total += weights.channel(c);
+    }
+    let chance = if total > 0.0 {
+        V::from_channels(|c| weights.channel(c) / total)
+    } else {
+        V::from_channels(|_| 1.0 / channels as f32)
+    };
+    let mut channel = channels - 1;
+    let mut below = 0.0f32;
+    for c in 0..channels - 1 {
+        below += chance.channel(c);
+        if pick < below {
+            channel = c;
+            break;
+        }
+    }
+    let depth = -(1.0 - along).max(1e-12).ln() / sigma.channel(channel).max(1e-9);
+    (chance, depth)
 }
 
 /// Fly an optical `depth` (density times distance) along `ray` from `from`,
