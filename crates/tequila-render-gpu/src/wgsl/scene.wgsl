@@ -69,10 +69,15 @@ const INSTANCE_NO_DIFFUSE: u32 = 8u;
 const INSTANCE_NO_GLOSSY: u32 = 16u;
 const INSTANCE_NO_TRANSMISSION: u32 = 32u;
 const INSTANCE_HOLDOUT: u32 = 64u;
+// A shadow-catching floor the bounces pass (scene.rs's INSTANCE_FLOOR_PASSES).
+const INSTANCE_FLOOR_PASSES: u32 = 128u;
 // The top-level structure's masks (scene.rs's MASK_*): every instance is a
-// surface, and those that cast shadows are in the shadow rays' mask too.
+// surface, and those that cast shadows are in the shadow rays' mask too - a
+// floor the bounces pass in a mask of its own, which every shadow ray but
+// the sky's past such floors looks for as well.
 const MASK_SURFACE: u32 = 1u;
 const MASK_SHADOW: u32 = 2u;
+const MASK_FLOOR: u32 = 4u;
 // GpuCatcher's fade.
 const FADE_NONE: u32 = 0u;
 const FADE_BY_HEIGHT: u32 = 1u;

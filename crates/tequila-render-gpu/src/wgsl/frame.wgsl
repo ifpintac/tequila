@@ -180,6 +180,9 @@ const LAMPS_MEETS_GLASS: u32 = 16u;
 const LAMPS_PASSES_PARTS: u32 = 32u;
 const LAMPS_SHADOWLESS: u32 = 64u;
 const LAMPS_UNSAMPLED: u32 = 128u;
+// The sky's light sample sees past the shadow-catching floors the bounces
+// pass, and a bounce past one keeps the sky's weight (sky_past_floors).
+const LAMPS_SKY_PAST_FLOORS: u32 = 256u;
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;
 // Two vec4s a sample: radiance (and in w, 1 if the camera ray met

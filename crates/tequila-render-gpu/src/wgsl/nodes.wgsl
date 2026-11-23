@@ -854,13 +854,125 @@ fn cy_smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     return (3.0 - 2.0 * t) * (t * t);
 }
 
-// One octave of the cells round `coord` (already scaled): F1 0, F2 1,
-// smooth F1 2, the distance to the edge 3 (twice round the cells: the
+// The walk of the cells in three dimensions by the Euclidean metric, for
+// F1, F2 and smooth F1 (cy_cells, which hands it these): the same cells in
+// the same order (the first axis fastest), the same arithmetic on the same
+// values, but the lanes by constant index and no step of the general walk's
+// bookkeeping - the Headphones' grains spent most of their render here
+// (docs/07 R3, G1.1). Its answer is the general walk's to the bit
+// (tests/graphs.rs): each square is fused into the sum before it, as the
+// card fuses the general walk's loop.
+fn cy_cells3(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
+    let cellf = floor(coord);
+    let local = (coord - cellf).xyz;
+    let cell = vec3<i32>(cy_to_i32(cellf.x), cy_to_i32(cellf.y), cy_to_i32(cellf.z));
+    let mode = p.feature;
+    let reach = select(1, 2, mode == 2u);
+    var best = CY_F32_MAX;
+    var second = CY_F32_MAX;
+    var best_distance = 0.0;
+    var best_offset = vec3<i32>(0);
+    var second_offset = vec3<i32>(0);
+    var best_point = vec3<f32>(0.0);
+    var second_point = vec3<f32>(0.0);
+    var smooth_distance = 0.0;
+    var smooth_color = vec3<f32>(0.0);
+    var smooth_position = vec3<f32>(0.0);
+    var h = -1.0;
+    var correction = 0.0;
+    var out: CyCells;
+    out.distance = 0.0;
+    out.color = vec3<f32>(0.0);
+    out.position = vec4<f32>(0.0);
+    let colour_along = mode == 2u && p.colour;
+    for (var oz = -reach; oz <= reach; oz++) {
+        for (var oy = -reach; oy <= reach; oy++) {
+            for (var ox = -reach; ox <= reach; ox++) {
+                let o = vec3<i32>(ox, oy, oz);
+                let j = cy_pcg_unit(vec4<i32>(cell + o, 0), 3u);
+                let point = vec3<f32>(f32(ox) + j.x * p.randomness, f32(oy) + j.y * p.randomness, f32(oz) + j.z * p.randomness);
+                let e = point - local;
+                let sum = fma(e.z, e.z, fma(e.y, e.y, e.x * e.x));
+                let d = vec2<f32>(sum, sqrt(sum));
+                if (mode == 0u) {
+                    if (d.x < best) {
+                        best_offset = o;
+                        best = d.x;
+                        best_point = point;
+                        best_distance = d.y;
+                    }
+                } else if (mode == 1u) {
+                    if (d.y < best) {
+                        second = best;
+                        best = d.y;
+                        second_offset = best_offset;
+                        best_offset = o;
+                        second_point = best_point;
+                        best_point = point;
+                    } else if (d.y < second) {
+                        second = d.y;
+                        second_offset = o;
+                        second_point = point;
+                    }
+                } else {
+                    if (h == -1.0) {
+                        h = 1.0;
+                    } else {
+                        h = cy_smoothstep(0.0, 1.0, 0.5 + 0.5 * (smooth_distance - d.y) / p.smoothness);
+                    }
+                    correction = p.smoothness * h * (1.0 - h);
+                    smooth_distance = smooth_distance + h * (d.y - smooth_distance) - correction;
+                    correction /= 1.0 + 3.0 * p.smoothness;
+                    smooth_position = smooth_position + h * (point - smooth_position) - vec3<f32>(correction);
+                    if (colour_along) {
+                        let color = cy_pcg_unit(vec4<i32>(cell + o, 0), 3u).xyz;
+                        smooth_color = smooth_color + h * (color - smooth_color) - vec3<f32>(correction);
+                    }
+                }
+            }
+        }
+    }
+    var position = vec3<f32>(0.0);
+    switch mode {
+        case 0u: {
+            out.distance = best_distance;
+            position = best_point + cellf.xyz;
+        }
+        case 1u: {
+            out.distance = second;
+            position = second_point + cellf.xyz;
+        }
+        default: {
+            out.distance = smooth_distance;
+            out.color = smooth_color;
+            position = cellf.xyz + smooth_position;
+        }
+    }
+    // F1's and F2's colour, the cell's whose point was taken.
+    if (mode <= 1u && p.colour) {
+        out.color = cy_pcg_unit(vec4<i32>(cell + select(best_offset, second_offset, mode == 1u), 0), 3u).xyz;
+    }
+    out.position = vec4<f32>(position, 0.0);
+    return out;
+}
+
+// One octave of the cells round `coord` (already scaled): in three
+// dimensions by the Euclidean metric, F1, F2 and smooth F1 by cy_cells3;
+// the rest by the general walk.
+fn cy_cells(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
+    if (p.dims == 3u && p.metric == 0u && p.feature <= 2u) {
+        return cy_cells3(coord, p);
+    }
+    return cy_cells_general(coord, p);
+}
+
+// The general walk of one octave of the cells round `coord` (already
+// scaled): F1 0, F2 1, smooth F1 2, the distance to the edge 3 (twice round the cells: the
 // nearest point, then the edges to it), the n-sphere radius 4 (the nearest
 // point, then its own nearest). One walk, the feature point found in one
 // place, the colour - F1's and F2's after the walk, a step of its own - in
 // another. In one dimension the position comes back in w, as Cycles' W.
-fn cy_cells(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
+fn cy_cells_general(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
     let cellf = floor(coord);
     let local = cy_mask(coord - cellf, p.dims);
     let cell = vec4<i32>(cy_to_i32(cellf.x), cy_to_i32(cellf.y), cy_to_i32(cellf.z), cy_to_i32(cellf.w));

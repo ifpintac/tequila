@@ -691,6 +691,9 @@ struct Walk {
     sigma: vec3<f32>,
     glows: bool,
     first: f32,
+    // A shadow ray that passes the shadow-catching floors the bounces pass:
+    // the sky's light sample where it sees past them (sky_past_floors).
+    past_floors: bool,
 };
 
 // What a walk found: the light it lets through (a shadow ray's, the light
@@ -710,7 +713,7 @@ struct WalkEnd {
 };
 
 fn walk_new(mode: u32, origin: vec3<f32>, direction: vec3<f32>, reach: f32) -> Walk {
-    return Walk(mode, origin, direction, reach, GLASS_SOLID, NO_LIGHT, false, NO_SOLID, vec3<f32>(0.0), false, 0.0);
+    return Walk(mode, origin, direction, reach, GLASS_SOLID, NO_LIGHT, false, NO_SOLID, vec3<f32>(0.0), false, 0.0, false);
 }
 
 // A shadow ray's walk (WALK_SHADOW) along `ray`.
@@ -768,7 +771,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
     let glows = FEATURE_EMITTERS && past && w.glows;
     let solid = mode == WALK_SHADOW && glass == GLASS_SOLID && (!FEATURE_CUTOUTS || (frame.glass_flags & SCENE_CUTOUTS) == 0u) && !linked && !in_medium;
     let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
-    let mask = select(MASK_SURFACE, MASK_SHADOW, solid);
+    let mask = select(MASK_SURFACE, select(MASK_SHADOW | MASK_FLOOR, MASK_SHADOW, FEATURE_FLOOR && w.past_floors), solid);
     let sigma = w.sigma;
     let majorant = max(max(sigma.x, sigma.y), sigma.z);
     var origin = w.origin;
@@ -899,7 +902,7 @@ fn walk_ray(w: Walk) -> WalkEnd {
             out.bent = bent;
             return out;
         }
-        let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (linked && !lamp_casts(lamp, inst.instance));
+        let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (linked && !lamp_casts(lamp, inst.instance)) || (FEATURE_FLOOR && w.past_floors && (inst.flags & INSTANCE_FLOOR_PASSES) != 0u);
         let at = along + hit.t;
         let m = scene_materials[inst.material];
         let bends = (m.glass & GLASS_BENDS) != 0u;
@@ -2107,8 +2110,13 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
                 ray = shadow_ray(offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
             }
             // The light sample's own walk (walk_ray's second place, see
-            // there): walked here, the stack still at hand.
-            let v = walk_ray(shadow_walk_of(frame.shadow_glass, ray, medium, instance, here.sigma, blockers));
+            // there): walked here, the stack still at hand. The sky's passes
+            // the floors the bounces pass where it sees past them (a kernel
+            // part with the floor's: with no floor nothing answers
+            // MASK_FLOOR, and either mask is the same).
+            var walk = shadow_walk_of(frame.shadow_glass, ray, medium, instance, here.sigma, blockers);
+            walk.past_floors = FEATURE_FLOOR && sky && !medium && (frame.lamp_flags & LAMPS_SKY_PAST_FLOORS) != 0u;
+            let v = walk_ray(walk);
             if (!medium && all(v.through == vec3<f32>(0.0))) {
                 continue;
             }
@@ -3191,16 +3199,23 @@ fn floor_met(st: ptr<function, PathState>, c: GpuCatcher, raw: Surface, open: f3
     if (frame.ground_illumination != 0u) {
         return MET_SHADE;
     }
-    // Else straight on through it, to what lies below the horizon; light
-    // sampling did not see past it, so what is found beyond takes full
-    // weight, as past a mirror.
+    // Else straight on through it, to what lies below the horizon. The
+    // lamps' and the glowing parts' light samples did not see past it, so
+    // what of them is found beyond takes full weight, as past a mirror; the
+    // sky's did where it sees past such floors (sky_past_floors), and the
+    // sky beyond keeps the weight the bounce had. Elsewhere the sky too
+    // takes full weight.
     if ((*st).crossings >= MAX_CUTOUT_CROSSINGS) {
         return MET_END;
     }
     (*st).crossings += 1u;
     let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
     (*st).origin = offset_at(raw.position, -g, raw.magnitude);
-    (*st).prev_pdf = PDF_INFINITE;
+    if ((frame.lamp_flags & LAMPS_SKY_PAST_FLOORS) != 0u) {
+        (*st).receiver = false;
+    } else {
+        (*st).prev_pdf = PDF_INFINITE;
+    }
     (*st).through_glass = GLASS_SOLID;
     (*st).seen.valid = false;
     return MET_PASSED;

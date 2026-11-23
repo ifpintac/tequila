@@ -730,6 +730,73 @@ fn voronoi_is_the_processors() {
     compare_all(&h, "Voronoi", &cases, NOISE);
 }
 
+/// The walk of the cells in three dimensions by the Euclidean metric that F1,
+/// F2 and smooth F1 take (`cy_cells3`, for speed: the Headphones' grains) is
+/// the general walk's to the bit - distance, colour and position - over
+/// points as near and as far as the grains scale them, any randomness and
+/// smoothness, the colour asked for or not.
+#[test]
+fn the_voronoi_walk_in_three_dimensions_is_the_general_one() {
+    let Some(h) = harness() else { return };
+    let count = 60_000u32;
+    let kernel = format!(
+        "//#include nodes
+@group(0) @binding(0) var<storage, read> harness_input: array<u32>;
+@group(0) @binding(1) var<storage, read_write> harness_output: array<u32>;
+@compute @workgroup_size(64)
+fn harness_main(@builtin(global_invocation_id) id: vec3<u32>) {{
+    let i = id.x;
+    if (i >= {count}u) {{ return; }}
+    let at = i * 8u;
+    var p: CyVoronoi;
+    p.dims = 3u;
+    p.metric = 0u;
+    p.feature = harness_input[at + 3u];
+    p.randomness = bitcast<f32>(harness_input[at + 4u]);
+    p.smoothness = bitcast<f32>(harness_input[at + 5u]);
+    p.colour = harness_input[at + 6u] != 0u;
+    let coord = vec4<f32>(bitcast<f32>(harness_input[at]), bitcast<f32>(harness_input[at + 1u]), bitcast<f32>(harness_input[at + 2u]), 0.0);
+    let a = cy_cells_general(coord, p);
+    let b = cy_cells3(coord, p);
+    let words = array<f32, 8>(a.distance, a.color.x, a.color.y, a.color.z, a.position.x, a.position.y, a.position.z, a.position.w);
+    let others = array<f32, 8>(b.distance, b.color.x, b.color.y, b.color.z, b.position.x, b.position.y, b.position.z, b.position.w);
+    for (var k = 0u; k < 8u; k++) {{
+        harness_output[i * 16u + k] = bitcast<u32>(words[k]);
+        harness_output[i * 16u + 8u + k] = bitcast<u32>(others[k]);
+    }}
+}}
+"
+    );
+    let mut rng = Pcg32::new(11, 3);
+    let mut inputs = Vec::new();
+    for i in 0..count as usize {
+        // The leather grain's 900 and the satin's 8000 times a point in a
+        // part a few centimetres across, and points near the origin.
+        let reach = [0.3 * 900.0f32, 0.3 * 8000.0, 40.0, 3.0][i % 4];
+        for _ in 0..3 {
+            inputs.push(uniform(&mut rng, -reach, reach).to_bits());
+        }
+        inputs.push((i % 3) as u32);
+        inputs.push(if rng.next_f32() < 0.25 { rng.next_f32() } else { 1.0f32 }.to_bits());
+        inputs.push(uniform(&mut rng, 0.01, 0.5).to_bits());
+        inputs.push(u32::from(rng.next_f32() < 0.5));
+        inputs.push(0);
+    }
+    let out = h.run_kernel(&tequila_render_gpu::shader::with_includes(&kernel), "harness_main", &inputs, count as usize * 16, (count.div_ceil(64), 1));
+    let mut apart = 0;
+    for (i, item) in out.chunks(16).enumerate() {
+        if item[..8] != item[8..] {
+            if apart < 5 {
+                let f: Vec<f32> = item.iter().map(|&w| f32::from_bits(w)).collect();
+                println!("item {i} (feature {}): general {:?}, three dimensions {:?}", i % 3, &f[..8], &f[8..]);
+            }
+            apart += 1;
+        }
+    }
+    println!("the walk in three dimensions against the general walk: {apart} of {count} apart");
+    assert_eq!(apart, 0, "the walk in three dimensions is not the general walk's to the bit");
+}
+
 /// Every point input, through Texture Coordinate, Geometry, Object Info and
 /// Light Path.
 #[test]

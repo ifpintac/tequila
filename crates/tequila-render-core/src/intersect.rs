@@ -89,6 +89,22 @@ pub trait Intersector: Send + Sync {
     /// part.
     fn occluded(&self, from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3) -> bool;
 
+    /// [`Self::occluded`] past the shadow-catching floors the bounces pass
+    /// ([`SceneSnapshot::floor_passes`]): the sky's light sample where it
+    /// sees past them (`integrator::sky_past_floors`). A backend that can
+    /// mask such floors out of an any-hit query overrides this walk.
+    fn occluded_past_floors(&self, from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3) -> bool {
+        let scene = self.scene();
+        let mut ray = shadow_ray(from, from_normal, to, to_normal);
+        loop {
+            let Some(hit) = self.intersect(&ray) else { return false };
+            if scene.casts_shadows(hit.instance) && !scene.floor_passes(hit.instance) {
+                return true;
+            }
+            ray.t_min = crate::cutaway::step_past(&ray, hit.t);
+        }
+    }
+
     /// The scene this intersector was built for.
     fn scene(&self) -> &SceneSnapshot;
 }

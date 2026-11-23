@@ -380,6 +380,10 @@ pub const LAMPS_SHADOWLESS: u32 = 64;
 /// off): no light sample anywhere, and every bounce that meets a light takes
 /// it whole.
 pub const LAMPS_UNSAMPLED: u32 = 128;
+/// The sky's light sample sees past the shadow-catching floors the bounces
+/// pass, and a bounce past one keeps the sky's weight
+/// (`integrator::sky_past_floors`).
+pub const LAMPS_SKY_PAST_FLOORS: u32 = 256;
 
 /// What [`lamp_flags`] and [`lamp_limits`] ask of a scene, read when it is
 /// uploaded, so either can be said once a configuration is known.
@@ -394,6 +398,8 @@ pub struct LampScene {
     met_specular_or_camera: bool,
     shadowless_parts: bool,
     met_past_parts: bool,
+    /// The sky is infinitely far away (no dome of a size).
+    infinite_dome: bool,
 }
 
 impl LampScene {
@@ -407,6 +413,7 @@ impl LampScene {
             met_specular_or_camera: lights.iter().filter(met).any(|l| l.visibility.specular || l.visibility.camera),
             shadowless_parts: scene.has_shadowless_parts(),
             met_past_parts: lights.iter().filter(met).any(|l| !l.visibility.shadow || !l.shadow_links.is_all()),
+            infinite_dome: scene.environment.dome().is_infinite(),
         }
     }
 
@@ -416,6 +423,8 @@ impl LampScene {
         let meets_lamps = config.direct_lighting && config.shadows && self.met_specular;
         let for_reflections = meets_lamps && self.met_specular_only;
         let in_mirrors = config.direct_lighting && self.met_specular_or_camera;
+        let passes_parts = config.shadows && (self.shadowless_parts || self.met_past_parts);
+        let sky_past_floors = tequila_render_core::integrator::sky_past_floors_of(config, passes_parts, self.panes, self.infinite_dome);
         let mut flags = 0;
         for (on, flag) in [
             (meets_glass || meets_lamps, LAMPS_SEEN),
@@ -423,9 +432,10 @@ impl LampScene {
             (in_mirrors, LAMPS_IN_MIRRORS),
             (for_reflections, LAMPS_FOR_REFLECTIONS),
             (meets_glass, LAMPS_MEETS_GLASS),
-            (config.shadows && (self.shadowless_parts || self.met_past_parts), LAMPS_PASSES_PARTS),
+            (passes_parts, LAMPS_PASSES_PARTS),
             (self.shadowless_parts, LAMPS_SHADOWLESS),
             (!config.direct_lighting, LAMPS_UNSAMPLED),
+            (sky_past_floors, LAMPS_SKY_PAST_FLOORS),
         ] {
             if on {
                 flags |= flag;
