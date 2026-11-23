@@ -844,13 +844,21 @@ fn trace<C: PathColour>(
     }
     let mut bounce = 0u32;
     let mut transmission_bounces = 0u32;
-    // Light that went on through a fibre (§4.4's Fuzz) rather than back off
-    // it: counted as a transmission and not against the bounces, as Cycles
-    // counts its hair's. A felt is many fibres deep, and its colour is the
-    // light that wanders through them; at the bounces a surface needs, the
-    // pile of a felt ball came out 4% darker and a tenth less red than in
-    // Cycles, and with them counted apart the two agree to 2%.
-    let mut fibre_passes = 0u32;
+    // Passes through glass, and through fibres, counted against the
+    // transmission limit and not against the bounces (`docs/01` §11). Glass
+    // needs many crossings and few bounces: a bottle is four crossings
+    // straight through and a part seen through a clear case four more, and
+    // counted as bounces they ate the Product preset's six, so its eight
+    // through glass were never reached and the light past a second wall was
+    // cut off. A fibre (§4.4's Fuzz) the light went on through rather than
+    // back off is counted so, as Cycles counts its hair's: a felt is many
+    // fibres deep, and its colour is the light that wanders through them; at
+    // the bounces a surface needs, the pile of a felt ball came out 4% darker
+    // and a tenth less red than in Cycles, and with them counted apart the
+    // two agree to 2%. Not such passes: the way into a subsurface walk and a
+    // thin sheet's diffuse light through it, which scatter as a bounce does
+    // and are counted as bounces, as Cycles counts them.
+    let mut glass_crossings = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth
     // budget, or a row of chain-link fences would go black. Counted only so
@@ -1479,7 +1487,7 @@ fn trace<C: PathColour>(
                         } else {
                             -hit.geometric_normal
                         };
-                        behind * manifold::on_catcher(intersector, config, &hit, facing, &media, bounce, sampler)
+                        behind * manifold::on_catcher(intersector, config, &hit, facing, &media, bounce - glass_crossings, sampler)
                     }
                     Some(map) if catcher.shadows => {
                         let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 {
@@ -1933,7 +1941,7 @@ fn trace<C: PathColour>(
             aovs.contribute(colour.rgb(contribution), group);
         }
 
-        if bounce - fibre_passes >= config.max_bounces {
+        if bounce - glass_crossings >= config.max_bounces {
             break;
         }
 
@@ -2234,7 +2242,7 @@ fn trace<C: PathColour>(
                     wo,
                     geometric_normal,
                     &media,
-                    bounce,
+                    bounce - glass_crossings,
                     transmission_bounces,
                     sampler,
                     passes,
@@ -2442,8 +2450,8 @@ fn trace<C: PathColour>(
             Some(_) => sample.flags.contains(BsdfFlags::TRANSMISSION),
             None => sample.is_transmission,
         };
-        if fibre.is_some() && through {
-            fibre_passes += 1;
+        if through && (fibre.is_some() || !sample.flags.contains(BsdfFlags::DIFFUSE)) {
+            glass_crossings += 1;
         }
         if through {
             transmission_bounces += 1;

@@ -693,7 +693,7 @@ The Lighting tab presets (§1.6 of the master spec) are a UI over the following 
 
 **Custom** exposes every row individually and can be saved as a named preset.
 
-Note the transmission bounce limit is tracked separately from the general bounce limit — glass and gems need many transmission events but few diffuse ones, and conflating them either makes glass black or makes everything slow. KeyShot's Jewelry preset exists precisely because of this distinction.
+Note the transmission bounce limit is tracked separately from the general bounce limit — glass and gems need many transmission events but few diffuse ones, and conflating them either makes glass black or makes everything slow. KeyShot's Jewelry preset exists precisely because of this distinction. A pass through glass — refracted, smooth or rough, or through a thin wall — and a pass through a fibre count against the transmission limit alone; the way into a subsurface walk and a thin sheet's diffuse light through it scatter as a bounce does, and count against both. (Until 2026-11-19 every pass counted against the general limit as well, so at Product's six bounces the eight through glass were never reached, and what was seen through two walls of glass — a part inside a clear case — lost light.)
 
 ### 11.1 GI Cache (optional, biased)
 
