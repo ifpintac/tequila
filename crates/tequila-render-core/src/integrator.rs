@@ -341,8 +341,10 @@ struct Medium {
     /// The medium's own index, relative to vacuum.
     ior: f32,
     /// The material whose volume absorbs along the path, where there is one:
-    /// clear glass with no depth has an index and no volume.
-    volume: Option<crate::material::Material>,
+    /// clear glass with no depth has an index and no volume. Boxed: a
+    /// material is large, and every path carries a stack of these, which
+    /// was copied whole wherever the stack moved.
+    volume: Option<Box<crate::material::Material>>,
     /// A part's subsurface medium, where the path is on a random walk
     /// (§6.4): it scatters as well as absorbs, and the path leaves it through
     /// the part's own surface.
@@ -430,7 +432,7 @@ impl Medium {
             ior: material.specular_ior,
             // A volume that scatters absorbs in the walk; one that does not,
             // along the path.
-            volume: (material.has_volume() && scattering.is_none()).then(|| material.clone()),
+            volume: (material.has_volume() && scattering.is_none()).then(|| Box::new(material.clone())),
             recipe: scattering.map(|_| MediumRecipe::volume(material)),
             scattering,
             doorway: false,
@@ -768,13 +770,16 @@ fn trace<C: PathColour>(
     let scene = intersector.scene();
     let mut out = unmet();
     // Reused across every vertex of this path, so shading a graph allocates
-    // nothing after the first bounce that needs it.
+    // nothing after the first bounce that needs it. The materials are made
+    // when a graph is first met: a material is large, and making two for
+    // every path, most of which meet no graph, was nearly a hundredth of a
+    // lamp-lit render (`docs/07` R1).
     let mut shading_registers = shade::Registers::new();
-    let mut shading_scratch = crate::material::Material::default();
+    let mut shading_scratch: Option<crate::material::Material> = None;
     // For the height either side of a bumped point, kept apart from the
     // material's own so the main evaluation's registers survive it.
     let mut bump_registers = shade::Registers::new();
-    let mut bump_scratch = crate::material::Material::default();
+    let mut bump_scratch: Option<crate::material::Material> = None;
 
     let mut radiance = C::Value::ZERO;
     let mut throughput = C::Value::ONE;
@@ -1643,7 +1648,7 @@ fn trace<C: PathColour>(
         // its weight when the two are added (`shade::choose_layer`).
         let program = match (scene.program(hit.material), &point) {
             (Some(program), Some(point)) if program.layer.is_some() => {
-                let (chosen, weight) = shade::choose_layer(program, &scene.textures, point, &mut shading_registers, &mut shading_scratch, sampler.next_unstructured());
+                let (chosen, weight) = shade::choose_layer(program, &scene.textures, point, &mut shading_registers, shading_scratch.get_or_insert_with(Default::default), sampler.next_unstructured());
                 throughput *= weight;
                 Some(chosen)
             }
@@ -1655,7 +1660,7 @@ fn trace<C: PathColour>(
                 &scene.textures,
                 point,
                 &mut shading_registers,
-                &mut shading_scratch,
+                shading_scratch.get_or_insert_with(Default::default),
             ),
             _ => scene.material(hit.material),
         };
@@ -1699,7 +1704,7 @@ fn trace<C: PathColour>(
                 geometric_normal,
                 &shading_registers,
                 &mut bump_registers,
-                &mut bump_scratch,
+                bump_scratch.get_or_insert_with(Default::default),
             ),
             _ => shading_normal,
         };
@@ -2001,14 +2006,14 @@ fn trace<C: PathColour>(
                 Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
             } else {
                 let mut bsdf = if exiting_walk {
-                    walk_exit().bsdf(floor)
+                    walk_exit().bsdf_to_aim(floor)
                 } else if from_inside {
-                    material.bsdf_from_inside(floor)
+                    material.bsdf_from_inside_to_aim(floor)
                 } else {
-                    material.bsdf(floor)
+                    material.bsdf_to_aim(floor)
                 };
                 // Its lobes chosen by what each sends back the way it is
-                // seen, not face on (`MaterialBsdf::aim`).
+                // seen, not face on (`OpenPbrBsdf::aim`).
                 bsdf.aim(wo);
                 Scattering::Surface(bsdf)
             }

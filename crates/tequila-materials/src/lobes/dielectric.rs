@@ -47,6 +47,8 @@ pub struct DielectricSpecular {
 #[derive(Clone, Copy, Debug)]
 struct Seen {
     mu: f32,
+    /// The lobe's place on the tables, for reads at other angles.
+    place: energy::Place,
     e_o: f32,
     e_avg: f32,
     compensation: f32,
@@ -82,14 +84,13 @@ impl DielectricSpecular {
     /// after the lobe is otherwise complete (roughness, index, weight).
     pub fn aim(&mut self, wo: Vec3) {
         let mu = shading::abs_cos_theta(wo);
-        let alpha = self.distribution.average_alpha();
         let table = energy::table();
-        let e_o = table.white_directional(mu, alpha);
-        let e_avg = table.white_average(alpha);
+        let place = energy::GgxEnergyTable::place(self.distribution.average_alpha(), self.ior);
+        let (single, e_o) = table.dielectric_and_white_at(&place, mu);
+        let e_avg = table.white_average_at(&place);
         let compensation = self.compensation_scale(e_avg);
-        let single = table.dielectric_directional(mu, alpha, self.ior);
         let albedo = (self.weight * (single + compensation * (1.0 - e_o))).clamp(0.0, 1.0);
-        self.seen = Some(Seen { mu, e_o, e_avg, compensation, albedo });
+        self.seen = Some(Seen { mu, place, e_o, e_avg, compensation, albedo });
     }
 
     /// [`Self::aim`], taking `other`'s reads when it is the same interface
@@ -106,12 +107,6 @@ impl DielectricSpecular {
         } else {
             self.aim(wo);
         }
-    }
-
-    /// The cached reads, when `mu` is the angle they were made for.
-    #[inline]
-    fn seen_at(&self, mu: f32) -> Option<&Seen> {
-        self.seen.as_ref().filter(|s| s.mu == mu)
     }
 
     /// The hemispherical average of `white_directional` and the
@@ -154,8 +149,9 @@ impl DielectricSpecular {
 
     fn compensation_probability(&self, wo: Vec3) -> f32 {
         let mu = shading::abs_cos_theta(wo);
-        let e_o = match self.seen_at(mu) {
-            Some(s) => s.e_o,
+        let e_o = match &self.seen {
+            Some(s) if s.mu == mu => s.e_o,
+            Some(s) => energy::table().white_directional_at(&s.place, mu),
             None => energy::table().white_directional(mu, self.distribution.average_alpha()),
         };
         ((1.0 - e_o) * COMPENSATION_SHARE).clamp(0.0, 0.5)
@@ -176,8 +172,14 @@ impl DielectricSpecular {
     /// module documentation of [`crate::energy`].
     pub fn directional_albedo(&self, wo: Vec3) -> f32 {
         let mu = shading::abs_cos_theta(wo);
-        if let Some(s) = self.seen_at(mu) {
-            return s.albedo;
+        match &self.seen {
+            Some(s) if s.mu == mu => return s.albedo,
+            // Aimed elsewhere: the same reads, from the lobe's place.
+            Some(s) => {
+                let (single, e_o) = energy::table().dielectric_and_white_at(&s.place, mu);
+                return (self.weight * (single + s.compensation * (1.0 - e_o))).clamp(0.0, 1.0);
+            }
+            None => {}
         }
         let alpha = self.distribution.average_alpha();
         let table = energy::table();
@@ -219,14 +221,12 @@ impl Bsdf for DielectricSpecular {
         let alpha = self.distribution.average_alpha();
         let table = energy::table();
         // `wo.z` is positive here, so it is the angle `aim` read for.
-        let e_o = match self.seen_at(wo.z) {
-            Some(s) => s.e_o,
-            None => table.white_directional(wo.z, alpha),
+        let at = |mu: f32| match &self.seen {
+            Some(s) if s.mu == mu => s.e_o,
+            Some(s) => table.white_directional_at(&s.place, mu),
+            None => table.white_directional(mu, alpha),
         };
-        let e_i = match self.seen_at(wi.z) {
-            Some(s) => s.e_o,
-            None => table.white_directional(wi.z, alpha),
-        };
+        let (e_o, e_i) = (at(wo.z), at(wi.z));
         let (e_avg, compensation) = self.average_and_compensation();
         let multi = compensation * multiple_scattering_value(e_o, e_i, e_avg);
 
