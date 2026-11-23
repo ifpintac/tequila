@@ -1,0 +1,327 @@
+# 07 — Tequila's renderer on the graphics card, and retiring Cycles
+
+The plan for making Tequila's own renderer the only renderer: what has to be true before Cycles can go, the decisions already taken, and the work in order, each step with its test.
+
+Written 2026-11-17 against main at `356836f0`. It supersedes the "Decided 2026-10-11: the graphics card is Cycles'" note in `docs/05` M9 as the direction of travel; that note stays true as a description of the build until stage R7 lands.
+
+---
+
+## 0. How to use this
+
+- Work the stages in order (§4). Each has an **exit test**; do not start the next stage until it passes on both reference machines (§6.3), except where a stage says it may run alongside another.
+- One step, one pull request. Every pull request states its before-and-after numbers from the bench (R0.1) and its parity result (R0.3, R2.6).
+- The decisions in §3 are taken. If one proves wrong, stop, write up what was measured, and ask the owner; do not quietly take another road.
+- A tolerance in this document is never loosened to make a test pass. A test that cannot pass is a finding: write it up.
+- Keep `docs/01` and `docs/05` true in the same pull request as the change (`docs/SPEC-README.md`, `docs/05` §2).
+
+---
+
+## 1. The goal, and what "Cycles is not needed" means
+
+Cycles does one job nothing else in Tequila does: it renders on the graphics card. Everything else it does, Tequila's renderer does already, and several things only Tequila's renderer does (§2.2). So the goal is one sentence: **Tequila's renderer runs on the graphics card, makes the same picture as it does on the processor, and is at least as fast as Cycles on every machine Cycles serves today.**
+
+Two gates, in order:
+
+**G1 — Tequila becomes the default engine.** All of:
+1. Speed on the graphics card: on every bench scene, time to equal noise is at most 1.25× Cycles' on the same card, on both reference machines.
+2. Speed on the processor: on every bench scene, time to equal noise is at most 1.0× Cycles' on the same processor.
+3. Sameness: the graphics-card picture agrees with the processor picture within the parity tolerance (R2.6) on the whole parity set.
+4. Look: the owner has looked at the side-by-side sheet (R6.2) of Cycles against Tequila and said yes. Passing numbers are not this gate.
+5. Reach: every class of card in the device matrix (R5.3) has a self-test report that passes, or is listed as an accepted loss.
+6. Stability: no picture ever waits silently. Opening the Rendered view on a machine that has never run it shows a picture within 1 s (from the processor) and the graphics card's within 5 s.
+
+**G2 — Cycles is removed.** G1 has shipped in one feature update with Cycles still selectable, no open report says "only Cycles can do this", and the owner says go.
+
+---
+
+## 2. Where we are
+
+### 2.1 Measured, 2026-11-17
+
+Ryzen 7 2700X (8 cores, 16 threads), RTX 2060, Windows 11, main plus nothing. 960×540, no denoiser, wall time from queueing the job to the file being written, so it includes scene build and kernel load. Script: R0.1 replaces the one-off used here.
+
+| Scene | Samples | Cycles, card (OptiX) | Cycles, processor | Tequila (processor) |
+|---|---|---|---|---|
+| Headphones | 64 | 3.6 s | 16.6 s | 28.2 s |
+| | 1,024 | 25.1 s | 122.1 s | 267.7 s |
+| Perfume bottle | 64 | 5.4 s | 17.8 s | 13.4 s |
+| | 1,024 | 20.0 s | 116.1 s | 130.2 s |
+| palma P8 | 64 | 4.0 s | 25.6 s | 13.0 s |
+| | 1,024 | 33.7 s | 301.7 s | 142.4 s |
+
+Read with care: equal samples are not equal noise, and the two renderers stop sampling converged pixels by different rules. R0.1 measures time to equal noise, which is the number the gates use. Against the card, Tequila's renderer is 2.5 to 11 times slower at equal samples. Against Cycles on the same processor it is twice as slow on the Headphones, level on the perfume bottle, and its palma P8 time does not count, for the reason below.
+
+**The pictures are not all the same picture.** At 1,024 samples, Tequila's renderer against Cycles on the card, in display-linear values from the 8-bit files: Headphones, mean absolute difference 0.0004, correlation 0.997; perfume bottle, 0.0066 and 0.957; **palma P8, 0.0109 and 0.34**. Cycles shows the palma's clear green shell with the screen lit and the boards behind it; Tequila's renderer shows the shell near black, the screen and everything inside it all but gone. That is one of the three samples the application ships, it is not among the differences `docs/05` M9 lists as by design, and nothing in the test suite caught it. It is why R0.4 exists and why G1.4 is the owner's eyes and not a number.
+
+Earlier figures in the repo agree in kind: the self-test at 64 samples takes Tequila 1.3 s, Cycles on the processor 0.93 s, OptiX 0.12 s, CUDA 0.15 s (`docs/05` §3.11); the fibre scenes take Tequila 131–199 s against 18–28 s on the card (`docs/05` M6).
+
+### 2.2 What Tequila's renderer has, and Cycles in this build does not
+
+Spectral rendering and true dispersion; photon caustics; render layers and regions; the Caustics, Ambient Occlusion, Shadow and Labels passes; denoise strength; the converged-percent readout; a media stack for nested liquids and glass; a rough thin-wall lobe; rounded edges under a normal map; a shadow colour per catcher; unlimited light-link sets; swatches and thumbnails; Intel Macs. Even a "Cycles" picture already leans on Tequila's renderer for picking, the floor reflection, the backplate and finite dome, and the silhouette's alpha.
+
+### 2.3 What only Cycles has
+
+| Only Cycles | Needed for G1? | Answered in |
+|---|---|---|
+| Rendering on the graphics card (OptiX, CUDA, HIP, Metal) | Yes: this is the plan | R2–R5 |
+| Several cards rendering together | Yes, for those who have them | R5.4 |
+| Bounce limits per kind (diffuse, glossy, transmission, volume), Filter Glossy, clamping direct light apart, the reflective and refractive caustics switches | Yes: project files carry them | R6.1 |
+| Rounded edges seen in reflections (Tequila rounds at the camera's first hit only) | Yes, where it is cheap enough | R3 tier B |
+
+Nothing else. Motion blur, portals and path guiding are in neither engine as Tequila uses them, so they are not part of this plan (§8).
+
+### 2.4 What carrying Cycles costs
+
+About 10,500 lines that exist only to feed it (`native/cycles`, `crates/tequila-render-cycles` of which `translate.rs` is 5,259, `app/src/cycles_view.rs`); a C++ build that takes most of the release build's time, against Blender's prebuilt libraries, NVIDIA's OptiX headers and kernels fetched from a Blender download; a second look to keep in step (58 dual-engine tests that never run in CI because CI does not build Cycles); and more than a dozen recorded workarounds for its behaviour on one device or another, the latest being the five-minute OptiX kernel compile that froze the Rendered view (#161).
+
+### 2.5 Why the renderer is not on the card already
+
+`crates/tequila-render-gpu` is a four-line stub. The integrator is shaped for a processor: one 1,700-line function (`trace` in `crates/tequila-render-core/src/integrator.rs`) over `&dyn Intersector`, with recursion at the first glass and the floor reflection, closures, and heap allocation per path. Two things are already the right shape: a material graph compiles to a flat list of instructions over registers (`tequila-materials/src/graph.rs`, `tequila-render-core/src/shade.rs`), and the surface is a fixed array of five lobes with no allocation (`tequila-materials/src/lobes/openpbr.rs`).
+
+---
+
+## 3. Decisions
+
+**D1 — wgpu, compute shaders, ray queries. Vulkan on Windows and Linux, Metal on a Mac. No DirectX 12.**
+wgpu 30 has acceleration structures and ray queries on Vulkan, DX12 and Metal (Metal since v29, macOS 15 and later), behind `EXPERIMENTAL_RAY_QUERY`. It is one API for NVIDIA, AMD, Intel and Apple, and Bevy's path-traced lighting ships on it on Vulkan and Metal. DX12 would add a third backend to test and require shipping DXC, and it lacks storage-buffer binding arrays; every Windows card that can ray trace has a Vulkan driver. Ray-tracing *pipelines* (hit shaders) are not in a wgpu release; nothing here needs them.
+
+**D2 — The kernels are written in WGSL by hand. Invariant 3 becomes "one specification, checked function by function".**
+`docs/SPEC-README.md` invariant 3 asks for one shading source. The two tools that could give it are not ready: rust-gpu's maintainers call it "not yet production-ready", it needs a pinned nightly, and its ray queries cannot pass through naga to Metal; Slang's WGSL, Metal and CPU targets are all marked experimental. WGSL through naga is the path wgpu itself tests on every backend. So there are two implementations, and the invariant is kept by machine instead of by construction: every WGSL function that has a Rust twin is run against that twin on the same inputs (R2.4), and that suite runs in CI on a software Vulkan driver. This is far tighter than today's arrangement, where two unrelated integrators are held to a statistical 0.0075. The amendment to invariant 3 lands in the pull request that lands R2.4. Look again at rust-gpu only if it ships a stable-toolchain release and naga parses its ray queries.
+
+**D3 — The processor renderer stays, and gets faster.**
+It is the reference the card is tested against, the first picture while the card's pipelines compile, the fallback when a card fails or runs out of memory, and the renderer for machines with no usable card. Once Cycles is gone it is also what replaces Cycles on the processor, so it must not be slower (G1.2, stage R1).
+
+**D4 — Materials are data on the card. No shader is ever compiled because a material changed.**
+The card runs one interpreter for the instruction list the processor already runs. The pipelines are compiled once, when the device is made, and they do not depend on the scene. This removes by design the class of stall behind #161.
+
+**D5 — A path is a small state machine; each dispatch advances every live path one segment.**
+One segment is: trace, shade, sample the lights with their shadow rays traced inline, choose the next direction. Long walks (subsurface, media) advance a bounded number of steps per dispatch and carry their state. No recursion: the first-glass split and the floor reflection become extra lanes. No sorting by material, since there is one interpreter. Compaction and path regeneration are optimisations to measure after the picture is right (R3 exit), not before.
+
+**D6 — Two ways to intersect behind one interface.**
+`trace` and `occluded` in WGSL are either the card's ray queries or a traversal of a tree built on the processor. Cards without ray queries (older NVIDIA GTX and AMD, Macs before macOS 15, Intel Macs) get the second, which Cycles' CUDA numbers say costs perhaps 1.3–2× against hardware. On Apple's M1 and M2 the second may be the faster; choose by measuring on the machine (R5.2).
+
+**D7 — The same random numbers on both.**
+The sampler (`tequila-core` `sampler.rs`, `sobol.rs`) is integer arithmetic. Its WGSL port is bit-exact, tested as such, and dimensions are allotted identically. Then a path on the card is the same path as on the processor up to floating-point rounding, and parity can be asserted tightly instead of statistically.
+
+**D8 — The film stays on the processor first.**
+The card returns each pass's samples; `tequila-render-core` `Framebuffer` accumulates them with its existing adaptive sampling and firefly rejection. One film implementation, exact parity, and several cards can feed it. Moving accumulation onto the card is an optimisation with its own differential test (R4.6), taken only if readback is measured to be the bottleneck.
+
+**D9 — Photon caustics stay on the processor until last.**
+They are an additive layer, and the integrator already draws the line: photons own the paths "light, one or more focusing events, a surface", read at the first surface the camera sees that does not focus light, and the path tracer leaves exactly those out (`integrator/caustics.rs`, `trace_path_with_caustics`). With photons on, the card applies the same leaving-out and the processor traces the photons and the short camera paths that read them. A card-side photon pass is §8.
+
+**D10 — It ships early, as a choice, and Cycles is not touched until G1.**
+From the end of R4 the engine list offers "Tequila (graphics card), experimental". Reports from real cards arrive through the self-test (`docs/05` §3.11) while Cycles remains the default.
+
+---
+
+## 4. The stages
+
+Sizes are relative: S is a pull request or two, M a handful, L a dozen or more.
+
+### R0 — Baseline, guardrails, and the look on the processor (M). R0.1 to R0.3 change no behaviour.
+
+**R0.1 The bench measures both engines and equal noise.**
+Extend `tequila --bench` (`crates/tequila-cli/src/main.rs` `benchmark`, `tequila-scene/src/bench.rs`):
+- `--engine tequila|cycles`, `--device cpu|gpu`, `--json FILE`.
+- Scenes: the existing `simple_product` and `cad_assembly`; the three in `assets/samples`; one fibre scene and one subsurface scene (the slow cases of `docs/05` M6); one enclosed scene lit by lamps.
+- For each: seconds to N samples, samples per second, **seconds to equal noise**, peak memory, peak card memory. Equal noise is defined once: relative RMSE against that engine's own 16,384-sample render falls to 0.02; the reference renders are made once and cached beside the bench output.
+- `scripts/bench/run.py` runs every engine and device on a machine and writes one JSON and one chart.
+
+*Test:* the script runs on both reference machines; its table replaces §2.1 here and joins `docs/05` §4.
+
+**R0.2 Keep the look Cycles makes, before it goes.**
+`scripts/look-refs/make.py` renders, with Cycles on the processor at 1,024 samples: the three samples, the demo scene in plastic, metal and diffuse, every Studio once, and all library presets as 256×256 swatches. The set is zipped, attached to a GitHub release named `look-refs-1`, and its SHA-256 is committed. It is not committed to the repository (size). After R7 this archive is the only record of the look existing projects were made in.
+
+*Test:* `scripts/look-refs/compare.py` fetches the archive and reports, per picture, the mean absolute difference and correlation against any engine; run against Cycles itself it reports zero.
+
+**R0.3 Name the parity set.**
+One list, in `tequila-render-core/tests/parity_set.rs` or beside it, of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
+
+**R0.4 The look audit, and its repairs, on the processor.**
+Run R0.2's comparison with Tequila's renderer against the Cycles archive over the whole set, and put every picture whose correlation is under 0.98 or whose mean differs by more than 5% on one sheet, worst first, for the owner. For each: find the cause, decide with the owner which engine is right, and fix Tequila's renderer where it is the one that is wrong, each fix with a test that holds it (`docs/05` §2). Start with the palma P8 (§2.1): establish whether its dark shell is light not reaching the inside (shadow rays and the lights behind clear plastic), the shell's medium being applied to everything it encloses, or a bounce limit, by rendering it with each of the three changed in turn. The card is ported from the processor renderer, so a look that is wrong here would be copied faithfully in R3; this step comes first for that reason.
+
+*Exit:* R0.1 numbers recorded for both machines; R0.2 archive published; R0.4's sheet has no picture left that the owner has not either seen fixed or accepted as it is.
+
+### R1 — The processor renderer at least as fast as Cycles on the processor (M). May run alongside R2 and R3.
+
+Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest against Cycles, with a sampling profiler (`samply`), and work down the profile. The survey's suspects, to confirm or dismiss by measurement, not to fix on sight:
+- allocation per path: the two `Registers` vectors made at the top of `trace`, `PathAovs::new(expressions.clone())` per pixel in `tequila-render-cpu/src/renderer.rs`, the vector made when more than 16 lights are sampled;
+- dynamic dispatch in the inner loop: `&dyn Intersector`, `&dyn Bsdf`, `&dyn Fn` closures;
+- single-ray Embree calls for coherent camera and shadow rays (`embree.rs` `rtcIntersect1`, `rtcOccluded1`);
+- the first-hit bevel probes.
+
+*Rule:* a change that does not change the mathematics must leave the picture **bit-identical** at a fixed seed on any number of threads; `rendering_is_bit_identical_across_thread_counts` (`tequila-render-cpu/src/renderer.rs`) and `tracing_is_deterministic` (`integrator.rs`) already assert the second half, so add a fixed-seed image hash for the scenes being optimised and say in the pull request that it did not move. A change that does alter the picture is a different kind of pull request and states why.
+
+*Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
+
+### R2 — The first picture from the card (M)
+
+**R2.0 Spike, on a branch that is thrown away.**
+On the RTX 2060 (Vulkan) and an Apple-silicon Mac (Metal, macOS 15 or later): make a wgpu 30 device with `EXPERIMENTAL_RAY_QUERY`; build a BLAS per mesh and one TLAS for `Headphones`; a compute shader sends a camera ray and eight ambient-occlusion rays per pixel through ray queries; read the buffer back to a PNG. Record: rays per second against Embree's on the same scene, the cold time to compile the pipeline, acceleration-structure build time, card memory.
+
+*Pass:* the picture is right on both machines; rays per second are at least 5× Embree's on the RTX 2060; the cold pipeline compile is under 5 s.
+*If Metal's ray queries misbehave* (wgpu issues #9215, #9100 are open or recently closed): do R5.1 first and run the Mac on the processor-built tree; carry on.
+*If Vulkan's do:* stop and ask the owner. The alternative is Vulkan and Metal directly (`ash`, `metal`), which is a different plan.
+
+**R2.1 The crate.**
+In `crates/tequila-render-gpu` (workspace `rust-version` rises to what wgpu 30 needs; wgpu 22 is already in `Cargo.lock` through another dependency, so pin this crate's version explicitly):
+- `device.rs`: choose the adapter, request features and limits (raise `max_buffer_size` and `max_storage_buffer_binding_size`; they default to 256 and 128 MiB), report why a device was refused.
+- `scene.rs`: `GpuScene::upload(&SceneSnapshot)`: vertex and index buffers, instances, BLAS and TLAS, material programs, textures, environment tables, light tables.
+- `renderer.rs`: the same calls the processor renderer offers (`render_pass`, `render_pass_with_aovs`, `render_pass_until` in `tequila-render-cpu/src/renderer.rs`), so `app/src/orchestrator.rs` and `app/src/batch.rs` can hold either.
+- `wgsl/`: one file per module, joined by a small include step. A test validates every module with naga and writes it out as SPIR-V and MSL, so a shader that does not compile fails CI on a machine with no card.
+
+**R2.2 Layouts agree by test.**
+Every struct that crosses to the card is `#[repr(C)]` with `bytemuck`. A test reads the WGSL through naga and asserts each struct's size and every member's offset against Rust's.
+
+**R2.3 The sampler, bit-exact.**
+Port `sobol.rs` and `sampler.rs`. *Test:* a million (pixel, sample, dimension) triples give identical `u32` on both.
+
+**R2.4 The differential harness.**
+A helper, `run_wgsl(function, inputs) -> outputs`, that wraps any WGSL function in a generated compute shader over two buffers. Every later port uses it: random inputs from the existing χ² and furnace tests' ranges, the Rust function as the oracle, agreement to 1e-4 relative (1e-6 absolute near zero). The Linux CI job installs Mesa's software Vulkan driver (`mesa-vulkan-drivers`) and sets `TEQUILA_REQUIRE_GPU_TESTS=1`, under which a missing adapter is a failure, not a skip. This pull request also amends invariant 3 (D2).
+
+**R2.5 First transport.**
+Camera (perspective, thin lens), instanced triangles, one grey diffuse surface for everything, the environment sampled by its existing tables (`environment.rs`) with next-event estimation and MIS, Russian roulette and the bounce limit as `integrator.rs` has them. Samples go back to `Framebuffer` (D8).
+
+**R2.6 The parity test.**
+`Headphones` with every material grey diffuse under the sample HDRI, 256 samples, fixed seed: mean absolute difference under 0.002 in scene-linear, and at most 0.1% of pixels more than 0.02 apart (those are silhouette pixels where the two intersectors round differently; `docs/01` §10.4's "no pixel" becomes this, in the same pull request).
+
+*Exit:* R2.6 passes on both machines; `tequila -i Headphones.tequila --engine tequila --device GPU` writes the picture (`--device` is read only for Cycles today); R0.1 has a first graphics-card row.
+
+### R3 — Everything the processor renderer does (L)
+
+Each item is: port to WGSL, differential tests for its functions (R2.4), its scene added to the parity set (R0.3) and passing R2.6's tolerance. Tiers are by how many pictures need the thing.
+
+**Tier A — most pictures.**
+- The graph interpreter: the twelve instruction kinds, registers as a fixed array in path state (`shade.rs`, `graph.rs`).
+- Image textures through texture binding arrays; the texture nodes; then the procedural nodes one family per pull request (`nodes.rs`, and `tequila-render-core/tests` `finishes`, `patterns`, `tiles`, `stochastic` as their oracles).
+- The surface: EON diffuse, GGX dielectric and conductor with the energy tables of `energy.rs` as textures, coat, the LTC sheen with its table, rough transmission, thin walls, thin film, flakes, anisotropy, emission, cutout opacity (`lobes/`, `openpbr.rs`). The χ² suite (`tests/analytic/tests/chi_squared.rs`) is run against the WGSL lobes through R2.4.
+- Bump and normal maps (`surface_bump.rs`).
+- Lights: rectangle and disc by spherical-rectangle sampling, point, spot, IES, distant; the alias table and the light hierarchy; emissive triangles and their tree; light and shadow linking; visibility flags (`light.rs`, `emitters.rs`, `ies.rs`).
+- The ground, the shadow catcher, holdout, the floor reflection as an extra lane, backplate, colour and dome backgrounds, pins (`environment.rs`, `pins.rs`, `tequila-render-cpu/src/floor.rs`).
+
+**Tier B — glass, liquids, skin, colour.**
+- The media stack (depth four), homogeneous absorption and scattering, the first-glass split as an extra lane.
+- Subsurface: the random walk in bounded chunks.
+- Spectral mode: four wavelengths in place of three channels, the Jakob–Hanika table (`spectral.rs`) as a 3D texture, the hero wavelength alone after a dispersive refraction.
+- Rounded edges (`bevel.rs`): probe rays inline. First match the processor (camera's first hit only). Then measure rounding at every bounce on the card; if it costs under 10%, turn it on for both renderers' pictures to agree with what Cycles showed in reflections, and say so in `docs/01`.
+- Cutaways, projected labels, tri-planar and object-space mapping.
+
+**Tier C — the rest.**
+- Fibres: curves as procedural boxes in the acceleration structure with the ribbon test in the candidate loop, and the Chiang lobe (`lobes/fibre.rs`).
+- Heterogeneous media: the OpenVDB grid as a 3D texture, null-collision tracking in bounded chunks (`density.rs`).
+- Manifold caustics (`integrator/manifold.rs`).
+- Passes: the light-path matcher as a table in path state (`lpe.rs`, `aov.rs`), the data passes, Cryptomatte, light groups; denoiser guides.
+- Regions and render layers.
+
+**Tier D — stays on the processor (D9):** photon caustics, composited.
+
+*Exit:* the whole parity set within tolerance on both machines; `every_material_renders` on the card; all library presets, card against processor, correlate at 0.99 or better; G1.1 holds on both machines. If G1.1 does not hold, now is when to add compaction and path regeneration (D5) and to profile the kernels.
+
+### R4 — In the app (M)
+
+- **R4.1 The engine list.** `RenderEngine` (`tequila-scene/src/render.rs`) gains `TequilaGpu`, key `tequila-gpu`, label "Tequila (graphics card)", marked experimental in the Render window and on the viewport's chip.
+- **R4.2 Final renders.** `batch::engine_for` and the fallback at `batch.rs` already step down from Cycles on the card to Cycles on the processor to Tequila; add the step from Tequila on the card to Tequila on the processor. Because both make the same picture, the fallback is silent apart from a line in the job's note.
+- **R4.3 The Rendered view.** The render thread in `orchestrator.rs` drives the card's renderer through the same resolution ladder. An edit costs what it changes: a material is a buffer write (target: under 50 ms from drop to picture, `docs/01` §15); a moved part is a new TLAS; changed geometry rebuilds that mesh's BLAS only.
+- **R4.4 Never a silent wait.** The processor draws the view from the first frame; the card takes over at a pass boundary once its pipelines exist. The "preparing" note of #161 (`CyclesView::overdue`, `EngineNote::Preparing`) covers any card step over a second. Tests: a device made with a pipeline that sleeps still shows a processor picture within 1 s; a lost device mid-render falls back and finishes.
+- **R4.5 Memory.** Estimate the scene's card memory before upload; over budget, stay on the processor and say so in the view (`docs/01` §10.3).
+- **R4.6 Readback.** Measure it. Only if it limits the frame rate, accumulate on the card with the film's own mathematics and a differential test against `Framebuffer`.
+- **R4.7 The self-test.** `tequila --self-test` gains an entry per adapter for Tequila on the card. Its reference is the processor's reference: one picture, not one per engine.
+
+*Exit:* G1.6 on both machines; the Rendered view on the card orbits at 60 pictures a second or better on the RTX 2060 at 1080p (`docs/01` §15) and reaches a clean picture no later than Cycles does today (0.3–0.5 s, `docs/01` §9). Ship it as experimental in a feature update and ask for self-test reports.
+
+### R5 — Every card Cycles serves today (M)
+
+- **R5.1 The processor-built tree.** A wide BVH built on the processor (evaluate the `obvhs` crate and its licence before writing one), flattened to buffers, traversed in WGSL behind D6's interface; fibres and cutouts as leaf kinds. Parity against the ray-query path on the whole parity set.
+- **R5.2 Choosing.** Where both exist, time each for one second in the self-test and remember the faster in Preferences.
+- **R5.3 The device matrix.** A self-test report that passes, gathered from users through the experimental release, for each of: NVIDIA RTX; NVIDIA GTX 10 and 16 series; AMD with and without ray-tracing hardware; Intel Arc; Intel integrated; Apple M1 or M2; Apple M3 or later; macOS 14; an Intel Mac; Linux on Mesa. A class with no report is neither passed nor failed: say which are missing.
+- **R5.4 Several cards.** One renderer per adapter, each given its own tiles, all feeding the one film (D8).
+
+*Exit:* G1.5.
+
+### R6 — Tequila becomes the default (S)
+
+- **R6.1 Settings keep their meaning.** In both of Tequila's backends: bounce limits per kind (diffuse, glossy, transmission, volume) beside the existing total and transmission limits; Filter Glossy mapped onto the existing roughness regularisation; direct and indirect clamps apart (`RenderSettings::clamp_direct` is passed to Cycles only today); the two caustics switches mapped onto Tequila's caustics settings. The "Advanced (Cycles)" fold in `app/src/lighting_tab.rs` and `render_window.rs` loses the word Cycles.
+- **R6.2 The look sheet.** For the R0.2 set plus twenty library materials on the owner's own models: Cycles (from the archive), Tequila on the card, and their difference, side by side on one page. The owner decides (G1.4).
+- **R6.3 The switch.** `RenderEngine`'s default becomes `TequilaGpu`. A project saved with `cycles-gpu` or `cycles-cpu` opens with Tequila unless Preferences says "Use Cycles (legacy)". The CLI, farm and network keep accepting `cycles` and say what they used instead.
+
+*Exit:* G1, and the owner's word.
+
+### R7 — Cycles is removed (M)
+
+After G2. In one pull request per bullet:
+- The engine: `native/cycles`, `crates/tequila-render-cycles`, `app/src/cycles_view.rs`, the Cycles arms in `orchestrator.rs`, `batch.rs`, `render_window.rs`, `lighting_tab.rs`, `main.rs`, `tequila-cli` and `self_test.rs`.
+- The build: the Cycles steps and kernel downloads in `.github/workflows/release-*.yml`, `scripts/package-*`, `native/cycles/build-cycles.*`.
+- The tests: each of the dual-engine tests in `batch.rs` either becomes a comparison against the R0.2 archive, where it guards a look, or goes.
+- The documents: `docs/01` §10's and `docs/05` M9's notes rewritten as built; `docs/MACOS_PORT.md`; `THIRD_PARTY_LICENSES.md` loses the Cycles library but **keeps "Ported code and data"**, since the algorithms ported from Cycles remain.
+- Project files and the command line go on reading the `cycles` keys.
+
+*Test:* installer size and release build time before and after, stated in the release notes.
+
+---
+
+## 5. Tests this plan adds
+
+| Test | Asserts | Runs |
+|---|---|---|
+| WGSL validates | every module compiles through naga to SPIR-V and MSL | CI, no card |
+| Layouts | struct sizes and offsets equal in Rust and WGSL | CI, no card |
+| Sampler | bit-exact random numbers | CI, software Vulkan |
+| Differential | each WGSL function against its Rust twin, 1e-4 | CI, software Vulkan |
+| χ² on the card | the existing sampling tests against the WGSL lobes | CI, software Vulkan |
+| Parity set | card against processor, 0.002 mean, 0.1% of pixels over 0.02 | both machines, each pull request |
+| Library | all presets correlate 0.99, card against processor | both machines, R3 exit and after |
+| Look archive | any engine against Cycles' recorded look | on request, R6.2 and after R7 |
+| Bench | the gates' numbers | both machines, each stage exit |
+| Never a silent wait | first picture within 1 s; fallback on a lost device | CI |
+| Self-test | the card's picture is the processor's | users' machines |
+
+Hosted CI machines have no graphics card and vary too much to gate speed. Speed is measured on the two reference machines and recorded in `docs/05` §4 at each stage exit.
+
+---
+
+## 6. Working rules
+
+### 6.1 The repository's
+- `docs/SPEC-README.md` invariants; `docs/05` §0 and §2. Analytic test before the feature.
+- Algorithms come from published literature or permissively licensed code (`docs/TEQUILA_SPEC.md` legal rules); anything ported is recorded in `THIRD_PARTY_LICENSES.md`.
+- Reference images change only in a commit that says why (`docs/05` §3.4).
+- No repository-wide `cargo fmt`.
+
+### 6.2 The owner's
+- Nothing merges and nothing is released without the owner's word. Feature updates go out every second Saturday; fixes any day.
+- The owner judges the look. A passing test is not "it looks right".
+- Reports to the owner carry pictures.
+
+### 6.3 Machines
+- An Apple-silicon Mac (Metal), where the work is done.
+- A Ryzen 7 2700X with an RTX 2060 on Windows (Vulkan), which runs checks on request: ask for `scripts/bench/run.py` and the parity set by name, and for a cold-cache run whenever a pipeline changes.
+
+### 6.4 Risks, and what to do when one bites
+
+| Risk | Sign | Then |
+|---|---|---|
+| wgpu's ray queries are experimental and change between releases | a wgpu upgrade breaks the build or a picture | pin wgpu; upgrade in its own pull request with the parity set as the gate |
+| Metal ray-query bugs | wrong or missing geometry on the Mac only | R5.1's tree on the Mac; report upstream |
+| The two implementations drift | a differential test fails | fix the WGSL to match Rust, never the tolerance |
+| Slow first pipeline compile on some driver | R4.4's cold test over 5 s | split the kernel into smaller pipelines; keep the processor's picture up meanwhile |
+| The card's memory runs out | allocation fails or the device is lost | R4.5's estimate; fall back; never crash |
+| The card is not as fast as OptiX | G1.1 fails at R3 exit | compaction, regeneration, kernel profiling; if still short, bring the numbers to the owner, who may accept a smaller margin |
+| A lane's state outgrows memory | card memory at 1080p above 1 GB for path state | trace in tiles of lanes; it is already how big renders must work |
+
+### 6.5 Where the hard parts are
+
+R2.0 to R3 tier B are design-heavy: a subtle mistake there costs days, and they deserve the most careful session. R0, R1, R3's node families and R4 to R7 are well specified by their tests. The pull request that added this document says which model and effort were suggested for each.
+
+---
+
+## 7. Starting
+
+1. Read this, then `docs/01` §3–§10 and `docs/05` §3.
+2. R0.1, R0.2, R0.3, each its own pull request; then R0.4, palma P8 first.
+3. R2.0's spike on both machines, which can run while R0.4 is being worked; bring its four numbers to the owner before R2.1.
+4. R1 can start as soon as R0.1 has numbers, in a session of its own.
+5. R3 does not start on a feature whose look R0.4 still has open.
+
+## 8. After Cycles (not part of the goal)
+
+Blue-noise sampling for a better picture at few samples; photon caustics on the card; accumulation and denoising on the card without a round trip; portals (`interior_mode` is read by nothing in the integrator today); motion blur; textured area lights; next-event estimation in media that are not index-matched; path guiding. Each is a way to be better than Cycles was; none is needed to stop needing it.

@@ -14,6 +14,7 @@ These documents are a **complete build specification**, not marketing material. 
 | **[docs/03-SCENE-AND-IO.md](docs/03-SCENE-AND-IO.md)** | Scene graph data model, instancing, units, the `.tequila` file format (with schema), import pipeline (OCCT/Assimp/USD) with tessellation rules, export, LiveLinking protocol. | Milestones M1, M8. |
 | **[docs/04-UX-SPEC.md](docs/04-UX-SPEC.md)** | Exact interaction semantics: window layout, drag-and-drop material application (including the material-linking model that everything depends on), selection, gizmos, hotkeys, node editor, undo/redo command catalog, HUD. | Milestones M1–M6. |
 | **[docs/05-ROADMAP-AND-TESTING.md](docs/05-ROADMAP-AND-TESTING.md)** | Milestones broken into issue-sized tasks with explicit acceptance criteria, plus the full correctness/perf test strategy (furnace tests, χ² BSDF sampling tests, golden images, backend parity, determinism). | Continuously. This is your task list. |
+| **[docs/07-OWN-GPU-RENDERER.md](docs/07-OWN-GPU-RENDERER.md)** | The plan for running Tequila's own renderer on the graphics card and retiring Cycles: the gates, the decisions taken, and the stages in order, each with its test. | Before any work on the renderer's backends or on Cycles. |
 
 ## The one-paragraph version
 
