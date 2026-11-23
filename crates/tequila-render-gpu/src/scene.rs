@@ -103,6 +103,22 @@ pub const INSTANCE_STAND_IN: u32 = 1;
 /// [`GpuInstance::flags`]: the part casts shadows (`Instance::casts_shadows`):
 /// a shadow ray's walk through glass passes one that does not.
 pub const INSTANCE_CASTS_SHADOWS: u32 = 2;
+/// [`GpuInstance::flags`]: the camera does not see the part
+/// (`!Instance::visible_to_camera`): its ray, and its coverage's walk, go
+/// straight through.
+pub const INSTANCE_NO_CAMERA: u32 = 4;
+/// Diffuse bounces do not see it (`!Instance::seen_by_diffuse`).
+pub const INSTANCE_NO_DIFFUSE: u32 = 8;
+/// Glossy bounces, the reflection split off glass and the floor's mirror do
+/// not see it (`!Instance::seen_by_glossy`).
+pub const INSTANCE_NO_GLOSSY: u32 = 16;
+/// Paths through glass do not see it (`!Instance::seen_by_transmission`).
+pub const INSTANCE_NO_TRANSMISSION: u32 = 32;
+/// Held out (`Instance::holdout`): where the camera sees it, a hole in the
+/// picture, nothing and no alpha.
+pub const INSTANCE_HOLDOUT: u32 = 64;
+/// Any of those: a part some ray passes, or held out.
+pub const INSTANCE_UNSEEN: u32 = INSTANCE_NO_CAMERA | INSTANCE_NO_DIFFUSE | INSTANCE_NO_GLOSSY | INSTANCE_NO_TRANSMISSION | INSTANCE_HOLDOUT;
 
 /// The top-level structure's instance masks, as Embree's geometry masks are
 /// (`tequila-render-cpu`'s `embree.rs`): every instance a surface, and the
@@ -319,7 +335,18 @@ impl GpuScene {
                     instance: n as u32,
                     catcher,
                     light: inst.light.unwrap_or(NO_LIGHT),
-                    flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 } | if inst.casts_shadows { INSTANCE_CASTS_SHADOWS } else { 0 },
+                    flags: [
+                        (inst.light_proxy, INSTANCE_STAND_IN),
+                        (inst.casts_shadows, INSTANCE_CASTS_SHADOWS),
+                        (!inst.visible_to_camera, INSTANCE_NO_CAMERA),
+                        (!inst.seen_by_diffuse, INSTANCE_NO_DIFFUSE),
+                        (!inst.seen_by_glossy, INSTANCE_NO_GLOSSY),
+                        (!inst.seen_by_transmission, INSTANCE_NO_TRANSMISSION),
+                        (inst.holdout, INSTANCE_HOLDOUT),
+                    ]
+                    .into_iter()
+                    .filter(|(on, _)| *on)
+                    .fold(0, |flags, (_, flag)| flags | flag),
                     solid: n as u32,
                     emitter: emitter_first.get(n).copied().unwrap_or(crate::emitters::EMITTER_NONE),
                     object_color: [inst.colour.r, inst.colour.g, inst.colour.b, 0.0],

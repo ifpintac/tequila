@@ -317,7 +317,6 @@ struct GlassScene {
     flakes: bool,
     scattering: bool,
     volume_maps: bool,
-    unseen_parts: bool,
     folded_glass: bool,
     cutouts: bool,
 }
@@ -357,10 +356,6 @@ impl GlassScene {
             flakes: any(&|m| m.flake_weight > 1e-4),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
-            unseen_parts: scene
-                .instances
-                .iter()
-                .any(|i| !i.visible_to_camera || !i.seen_by_diffuse || !i.seen_by_glossy || !i.seen_by_transmission || i.holdout),
             folded_glass: folded,
             cutouts: scene.has_cutouts(),
         }
@@ -405,9 +400,6 @@ impl GlassScene {
         }
         if self.flakes {
             limits.push("metallic flakes are left out");
-        }
-        if self.unseen_parts {
-            limits.push("a part hidden from some rays, or held out, is seen by every ray");
         }
         if self.folded_glass {
             limits.push("glass whose graph sets its transmission is a medium as its graph's constants have it");
@@ -599,8 +591,6 @@ fn kept_kernel(device: &wgpu::Device, layout: &wgpu::PipelineLayout, features: K
 struct FloorScene {
     catcher: bool,
     catcher_shadows: bool,
-    lamps: bool,
-    shadowless_parts: bool,
 }
 
 impl FloorScene {
@@ -608,8 +598,6 @@ impl FloorScene {
         FloorScene {
             catcher: scene.instances.iter().any(|i| i.shadow_catcher.is_some()),
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
-            lamps: !scene.lights.lights().is_empty(),
-            shadowless_parts: scene.has_shadowless_parts(),
         }
     }
 
@@ -619,12 +607,6 @@ impl FloorScene {
             return limits;
         }
         let shadows = config.shadows && self.catcher_shadows;
-        if shadows && self.lamps {
-            limits.push("the floor's shadows are the sky's alone: the lamps cast none on it");
-        }
-        if self.shadowless_parts {
-            limits.push("a part that casts no shadow shadows the floor all the same");
-        }
         if config.caustics && shadows {
             limits.push("no caustics on the floor");
         }
@@ -800,7 +782,8 @@ impl GpuRenderer {
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
-        let lights = GpuLights::upload(device, &LightRecords::of(scene));
+        let light_records = LightRecords::of(scene);
+        let lights = GpuLights::upload(device, &light_records);
         let materials = wgpu::util::DeviceExt::create_buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
@@ -891,6 +874,11 @@ impl GpuRenderer {
             instances: &uploaded.instance_records,
             meshes: &uploaded.mesh_records,
             lamps: lights.count,
+            lamp_flags: light_records.lights.iter().fold(0, |flags, l| flags | l.flags),
+            lamps_met_past: light_records.lights.iter().any(|l| {
+                use crate::lights::{FLAG_CAN_BE_MET, FLAG_SHADOW, FLAG_SHADOW_LINKS_ALL_BUT, FLAG_SHADOW_LINKS_ONLY};
+                l.flags & FLAG_CAN_BE_MET != 0 && (l.flags & FLAG_SHADOW == 0 || l.flags & (FLAG_SHADOW_LINKS_ONLY | FLAG_SHADOW_LINKS_ALL_BUT) != 0)
+            }),
             emitters: has_emitters,
             glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 } | background_flags,
         });

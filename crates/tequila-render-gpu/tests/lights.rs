@@ -480,3 +480,219 @@ fn a_lamps_links_are_the_processors() {
     assert_eq!(out, want, "the card's light links differ");
     println!("{} lamps' links asked about {} instances each: all the processor's", set.len(), 48);
 }
+
+/// Shadow linking on the card (`lamp_casts`) against `LightLinks::lights` of
+/// a lamp's shadow links, beside its light links in the same buffer
+/// (`lamp_lights`): lamps whose shadows only some instances cast, or all but
+/// some, with light links of their own or none, asked about instances in
+/// their lists and out of them.
+#[test]
+fn a_lamps_shadow_links_are_the_processors() {
+    use tequila_render_core::light::LightLinks;
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(53, 1);
+    let list = |rng: &mut Pcg32| -> LightLinks {
+        let mut these: Vec<u32> = (0..(rng.next_f32() * 9.0) as usize).map(|_| (rng.next_f32() * 40.0) as u32).collect();
+        these.sort_unstable();
+        these.dedup();
+        match rng.next_f32() {
+            x if x < 0.2 => LightLinks::All,
+            x if x < 0.6 => LightLinks::Only(these.into()),
+            _ => LightLinks::AllBut(these.into()),
+        }
+    };
+    let mut lights = Vec::new();
+    for _ in 0..16 {
+        let mut light = lamp(&mut rng);
+        light.links = list(&mut rng);
+        light.shadow_links = list(&mut rng);
+        lights.push(light);
+    }
+    let set = LightSet::with_strategy(lights, SelectionStrategy::Alias);
+    let records = LightRecords::of_set(&set);
+    let (mut inputs, mut want) = (Vec::new(), Vec::new());
+    for (i, light) in set.lights().iter().enumerate() {
+        for instance in 0..48u32 {
+            inputs.extend([i as u32, instance]);
+            want.extend([light.links.lights(instance) as u32, light.shadow_links.lights(instance) as u32]);
+        }
+    }
+    let links = if records.links.is_empty() { vec![0] } else { records.links.clone() };
+    let out = h.run_wgsl_with(
+        &["lamps"],
+        "let l = scene_lights[inp(0u)];
+         out(0u, select(0u, 1u, lamp_lights(l, inp(1u))));
+         out(1u, select(0u, 1u, lamp_casts(l, inp(1u))));",
+        &inputs,
+        2,
+        2,
+        &[(8, bytemuck::cast_slice(&records.lights)), (9, &[0u32; 16]), (10, &links)],
+    );
+    assert_eq!(out, want, "the card's light or shadow links differ");
+    println!("{} lamps' light and shadow links asked about {} instances each: all the processor's", set.len(), 48);
+}
+
+/// One of the parity set's photometric profiles, or a random one: a few to
+/// a dozen vertical angles over the downward half or the whole range, one
+/// horizontal angle or a quadrant's, a half's or a whole turn's, candela
+/// values anywhere from nought to a few thousand.
+fn profile(rng: &mut Pcg32) -> std::sync::Arc<tequila_render_core::ies::IesProfile> {
+    let pick = rng.next_f32();
+    if pick < 0.3 {
+        let path = tequila_scene::parity::PROFILES[(rng.next_f32() * 3.0) as usize % 3];
+        return std::sync::Arc::new(tequila_scene::parity::parity_profile(path).expect("the set's profile"));
+    }
+    let nv = 2 + (rng.next_f32() * 11.0) as usize;
+    let top = if rng.next_f32() < 0.5 { 90.0 } else { 180.0 };
+    let vertical: Vec<f32> = (0..nv).map(|i| top * i as f32 / (nv - 1) as f32).collect();
+    let span = match rng.next_f32() {
+        x if x < 0.25 => 0.0,
+        x if x < 0.5 => 90.0,
+        x if x < 0.75 => 180.0,
+        _ => 360.0,
+    };
+    let nh = if span == 0.0 { 1 } else { 2 + (rng.next_f32() * 6.0) as usize };
+    let horizontal: Vec<f32> = (0..nh).map(|i| if nh == 1 { 0.0 } else { span * i as f32 / (nh - 1) as f32 }).collect();
+    let mut text = String::from("IESNA:LM-63-2002\nTILT=NONE\n");
+    text.push_str(&format!("1 -1 1 {nv} {nh} 1 2 0 0 0\n1 1 100\n"));
+    for v in &vertical {
+        text.push_str(&format!("{v} "));
+    }
+    text.push('\n');
+    for h in &horizontal {
+        text.push_str(&format!("{h} "));
+    }
+    text.push('\n');
+    for _ in 0..nv * nh {
+        let value = if rng.next_f32() < 0.1 { 0.0 } else { rng.next_f32() * 3000.0 };
+        text.push_str(&format!("{value} "));
+    }
+    // Every value nought is no profile: one is always lit.
+    text.push_str("\n");
+    match tequila_render_core::ies::IesProfile::parse(&text) {
+        Ok(profile) => std::sync::Arc::new(profile),
+        Err(_) => std::sync::Arc::new(tequila_scene::parity::parity_profile(tequila_scene::parity::PROFILES[0]).expect("the set's profile")),
+    }
+}
+
+/// An IES lamp at a random place, aimed anywhere, turned anyhow about its
+/// aim, a random profile.
+fn ies_lamp(rng: &mut Pcg32) -> Light {
+    use tequila_render_core::light::IesLight;
+    let direction = unit_vector(rng);
+    let helper = if direction.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let right = direction.cross(helper).normalize();
+    let mut light = Light::new(LightKind::Ies(IesLight { position: point(rng, 2.0), direction, right, intensity: colour(rng) * 0.01, profile: profile(rng) }));
+    light.enabled = rng.next_f32() < 0.95;
+    light.visibility.diffuse = rng.next_f32() < 0.9;
+    light
+}
+
+/// An IES lamp on the card (`lamps.wgsl`'s `lamp_sample`, through the
+/// profile its links buffer holds) against `Light::sample`: the direction,
+/// the radiance through the profile's candela towards it, the distance; and
+/// a lamp of any other kind through `lamp_sample` as `light_sample` has it.
+/// The profile's angles go through the card's arc cosine and arctangent.
+#[test]
+fn an_ies_lamp_is_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(59, 1);
+    const SETS: usize = 20;
+    const QUERIES: usize = 1000;
+    let (mut lit, mut total) = (0, 0);
+    for set_index in 0..SETS {
+        let lights: Vec<Light> = (0..6).map(|i| if i % 3 == 2 { lamp(&mut rng) } else { ies_lamp(&mut rng) }).collect();
+        let set = LightSet::with_strategy(lights, SelectionStrategy::Alias);
+        let records = LightRecords::of_set(&set);
+        let links = if records.links.is_empty() { vec![0] } else { records.links.clone() };
+        let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..QUERIES {
+            let index = (rng.next_f32() * set.len() as f32) as usize % set.len();
+            let light = &set.lights()[index];
+            let from = point(&mut rng, 3.0);
+            let u = vec2(rng.next_f32(), rng.next_f32());
+            inputs.extend([index as u32]);
+            inputs.extend(bits(&[from.x, from.y, from.z, u.x, u.y]));
+            let mut e = match light.sample(from, u) {
+                Some(s) => {
+                    lit += 1;
+                    let infinite = s.distance.is_infinite();
+                    vec![1.0, s.direction.x, s.direction.y, s.direction.z, s.radiance.r, s.radiance.g, s.radiance.b, if infinite { 0.0 } else { s.distance }, s.pdf, s.is_delta as u8 as f32]
+                }
+                None => vec![0.0; 10],
+            };
+            // As in `each_lamp_is_the_processors`: a panel's ill-conditioned
+            // samples are not compared.
+            if let LightKind::Area(a) = &light.kind {
+                if e[0] != 0.0 && (e[8] > 1e3 || vec3(e[1], e[2], e[3]).dot(a.normal()).abs() < 0.02) {
+                    for word in &mut e[1..9] {
+                        *word = f32::NAN;
+                    }
+                }
+            }
+            want.push(e);
+            cases.push(format!("set {set_index} lamp {index} {:?} from {from:?} u {u:?}", light.kind));
+        }
+        let body = "let l = scene_lights[inp(0u)];
+             let s = lamp_sample(l, vec3<f32>(inf(1u), inf(2u), inf(3u)), vec2<f32>(inf(4u), inf(5u)));
+             if (s.ok) {
+                 outf(0u, 1.0);
+                 outf(1u, s.direction.x); outf(2u, s.direction.y); outf(3u, s.direction.z);
+                 outf(4u, s.radiance.x); outf(5u, s.radiance.y); outf(6u, s.radiance.z);
+                 outf(7u, select(s.distance, 0.0, s.infinite)); outf(8u, s.pdf); outf(9u, select(0.0, 1.0, s.is_delta));
+             } else {
+                 for (var k = 0u; k < 10u; k++) { outf(k, 0.0); }
+             }";
+        let out = h.run_wgsl_with(&["lamps"], body, &inputs, 6, 10, &[(8, bytemuck::cast_slice(&records.lights)), (9, &[0u32; 16]), (10, &links)]);
+        use Kind::*;
+        let s = Some(0);
+        let words = [(Flag, None), (Direction, s), (Direction, s), (Direction, s), (Sampled, s), (Sampled, s), (Sampled, s), (Sampled, s), (Sampled, s), (Flag, s)];
+        compare("IES lamp_sample", &out, &want, &words, &cases);
+        total += QUERIES;
+    }
+    println!("{SETS} sets of IES lamps among others, {lit} of {total} samples lit");
+}
+
+/// A lamp's bound onto a point (`lamps.wgsl`'s `light_irradiance_bound`,
+/// the floor's shadow's rejection) against `Light::irradiance_bound`: every
+/// kind, IES lamps among them, at random points facing random ways.
+#[test]
+fn a_lamps_bound_onto_a_point_is_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(61, 1);
+    const SETS: usize = 20;
+    const QUERIES: usize = 1000;
+    let (mut lit, mut total) = (0, 0);
+    for set_index in 0..SETS {
+        let lights: Vec<Light> = (0..8).map(|i| if i % 4 == 3 { ies_lamp(&mut rng) } else { lamp(&mut rng) }).collect();
+        let set = LightSet::with_strategy(lights, SelectionStrategy::Alias);
+        let records = LightRecords::of_set(&set);
+        let links = if records.links.is_empty() { vec![0] } else { records.links.clone() };
+        let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..QUERIES {
+            let index = (rng.next_f32() * set.len() as f32) as usize % set.len();
+            let light = &set.lights()[index];
+            let at = point(&mut rng, 3.0);
+            let normal = unit_vector(&mut rng);
+            inputs.extend([index as u32]);
+            inputs.extend(bits(&[at.x, at.y, at.z, normal.x, normal.y, normal.z]));
+            let bound = light.irradiance_bound(at, normal);
+            if bound > 0.0 {
+                lit += 1;
+            }
+            want.push(vec![bound]);
+            cases.push(format!("set {set_index} lamp {index} {:?} at {at:?} normal {normal:?}", light.kind));
+        }
+        let out = h.run_wgsl_with(
+            &["lamps"],
+            "outf(0u, light_irradiance_bound(scene_lights[inp(0u)], vec3<f32>(inf(1u), inf(2u), inf(3u)), vec3<f32>(inf(4u), inf(5u), inf(6u))));",
+            &inputs,
+            7,
+            1,
+            &[(8, bytemuck::cast_slice(&records.lights)), (9, &[0u32; 16]), (10, &links)],
+        );
+        compare("Light::irradiance_bound", &out, &want, &[(Kind::Sampled, None)], &cases);
+        total += QUERIES;
+    }
+    println!("{SETS} sets of lamps, {lit} of {total} bounds over nought");
+}

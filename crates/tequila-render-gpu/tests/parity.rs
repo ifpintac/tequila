@@ -301,6 +301,45 @@ fn a_dome_of_a_size_is_the_processors_picture() {
     same_picture("finite_dome");
 }
 
+/// Parts hidden from some rays, and one held out: passed by those rays and
+/// by the camera's coverage, a hole where the camera sees the held-out one.
+#[test]
+fn hidden_parts_are_the_processors_picture() {
+    same_picture("hidden_parts");
+}
+
+/// Shadow links: a lamp's shadow cast by the parts its links name, or all
+/// but those; a panel met past a part its shadow rays pass.
+#[test]
+fn shadow_links_are_the_processors_picture() {
+    same_picture("shadow_links");
+}
+
+/// Parts that cast no shadow, and a lamp that casts none: the light past
+/// them met where a bounce stops at them; a floor's nearness past them.
+#[test]
+fn parts_that_cast_no_shadow_are_the_processors_picture() {
+    same_picture("shadowless_parts");
+}
+
+/// The floor's shadows from lamps of every kind.
+#[test]
+fn the_floors_shadows_from_lamps_are_the_processors_picture() {
+    same_picture("floor_lamps");
+}
+
+/// IES lamps: three profiles on a point, a spot and a panel.
+#[test]
+fn ies_lamps_are_the_processors_picture() {
+    same_picture("ies_lamps");
+}
+
+/// Direct lighting off: lights found by bounces alone, weighed whole.
+#[test]
+fn direct_lighting_off_is_the_processors_picture() {
+    same_picture("direct_off");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]

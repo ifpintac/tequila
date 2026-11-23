@@ -94,7 +94,7 @@ fn records_have_one_layout_on_both_sides() {
         GpuLight {
             position, half_u, half_v, normal, radiance, rect_x, rect_y, rect_z, rect_origin, kind, flags, tan_half,
             spread_norm, falloff, fade, cos_a, cos_b, exponent, probability, alias_p, alias_alt, leaf, links, link_count,
-            _pad,
+            shadow_link_count,
         }
     );
     layout!(&module, GpuLightNode { centre, axis, cos_o, sin_o, cos_e, distant, left, right, parent, light });

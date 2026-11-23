@@ -57,12 +57,18 @@ impl ParityScene {
         (self.lens)(product_camera(document, self.width as f32 / self.height as f32))
     }
 
-    /// A cache to snapshot the scene through, holding its pictures: the
-    /// snapshot takes them from it as it would a file's.
+    /// A cache to snapshot the scene through, holding its pictures and the
+    /// set's photometric profiles ([`parity_profile`]): the snapshot takes
+    /// them from it as it would a file's.
     pub fn cache(&self) -> crate::snapshot::MeshCache {
         let mut cache = crate::snapshot::MeshCache::new();
         for (id, texture) in (self.pictures)() {
             cache.insert_texture(id, Arc::new(texture));
+        }
+        for path in PROFILES {
+            if let Some(profile) = parity_profile(path) {
+                cache.insert_photometry(path, Arc::new(profile));
+            }
         }
         cache
     }
@@ -495,7 +501,354 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: finite_dome,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "hidden_parts",
+    covers: "R3 tier A, visibility flags and holdout: the Headphones' floor with a glass ball and a chrome one \
+             before the product, and five parts standing clear of everything: a ball hidden from the camera \
+             (seen in the chrome, gone from the floor's mirror and from the camera's coverage), one hidden from \
+             reflections, a block from diffuse bounces, a ball behind the glass from paths through it, and one \
+             held out - a hole with no alpha where the camera sees it, black in the floor's mirror",
+
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: hidden_parts,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shadow_links",
+    covers: "R3 tier A, shadow linking: lamp_lit with the key's shadow left off the body, the rim spot's shadow \
+             cast by the feet and the buttons alone, and a point lamp at the side whose shadow the bezel does not \
+             cast - shadow rays walking the parts rather than asking whether any is in the way, and the key, a \
+             panel a ray can meet, met past the body by the bounces that stop at it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: shadow_links,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shadowless_parts",
+    covers: "R3 tier A, the light past a part its shadow rays pass: the studio floor (occlusion, a bounce, a \
+             reflection fading by distance measured past such parts) under the sky, a key panel and a fill disc \
+             that casts no shadow; a glossy ball and a chrome one casting none before the product, and a card \
+             casting none between a glowing panel and the product - the lamps met past them by a seeing bounce \
+             that stops at them, and the sky and the glow past them by a bounce weighed against the light \
+             samples",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: shadowless_parts,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "floor_lamps",
+    covers: "R3 tier A, the floor's shadows from the lamps: product_floor under the sky, a key panel, a spot, a \
+             point with a radius, a sun with a disc, a spot whose shadow the feet alone cast, a point that casts \
+             none and a disc that lights the product alone - each drawn for the floor's shadow by its bound onto \
+             the point, kept or not against it, its shadow ray through its shadow links",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: floor_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "ies_lamps",
+    covers: "R3 tier A, IES lamps: product_floor under a dim sky, lit by a downlight's profile on a point lamp \
+             above, an asymmetric profile measured over a quadrant on a spot at the side (folded into the other \
+             three), and one over a half on a panel facing down - light samples, the light hierarchy's choice, \
+             and the floor's shadows from them",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: ies_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "direct_off",
+    covers: "R3 tier A, direct lighting off: lamps_in_view with its feet glowing and the lights sampled by \
+             nothing - the sky and the glows found by bounces alone and weighed whole, the lamps lighting nothing \
+             and their stand-ins shown wherever the camera sees along",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: direct_off,
+    lens: framed,
+    pictures: no_pictures,
 }];
+
+/// A lamp added to `document`: its name, its settings and its place.
+fn add_lamp(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, settings: crate::lighting::LightSettings, transform: Transform) {
+    let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+    bus.apply(document, Command::AddLight { parent: None, name: name.into(), settings: Box::new(settings) }).expect("a lamp");
+    let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+    bus.apply(document, Command::set_transform(id, transform)).expect("the lamp placed");
+}
+
+/// `document`'s lamp called `name`, its settings changed by `change`.
+fn change_lamp(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, change: &dyn Fn(&mut crate::lighting::LightSettings)) {
+    let node = document.tree.iter().find(|n| n.name == name && n.kind.light().is_some()).expect("the lamp");
+    let id = node.id;
+    let mut settings = node.kind.light().expect("a lamp").clone();
+    change(&mut settings);
+    bus.apply(document, Command::SetLight { node: id, settings: Box::new(settings) }).expect("the lamp is set");
+}
+
+/// Shadow links naming the parts wearing the materials `names`: the only
+/// parts that cast the lamp's shadow, or with `exclude` the parts that do
+/// not.
+fn shadow_linked(document: &SceneDocument, names: &[&str], exclude: bool) -> Option<crate::lighting::LightLinking> {
+    let nodes = names.iter().flat_map(|name| parts_named(document, name)).collect();
+    Some(crate::lighting::LightLinking { exclude, nodes, product: false })
+}
+
+/// A frame placing a lamp at `at`, its +Z (the way a panel shines) towards
+/// `facing`.
+fn facing_frame(at: tequila_core::math::Vec3, facing: tequila_core::math::Vec3) -> Transform {
+    use tequila_core::math::{Mat4, Vec3};
+    let z = facing.normalize();
+    let x = Vec3::Y.cross(z).normalize();
+    let y = z.cross(x);
+    Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+}
+
+/// lamp_lit with shadow links: the key's shadow left off the body, the rim's
+/// cast by the feet and the buttons alone, and a point lamp at the side
+/// whose shadow the bezel does not cast.
+fn shadow_links() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    let mut document = lamp_lit();
+    let mut bus = crate::command::CommandBus::new();
+    let key = shadow_linked(&document, &["Body"], true);
+    change_lamp(&mut document, &mut bus, "Key", &|s| s.shadow_links = key.clone());
+    let rim = shadow_linked(&document, &["Foot", "Button"], false);
+    change_lamp(&mut document, &mut bus, "Rim", &|s| s.shadow_links = rim.clone());
+    let side = LightSettings {
+        shape: LightShape::Point { radius: 0.0 },
+        intensity: Intensity::Lumens(120.0),
+        shadow_links: shadow_linked(&document, &["Bezel"], true),
+        ..LightSettings::default()
+    };
+    add_lamp(&mut document, &mut bus, "Side", side, Transform::translation(vec3(1.6, 0.9, 0.2)));
+    document
+}
+
+/// The studio floor under the sky, a key panel and a fill disc that casts no
+/// shadow; a glossy ball and a chrome one casting none, standing clear of
+/// the floor and the product (see hidden_parts), and a card casting none
+/// between a glowing panel and the product.
+fn shadowless_parts() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use crate::tree::Rays;
+    let mut document = product_floor_studio();
+    let mut bus = crate::command::CommandBus::new();
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let panel_down = Transform::rotation(tequila_core::math::Vec3::X, quarter);
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Key",
+        LightSettings { shape: LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, intensity: Intensity::Lumens(400.0), ..LightSettings::default() },
+        Transform::translation(vec3(0.9, 2.2, 1.1)) * panel_down,
+    );
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Fill",
+        LightSettings {
+            shape: LightShape::Area { width: 1.0, height: 1.0, disc: true, two_sided: false },
+            intensity: Intensity::Lumens(130.0),
+            visibility: tequila_render_core::light::Visibility { shadow: false, ..Default::default() },
+            ..LightSettings::default()
+        },
+        Transform::translation(vec3(-1.6, 1.6, 0.6)) * panel_down,
+    );
+    let glow = Material { emission_color: Spectrum { r: 1.0, g: 0.7, b: 0.4 }, emission_luminance: 6.0, ..MaterialType::Emissive.defaults() };
+    let card = Material::diffuse(Spectrum::splat(0.6));
+    let panel_at = vec3(-0.95, 0.25, 0.55);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glow Panel", crate::bench::rounded_box(vec3(0.004, 0.18, 0.3), 0.002, 8), MaterialType::Emissive, glow, Transform::translation(panel_at)),
+            ("Card", crate::bench::rounded_box(vec3(0.003, 0.12, 0.2), 0.002, 8), MaterialType::Diffuse, card, Transform::translation(vec3(-0.8, 0.13, 0.55))),
+        ],
+    );
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glossy Ball", ball(0.1), MaterialType::Plastic, Material::plastic(Spectrum { r: 0.7, g: 0.2, b: 0.15 }, 0.15), Transform::translation(vec3(0.42, 0.102, 0.88))),
+            ("Chrome Ball", ball(0.08), MaterialType::Metal, chrome, Transform::translation(vec3(-0.3, 0.082, 0.9))),
+        ],
+    );
+    for name in ["Glossy Ball", "Chrome Ball", "Card"] {
+        for id in parts_named(&document, name) {
+            bus.apply(&mut document, Command::set_rays(id, Rays { shadow: false, ..Rays::default() })).expect("the part's rays are set");
+        }
+    }
+    document
+}
+
+/// product_floor under the sky and seven lamps of every kind.
+fn floor_lamps() -> SceneDocument {
+    use crate::lighting::{Intensity, LightLinking, LightSettings, LightShape};
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let feet = shadow_linked(&document, &["Foot"], false);
+    let lamps = [
+        ("Key", LightSettings { shape: LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, intensity: Intensity::Lumens(300.0), ..LightSettings::default() }, Transform::translation(vec3(0.9, 2.2, 1.1)) * panel_down),
+        ("Spot", LightSettings { shape: LightShape::Spot { inner_degrees: 15.0, outer_degrees: 30.0, falloff: 1.0 }, intensity: Intensity::Lumens(150.0), ..LightSettings::default() }, Transform::translation(vec3(-0.6, 2.0, 1.2)) * Transform::rotation(Vec3::X, -1.2)),
+        ("Bulb", LightSettings { shape: LightShape::Point { radius: 0.05 }, intensity: Intensity::Lumens(80.0), ..LightSettings::default() }, Transform::translation(vec3(-1.0, 1.0, -0.4))),
+        ("Sun", LightSettings { shape: LightShape::Sun { angle_degrees: 3.0 }, intensity: Intensity::Lux(1.5), ..LightSettings::default() }, Transform::rotation(Vec3::Y, 0.7) * Transform::rotation(Vec3::X, -0.9)),
+        ("Feet Spot", LightSettings { shape: LightShape::Spot { inner_degrees: 25.0, outer_degrees: 40.0, falloff: 1.0 }, intensity: Intensity::Lumens(100.0), shadow_links: feet, ..LightSettings::default() }, Transform::translation(vec3(0.3, 2.4, -1.3)) * spot_down * Transform::rotation(Vec3::X, 0.4)),
+        ("Shadowless", LightSettings { shape: LightShape::Point { radius: 0.0 }, intensity: Intensity::Lumens(60.0), visibility: tequila_render_core::light::Visibility { shadow: false, ..Default::default() }, ..LightSettings::default() }, Transform::translation(vec3(1.2, 0.8, -0.6))),
+        ("Product Only", LightSettings { shape: LightShape::Area { width: 0.6, height: 0.6, disc: true, two_sided: false }, intensity: Intensity::Lumens(90.0), links: Some(LightLinking { exclude: false, nodes: Vec::new(), product: true }), ..LightSettings::default() }, facing_frame(vec3(0.2, 0.9, 1.8), vec3(-0.1, -0.5, -1.0))),
+    ];
+    for (name, settings, transform) in lamps {
+        add_lamp(&mut document, &mut bus, name, settings, transform);
+    }
+    document
+}
+
+/// The path the set's photometric profiles are read from, by name
+/// ([`parity_profile`]): the parity cache holds them (`ParityScene::cache`).
+pub const PROFILES: [&str; 3] = ["parity:downlight", "parity:quadrant", "parity:half"];
+
+/// One of the set's photometric profiles, made here as an IES file's text
+/// (no file is shipped): a downlight - vertical angles 0-90°, rotationally
+/// symmetric, its intensity falling off by its angle; one measured over a
+/// quadrant of horizontal angles (0-90°, which the profile folds into the
+/// other three) and every vertical angle, brighter one way round; and one
+/// over a half (0-180°).
+pub fn parity_profile(path: &str) -> Option<tequila_render_core::ies::IesProfile> {
+    let (vertical, horizontal): (Vec<f32>, Vec<f32>) = match path {
+        "parity:downlight" => ((0..10).map(|i| i as f32 * 10.0).collect(), vec![0.0]),
+        "parity:quadrant" => ((0..13).map(|i| i as f32 * 15.0).collect(), vec![0.0, 30.0, 60.0, 90.0]),
+        "parity:half" => ((0..7).map(|i| i as f32 * 15.0).collect(), vec![0.0, 45.0, 90.0, 135.0, 180.0]),
+        _ => return None,
+    };
+    let mut text = String::from("IESNA:LM-63-2002\n[TEST] parity\nTILT=NONE\n");
+    text.push_str(&format!("1 -1 1 {} {} 1 2 0 0 0\n1 1 100\n", vertical.len(), horizontal.len()));
+    for v in &vertical {
+        text.push_str(&format!("{v} "));
+    }
+    text.push('\n');
+    for h in &horizontal {
+        text.push_str(&format!("{h} "));
+    }
+    text.push('\n');
+    for (j, h) in horizontal.iter().enumerate() {
+        for v in &vertical {
+            let theta = v.to_radians();
+            let value = match path {
+                "parity:downlight" => 1000.0 * theta.cos().max(0.0).powf(1.5),
+                "parity:quadrant" => 600.0 * (0.35 + 0.65 * (0.5 + 0.5 * theta.cos())) * (1.0 - 0.6 * h.to_radians().sin()) + 40.0 * j as f32,
+                _ => 800.0 * (theta.cos().max(0.0) + 0.1) * (0.4 + 0.6 * (h.to_radians() * 0.5).cos().abs()),
+            };
+            text.push_str(&format!("{value} "));
+        }
+        text.push('\n');
+    }
+    tequila_render_core::ies::IesProfile::parse(&text).ok()
+}
+
+/// product_floor under a dim sky, lit by the set's three profiles: the
+/// downlight on a point lamp above, the quadrant on a spot at the side, the
+/// half on a panel facing down.
+fn ies_lamps() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape, Photometry};
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    bus.apply(&mut document, Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 0.25) }).expect("the environment turns down");
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let profile = |path: &str| Some(Photometry { path: path.to_string() });
+    let lamps = [
+        ("Downlight", LightSettings { shape: LightShape::Point { radius: 0.0 }, photometry: profile(PROFILES[0]), intensity: Intensity::Candela(0.02), ..LightSettings::default() }, Transform::translation(vec3(0.2, 1.8, 0.4))),
+        ("Quadrant", LightSettings { shape: LightShape::Spot { inner_degrees: 20.0, outer_degrees: 30.0, falloff: 1.0 }, photometry: profile(PROFILES[1]), intensity: Intensity::Candela(0.015), ..LightSettings::default() }, Transform::translation(vec3(-1.4, 1.3, 0.9)) * Transform::rotation(Vec3::Y, -0.9) * Transform::rotation(Vec3::X, -0.5)),
+        ("Half", LightSettings { shape: LightShape::Area { width: 0.5, height: 0.5, disc: false, two_sided: false }, photometry: profile(PROFILES[2]), intensity: Intensity::Candela(0.01), ..LightSettings::default() }, Transform::translation(vec3(1.0, 1.6, -0.5)) * Transform::rotation(Vec3::X, quarter) * Transform::rotation(Vec3::Z, 0.4)),
+    ];
+    for (name, settings, transform) in lamps {
+        add_lamp(&mut document, &mut bus, name, settings, transform);
+    }
+    document
+}
+
+/// lamps_in_view, its feet glowing, under direct lighting off.
+fn direct_off() -> SceneDocument {
+    let mut document = lamps_in_view();
+    let mut bus = crate::command::CommandBus::new();
+    let key = document.materials.iter().find(|(_, m)| m.name == "Foot").map(|(k, _)| k).expect("the feet's material");
+    let mut definition = document.materials.get(key).expect("the feet's material").clone();
+    *definition.graph.material_mut() = Material { emission_color: Spectrum { r: 1.0, g: 0.5, b: 0.2 }, emission_luminance: 12.0, ..MaterialType::Emissive.defaults() };
+    document.materials.insert_with_key(key, definition);
+    let config = IntegratorConfig { direct_lighting: false, ..document.lighting.config() };
+    bus.apply(&mut document, Command::SetLightingConfig { config: Box::new(config) }).expect("the lighting is set");
+    document
+}
+
+/// The parts of `document` wearing the material called `name`.
+fn parts_named(document: &SceneDocument, name: &str) -> Vec<crate::tree::NodeId> {
+    document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_some_and(|m| m.name == name))
+        .map(|n| n.id)
+        .collect()
+}
+
+/// glass_ball_floor, a chrome ball beside the glass, and five parts each
+/// hidden from one kind of ray or held out, standing clear of the floor and
+/// of every other part: where two faces touch, which one a ray meets is a
+/// tie that Embree and the ray query break differently, and passing one
+/// part's face then skips the other's.
+fn hidden_parts() -> SceneDocument {
+    use crate::tree::Rays;
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    let matte = |r: f32, g: f32, b: f32| Material::diffuse(Spectrum { r, g, b });
+    let gloss = |r: f32, g: f32, b: f32| Material::plastic(Spectrum { r, g, b }, 0.2);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Chrome Ball", ball(0.1), MaterialType::Metal, chrome, Transform::translation(vec3(-0.35, 0.101, 0.8))),
+            ("Unseen Ball", ball(0.06), MaterialType::Diffuse, matte(0.8, 0.15, 0.1), Transform::translation(vec3(-0.12, 0.062, 0.98))),
+            ("Unreflected Ball", ball(0.07), MaterialType::Plastic, gloss(0.1, 0.5, 0.8), Transform::translation(vec3(-0.6, 0.072, 0.98))),
+            ("Undiffused Block", crate::bench::rounded_box(vec3(0.06, 0.05, 0.06), 0.01, 8), MaterialType::Diffuse, matte(0.9, 0.85, 0.2), Transform::translation(vec3(0.62, 0.052, 0.72))),
+            ("Behind Glass", ball(0.06), MaterialType::Plastic, gloss(0.2, 0.8, 0.25), Transform::translation(vec3(0.1, 0.062, 0.7))),
+            ("Held Out", ball(0.07), MaterialType::Plastic, gloss(0.9, 0.9, 0.9), Transform::translation(vec3(0.62, 0.072, 1.08))),
+        ],
+    );
+    for (name, rays) in [
+        ("Unseen Ball", Rays { camera: false, ..Rays::default() }),
+        ("Unreflected Ball", Rays { glossy: false, ..Rays::default() }),
+        ("Undiffused Block", Rays { diffuse: false, ..Rays::default() }),
+        ("Behind Glass", Rays { transmission: false, ..Rays::default() }),
+        ("Held Out", Rays { holdout: true, ..Rays::default() }),
+    ] {
+        let parts = parts_named(&document, name);
+        assert!(!parts.is_empty(), "the scene has a {name}");
+        for id in parts {
+            bus.apply(&mut document, Command::set_rays(id, rays)).expect("the part's rays are set");
+        }
+    }
+    document
+}
 
 /// glass_ball_floor on a dome 8 m across, a metre up, round below as
 /// above: the floor's 3 m well inside it.

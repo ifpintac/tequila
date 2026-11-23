@@ -39,7 +39,8 @@ struct GpuInstance {
     // NO_LIGHT for any other instance.
     light: u32,
     // INSTANCE_STAND_IN for a lamp's stand-in, INSTANCE_CASTS_SHADOWS for a
-    // part that casts shadows.
+    // part that casts shadows, INSTANCE_NO_* and INSTANCE_HOLDOUT for one
+    // hidden from some rays or held out.
     flags: u32,
     // The solid a medium is keyed by (scene.rs).
     solid: u32,
@@ -60,6 +61,14 @@ const NO_CATCHER: u32 = 0xFFFFFFFFu;
 const NO_LIGHT: u32 = 0xFFFFFFFFu;
 const INSTANCE_STAND_IN: u32 = 1u;
 const INSTANCE_CASTS_SHADOWS: u32 = 2u;
+// A part some kind of ray does not see (scene.rs's INSTANCE_NO_*): the
+// camera's, a diffuse bounce's, a glossy one's (the split reflection's and
+// the floor's mirror's too), one through glass; and one held out.
+const INSTANCE_NO_CAMERA: u32 = 4u;
+const INSTANCE_NO_DIFFUSE: u32 = 8u;
+const INSTANCE_NO_GLOSSY: u32 = 16u;
+const INSTANCE_NO_TRANSMISSION: u32 = 32u;
+const INSTANCE_HOLDOUT: u32 = 64u;
 // The top-level structure's masks (scene.rs's MASK_*): every instance is a
 // surface, and those that cast shadows are in the shadow rays' mask too.
 const MASK_SURFACE: u32 = 1u;
