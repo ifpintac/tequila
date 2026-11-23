@@ -3,6 +3,7 @@
 // from one arm of one switch (docs/07 §7). shade.rs's `shade` is the
 // specification: its point inputs, its Apply through nodes.wgsl, its
 // write-back into the material.
+//#include features
 //#include nodes
 //#include openpbr
 //#include textures
@@ -268,6 +269,12 @@ fn prog_legacy(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
     }
 }
 
+// Whether the kernel keeps the arm of instruction `op` (features.wgsl's
+// FEATURE_OPS): an arm no program of the scene holds is left out.
+fn prog_holds(op: u32) -> bool {
+    return (FEATURE_OPS & (1u << op)) != 0u;
+}
+
 // Run instructions [start, end) at `pt`, into the registers. An
 // instruction's operands are read first, in one place, so every arm reads
 // plain values and the node it runs is reached from that arm alone.
@@ -290,67 +297,67 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
         var out = vec4<f32>(0.0);
         var out2 = vec4<f32>(0.0);
         switch head & 0xFFu {
-            case 1u: { out = prog_point_input(settings, pt); }
-            case 2u: {
+            case 1u: { if (prog_holds(1u)) { out = prog_point_input(settings, pt); } }
+            case 2u: { if (prog_holds(2u)) {
                 var v = cy_math(settings & 0xFFu, a[0].x, a[1].x, a[2].x);
                 if ((settings & 0x100u) != 0u) {
                     v = clamp(v, 0.0, 1.0);
                 }
                 out = vec4<f32>(v);
-            }
-            case 3u: { out = cy_vector_math(settings, a[0].xyz, a[1].xyz, a[2].xyz, a[3].x); }
-            case 4u: { out = vec4<f32>(cy_map_range(settings, a[0].x, a[1].x, a[2].x, a[3].x, a[4].x, a[5].x)); }
-            case 5u: { out = cy_mix_node(settings, a[0].x, a[1], a[2]); }
-            case 6u: {
+            } }
+            case 3u: { if (prog_holds(3u)) { out = cy_vector_math(settings, a[0].xyz, a[1].xyz, a[2].xyz, a[3].x); } }
+            case 4u: { if (prog_holds(4u)) { out = vec4<f32>(cy_map_range(settings, a[0].x, a[1].x, a[2].x, a[3].x, a[4].x, a[5].x)); } }
+            case 5u: { if (prog_holds(5u)) { out = cy_mix_node(settings, a[0].x, a[1], a[2]); } }
+            case 6u: { if (prog_holds(6u)) {
                 out = cy_noise_node(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].x, a[6].x, a[7].x, a[8].x);
-            }
-            case 7u: {
+            } }
+            case 7u: { if (prog_holds(7u)) {
                 let cells = cy_voronoi_node(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].x, a[6].x, a[7].x, a[8].x);
                 out = cells.a;
                 out2 = cells.b;
-            }
-            case 8u: { out = cy_white_noise_node(settings, a[0].xyz, a[1].x); }
-            case 9u: { out = vec4<f32>(cy_mapping_node(settings, a[0].xyz, a[1].xyz, a[2].xyz, a[3].xyz), 0.0); }
-            case 10u: { out = vec4<f32>(a[0].x, a[1].x, a[2].x, 0.0); }
-            case 11u: { out = vec4<f32>(cy_separate_color(settings, a[0].xyz), 0.0); }
-            case 12u: { out = vec4<f32>(prog_gradient(settings, a[0].x), 0.0); }
-            case 13u: { out = prog_legacy(settings, a); }
-            case 14u: {
+            } }
+            case 8u: { if (prog_holds(8u)) { out = cy_white_noise_node(settings, a[0].xyz, a[1].x); } }
+            case 9u: { if (prog_holds(9u)) { out = vec4<f32>(cy_mapping_node(settings, a[0].xyz, a[1].xyz, a[2].xyz, a[3].xyz), 0.0); } }
+            case 10u: { if (prog_holds(10u)) { out = vec4<f32>(a[0].x, a[1].x, a[2].x, 0.0); } }
+            case 11u: { if (prog_holds(11u)) { out = vec4<f32>(cy_separate_color(settings, a[0].xyz), 0.0); } }
+            case 12u: { if (prog_holds(12u)) { out = vec4<f32>(prog_gradient(settings, a[0].x), 0.0); } }
+            case 13u: { if (prog_holds(13u)) { out = prog_legacy(settings, a); } }
+            case 14u: { if (prog_holds(14u)) {
                 let lw = cy_layer_weight(a[0].x, a[1].xyz, a[2].xyz, a[3].x > 0.5);
                 out = vec4<f32>(lw, 0.0, 0.0);
-            }
-            case 15u: { out = vec4<f32>(cy_fresnel(a[0].x, a[1].xyz, a[2].xyz, a[3].x > 0.5)); }
-            case 16u: { out = vec4<f32>(cy_clamp_node(settings != 0u, a[0].x, a[1].x, a[2].x)); }
-            case 17u: { out = vec4<f32>(cy_combine_color(settings, vec3<f32>(a[0].x, a[1].x, a[2].x)), 0.0); }
-            case 18u: { out = vec4<f32>(cy_hsv_node(a[4].xyz, a[0].x, a[1].x, a[2].x, a[3].x), 0.0); }
-            case 19u: {
+            } }
+            case 15u: { if (prog_holds(15u)) { out = vec4<f32>(cy_fresnel(a[0].x, a[1].xyz, a[2].xyz, a[3].x > 0.5)); } }
+            case 16u: { if (prog_holds(16u)) { out = vec4<f32>(cy_clamp_node(settings != 0u, a[0].x, a[1].x, a[2].x)); } }
+            case 17u: { if (prog_holds(17u)) { out = vec4<f32>(cy_combine_color(settings, vec3<f32>(a[0].x, a[1].x, a[2].x)), 0.0); } }
+            case 18u: { if (prog_holds(18u)) { out = vec4<f32>(cy_hsv_node(a[4].xyz, a[0].x, a[1].x, a[2].x, a[3].x), 0.0); } }
+            case 19u: { if (prog_holds(19u)) {
                 let contrast = a[2].x;
                 let m = 1.0 + contrast;
                 let b = a[1].x - contrast * 0.5;
                 out = vec4<f32>(max(m * a[0].xyz + vec3<f32>(b), vec3<f32>(0.0)), 0.0);
-            }
-            case 20u: { out = vec4<f32>(cy_gamma_node(a[0].xyz, a[1].x), 0.0); }
-            case 21u: {
+            } }
+            case 20u: { if (prog_holds(20u)) { out = vec4<f32>(cy_gamma_node(a[0].xyz, a[1].x), 0.0); } }
+            case 21u: { if (prog_holds(21u)) {
                 let fac = a[0].x;
                 let c = a[1].xyz;
                 out = vec4<f32>(fac * (vec3<f32>(1.0) - c) + (1.0 - fac) * c, 0.0);
-            }
-            case 22u: {
+            } }
+            case 22u: { if (prog_holds(22u)) {
                 let fac = cy_checker(a[0].xyz * a[3].x);
                 out = vec4<f32>(select(a[2].xyz, a[1].xyz, fac == 1.0), fac);
-            }
-            case 23u: {
+            } }
+            case 23u: { if (prog_holds(23u)) {
                 let fac = cy_gradient_texture(settings, a[0].xyz);
                 out = vec4<f32>(vec3<f32>(fac), fac);
-            }
-            case 24u: {
+            } }
+            case 24u: { if (prog_holds(24u)) {
                 let tp = TexPoint(pt.object, pt.object_normal, pt.uv, pt.footprint, pt.scale, pt.uv_footprint, pt.has_uv_footprint != 0u);
                 out = tex_instruction(settings, a[0], a[1], a[2], a[3], tp);
-            }
-            case 25u: { out = tq_instruction(settings, a); }
-            case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }
-            case 27u: { out = prog_attribute(settings, a[0], pt); }
-            case 28u: { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); }
+            } }
+            case 25u: { if (prog_holds(25u)) { out = tq_instruction(settings, a); } }
+            case 26u: { if (prog_holds(26u)) { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); } }
+            case 27u: { if (prog_holds(27u)) { out = prog_attribute(settings, a[0], pt); } }
+            case 28u: { if (prog_holds(28u)) { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); } }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
@@ -541,7 +548,7 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
         }
     }
     shaded.heights = heights;
-    if ((p.flags & (PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) {
+    if (FEATURE_TEXTURES && (p.flags & (PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) {
         let v = prog_value(p.bump_here);
         var bumped = n;
         if ((p.flags & PROGRAM_NORMAL_UV) != 0u) {

@@ -30,6 +30,7 @@ use crate::lights::{GpuLights, LampScene, LightRecords};
 use crate::scene::GpuScene;
 use crate::tables::Tables;
 use crate::textures::{CardPictures, Pictures};
+use crate::variants::{KernelCache, KernelFeatures, SceneRecords};
 
 /// Every material's program lowered for the card (`crate::program::lower`),
 /// by material: `Ok(None)` for a material that is its constants, `Err` with
@@ -463,6 +464,75 @@ pub struct GpuRenderer {
     bevels: bool,
     /// What [`part_limits`] says of the scene.
     part_limits: Vec<&'static str>,
+    /// The parts of the kernel the scene reaches ([`KernelFeatures::of`]),
+    /// and the parts of the one `pipeline` was built with, which holds
+    /// them all.
+    pub features: KernelFeatures,
+    pub kernel: KernelFeatures,
+    /// How long building `pipeline` took, in seconds: the first picture's
+    /// wait for the kernel.
+    pub kernel_seconds: f64,
+    /// A kernel being built aside ([`GpuRenderer::with_cache`]).
+    aside: Option<Aside>,
+}
+
+/// A kernel being built on a thread of its own while the renderer goes on
+/// with the one it has: a scene's own variant, which it renders with once
+/// ready (the same picture, so from any pass), or the whole kernel, built
+/// only for the scenes after.
+struct Aside {
+    kernel: KernelFeatures,
+    take_up: bool,
+    ready: std::sync::Arc<std::sync::OnceLock<wgpu::ComputePipeline>>,
+    thread: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+impl Aside {
+    fn spawn(device: &wgpu::Device, layout: &wgpu::PipelineLayout, cache: &KernelCache, kernel: KernelFeatures, take_up: bool) -> Aside {
+        let ready = std::sync::Arc::new(std::sync::OnceLock::new());
+        let (device, layout, cache, slot) = (device.clone(), layout.clone(), cache.clone(), ready.clone());
+        let thread = std::thread::Builder::new()
+            .name("transport kernel".into())
+            .spawn(move || {
+                let pipeline = kept_pipeline(&device, &layout, &cache, kernel);
+                let _ = slot.set(pipeline);
+            })
+            .ok();
+        Aside { kernel, take_up, ready, thread: std::sync::Mutex::new(thread) }
+    }
+}
+
+/// How a renderer's kernel is chosen.
+enum KernelChoice<'a> {
+    /// Built for the parts it keeps, the scene's own where none.
+    Parts(Option<KernelFeatures>),
+    /// Through what this machine has kept ([`GpuRenderer::with_cache`]).
+    Kept(&'a KernelCache),
+}
+
+/// Build `kernel` through what `cache` keeps of it, and keep what the
+/// build leaves.
+fn kept_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, cache: &KernelCache, kernel: KernelFeatures) -> wgpu::ComputePipeline {
+    let pipeline_cache = cache.pipeline_cache(device, kernel);
+    let pipeline = build_pipeline(device, layout, None, crate::shader::source("transport"), kernel, pipeline_cache.as_ref());
+    cache.keep(kernel, pipeline_cache.as_ref());
+    pipeline
+}
+
+/// The kernel a scene reaching `features` starts with, through `cache`
+/// (see [`KernelCache`]): its own variant where this machine has built it,
+/// or where it has built nothing yet (then building the whole kernel aside,
+/// for the scenes after); else the whole kernel, which it has built, while
+/// its variant is built aside to take over.
+fn kept_kernel(device: &wgpu::Device, layout: &wgpu::PipelineLayout, features: KernelFeatures, cache: &KernelCache) -> (KernelFeatures, wgpu::ComputePipeline, Option<Aside>) {
+    if cache.knows(features) || !cache.knows(KernelFeatures::ALL) {
+        let pipeline = kept_pipeline(device, layout, cache, features);
+        let aside = (!cache.knows(KernelFeatures::ALL)).then(|| Aside::spawn(device, layout, cache, KernelFeatures::ALL, false));
+        (features, pipeline, aside)
+    } else {
+        let pipeline = kept_pipeline(device, layout, cache, KernelFeatures::ALL);
+        (KernelFeatures::ALL, pipeline, Some(Aside::spawn(device, layout, cache, features, true)))
+    }
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -513,20 +583,37 @@ impl FloorScene {
     }
 }
 
-/// The transport kernel's pipeline. `salt`, when given, makes the kernel a
-/// different one to the driver without changing what it does, so its shader
-/// cache cannot answer for it: how long a cold compile takes is measured so.
-fn transport_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>) -> wgpu::ComputePipeline {
-    transport_pipeline_of(device, layout, salt, crate::shader::source("transport"))
+/// The transport kernel's pipeline, with the parts `kernel` keeps
+/// (`crate::variants`). `salt`, when given, makes the kernel a different one
+/// to the driver without changing what it does, so its shader cache cannot
+/// answer for it: how long a cold compile takes is measured so.
+fn transport_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>, kernel: KernelFeatures) -> wgpu::ComputePipeline {
+    transport_pipeline_of(device, layout, salt, crate::shader::source("transport"), kernel)
 }
 
-fn transport_pipeline_of(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>, mut source: String) -> wgpu::ComputePipeline {
+fn transport_pipeline_of(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>, source: String, kernel: KernelFeatures) -> wgpu::ComputePipeline {
+    build_pipeline(device, layout, salt, source, kernel, None)
+}
+
+fn build_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    salt: Option<u32>,
+    mut source: String,
+    kernel: KernelFeatures,
+    cache: Option<&wgpu::PipelineCache>,
+) -> wgpu::ComputePipeline {
     if let Some(salt) = salt {
-        source = source.replace(
-            "if (id.x >= frame.width || id.y >= frame.height) {",
-            &format!("if (id.x >= frame.width || id.y >= frame.height || frame.width == {}u) {{", salt | 0x8000_0000),
-        );
+        // The entry point's first test, which the salt is added to. It must
+        // be there: when dispatches were cut by rows it read `id.y` no more,
+        // the salt went nowhere, and the driver's cache answered.
+        const FIRST: &str = "if (id.x >= frame.width || y >= frame.height) {";
+        assert!(source.contains(FIRST), "the transport's entry point no longer starts with {FIRST:?}: the salt has nowhere to go");
+        source = source.replace(FIRST, &format!("if (id.x >= frame.width || y >= frame.height || frame.width == {}u) {{", salt | 0x8000_0000));
     }
+    // The constants the source declares: one edited to measure what a part
+    // costs may have taken some out.
+    let constants: Vec<(&str, f64)> = kernel.constants().into_iter().filter(|(name, _)| source.contains(&format!("override {name}:"))).collect();
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("transport"),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -536,8 +623,8 @@ fn transport_pipeline_of(device: &wgpu::Device, layout: &wgpu::PipelineLayout, s
         layout: Some(layout),
         module: &module,
         entry_point: Some("transport_main"),
-        compilation_options: Default::default(),
-        cache: None,
+        compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
+        cache,
     })
 }
 
@@ -545,8 +632,23 @@ fn transport_pipeline_of(device: &wgpu::Device, layout: &wgpu::PipelineLayout, s
 /// with nothing cached: its source salted (see `transport_pipeline`), built
 /// against the renderer's own layout. For keeping the kernel's size in check.
 pub fn cold_compile_time(renderer: &GpuRenderer, salt: u32) -> std::time::Duration {
+    cold_compile_time_of(renderer, salt, KernelFeatures::ALL)
+}
+
+/// [`cold_compile_time`] of the kernel with the parts `kernel` keeps.
+pub fn cold_compile_time_of(renderer: &GpuRenderer, salt: u32, kernel: KernelFeatures) -> std::time::Duration {
     let started = std::time::Instant::now();
-    let _pipeline = transport_pipeline(&renderer.gpu.device, &renderer.layout, Some(salt));
+    let _pipeline = transport_pipeline(&renderer.gpu.device, &renderer.layout, Some(salt), kernel);
+    renderer.gpu.wait();
+    started.elapsed()
+}
+
+/// How long the kernel with the parts `kernel` keeps takes to build, its
+/// source unsalted: from the driver's cache where it has compiled it
+/// before.
+pub fn compile_time_of(renderer: &GpuRenderer, kernel: KernelFeatures) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    let _pipeline = transport_pipeline(&renderer.gpu.device, &renderer.layout, None, kernel);
     renderer.gpu.wait();
     started.elapsed()
 }
@@ -554,9 +656,14 @@ pub fn cold_compile_time(renderer: &GpuRenderer, salt: u32) -> std::time::Durati
 /// [`cold_compile_time`] of the kernel's source as `edit` leaves it: what a
 /// part of the kernel costs to compile, measured by leaving it out.
 pub fn cold_compile_time_edited(renderer: &GpuRenderer, salt: u32, edit: &dyn Fn(String) -> String) -> std::time::Duration {
+    cold_compile_time_edited_of(renderer, salt, edit, KernelFeatures::ALL)
+}
+
+/// [`cold_compile_time_edited`] of the kernel with the parts `kernel` keeps.
+pub fn cold_compile_time_edited_of(renderer: &GpuRenderer, salt: u32, edit: &dyn Fn(String) -> String, kernel: KernelFeatures) -> std::time::Duration {
     let source = edit(crate::shader::source("transport"));
     let started = std::time::Instant::now();
-    let _pipeline = transport_pipeline_of(&renderer.gpu.device, &renderer.layout, Some(salt), source);
+    let _pipeline = transport_pipeline_of(&renderer.gpu.device, &renderer.layout, Some(salt), source, kernel);
     renderer.gpu.wait();
     started.elapsed()
 }
@@ -574,8 +681,30 @@ fn storage(read_only: bool) -> wgpu::BindingType {
 }
 
 impl GpuRenderer {
-    /// Upload `scene` to `gpu`, which must have ray queries.
+    /// Upload `scene` to `gpu`, which must have ray queries, with the
+    /// kernel built for the parts the scene reaches (`crate::variants`);
+    /// `TEQUILA_GPU_KERNEL=full` builds the whole kernel instead.
     pub fn new(gpu: GpuDevice, scene: &SceneSnapshot) -> GpuRenderer {
+        let full = std::env::var("TEQUILA_GPU_KERNEL").is_ok_and(|v| v.eq_ignore_ascii_case("full"));
+        GpuRenderer::with_kernel(gpu, scene, full.then_some(KernelFeatures::ALL))
+    }
+
+    /// [`GpuRenderer::new`] with the kernel built for the parts `kernel`
+    /// keeps, the scene's own where `None`. A kernel that leaves out a part
+    /// the scene reaches would not give its picture, and is widened to it.
+    pub fn with_kernel(gpu: GpuDevice, scene: &SceneSnapshot, kernel: Option<KernelFeatures>) -> GpuRenderer {
+        GpuRenderer::upload(gpu, scene, KernelChoice::Parts(kernel))
+    }
+
+    /// [`GpuRenderer::new`] with its kernel built through what this machine
+    /// keeps in `cache` (see [`KernelCache`]): the first picture waits on a
+    /// cold compile only where the machine has never built the kernel, and
+    /// then on the scene's own variant, the smallest there is.
+    pub fn with_cache(gpu: GpuDevice, scene: &SceneSnapshot, cache: &KernelCache) -> GpuRenderer {
+        GpuRenderer::upload(gpu, scene, KernelChoice::Kept(cache))
+    }
+
+    fn upload(gpu: GpuDevice, scene: &SceneSnapshot, choice: KernelChoice) -> GpuRenderer {
         let device = &gpu.device;
         let tables = Tables::new(device);
         let uploaded = GpuScene::upload(device, &gpu.queue, scene);
@@ -700,7 +829,26 @@ impl GpuRenderer {
             bind_group_layouts: &[Some(&scene_layout), Some(&tables.layout), Some(&environment_layout), Some(&frame_layout)],
             immediate_size: 0,
         });
-        let pipeline = transport_pipeline(device, &layout, None);
+        let glass_scene = GlassScene::of(scene);
+        let cut_programs = programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0);
+        let features = KernelFeatures::of(&SceneRecords {
+            materials: &records,
+            programs: &programs,
+            instances: &uploaded.instance_records,
+            meshes: &uploaded.mesh_records,
+            lamps: lights.count,
+            emitters: has_emitters,
+            glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
+        });
+        let started = std::time::Instant::now();
+        let (kernel, pipeline, aside) = match choice {
+            KernelChoice::Parts(kernel) => {
+                let kernel = kernel.map_or(features, |k| k | features);
+                (kernel, transport_pipeline(device, &layout, None, kernel), None)
+            }
+            KernelChoice::Kept(cache) => kept_kernel(device, &layout, features, cache),
+        };
+        let kernel_seconds = started.elapsed().as_secs_f64();
         let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene"),
             layout: &scene_layout,
@@ -759,14 +907,68 @@ impl GpuRenderer {
             dispatch_seconds: std::sync::atomic::AtomicU64::new(f64::INFINITY.to_bits()),
             lights,
             lamp_scene: LampScene::of(scene),
-            glass_scene: GlassScene::of(scene),
+            glass_scene,
             texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
             emitters: [emitter_nodes, emitter_leaves],
             has_emitters,
-            cut_programs: programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0),
+            cut_programs,
             bevels: records.iter().any(|r| r.edge_radius > 0.0),
             part_limits: part_limits(scene, &IntegratorConfig::default()),
+            features,
+            kernel,
+            kernel_seconds,
+            aside,
         }
+    }
+
+    /// The parts of the kernel the next pass renders with: the variant built
+    /// aside once it is ready, else the one built first.
+    pub fn kernel_now(&self) -> KernelFeatures {
+        match &self.aside {
+            Some(aside) if aside.take_up && aside.ready.get().is_some() => aside.kernel,
+            _ => self.kernel,
+        }
+    }
+
+    /// Wait for a kernel being built aside, if one is.
+    pub fn wait_for_aside(&self) {
+        if let Some(aside) = &self.aside {
+            let thread = aside.thread.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take();
+            if let Some(thread) = thread {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// The pipeline the next pass renders with.
+    fn pipeline_now(&self) -> &wgpu::ComputePipeline {
+        match &self.aside {
+            Some(aside) if aside.take_up => aside.ready.get().unwrap_or(&self.pipeline),
+            _ => &self.pipeline,
+        }
+    }
+
+    /// Build the kernel again with the parts `kernel` keeps, widened to the
+    /// parts the scene reaches, and render with it from the next pass: the
+    /// same picture whichever it is.
+    pub fn set_kernel(&mut self, kernel: KernelFeatures) {
+        let kernel = kernel | self.features;
+        self.wait_for_aside();
+        self.aside = None;
+        if kernel != self.kernel {
+            self.pipeline = transport_pipeline(&self.gpu.device, &self.layout, None, kernel);
+            self.kernel = kernel;
+        }
+    }
+
+    /// [`GpuRenderer::set_kernel`] with the kernel's source as `edit`
+    /// leaves it: for finding what of a variant moves a picture.
+    #[doc(hidden)]
+    pub fn set_kernel_edited(&mut self, kernel: KernelFeatures, edit: &dyn Fn(String) -> String) {
+        self.wait_for_aside();
+        self.aside = None;
+        self.kernel = kernel | self.features;
+        self.pipeline = transport_pipeline_of(&self.gpu.device, &self.layout, None, edit(crate::shader::source("transport")), self.kernel);
     }
 
     /// [`floor_limits`] of the scene this renders, under `config`.
@@ -952,6 +1154,8 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: pixel_buffer.as_entire_binding() },
             ],
         });
+        // Taken up at the pass's start, so one pass is one kernel's.
+        let pipeline = self.pipeline_now();
         // The most a dispatch may do: every pixel, `batch` samples each.
         let most = pixels as u64 * batch as u64;
         let mut done = 0u32;
@@ -973,7 +1177,7 @@ impl GpuRenderer {
                 let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("transport") });
                 {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("transport"), timestamp_writes: None });
-                    pass.set_pipeline(&self.pipeline);
+                    pass.set_pipeline(pipeline);
                     pass.set_bind_group(0, &self.scene_group, &[]);
                     pass.set_bind_group(1, &self.tables.bind_group, &[]);
                     pass.set_bind_group(2, &self.environment_group, &[]);

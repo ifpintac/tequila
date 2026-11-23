@@ -7,6 +7,7 @@
 // radius and a leaf's corners and normal come worked out by the processor.
 // Where a part's triangles start among the leaves is its instance's
 // `emitter` (scene.wgsl), which the caller reads.
+//#include features
 
 struct GpuEmitterNode {
     // The bounds' centre; w the radius importance takes.
@@ -144,6 +145,24 @@ struct EmitterDraw {
 fn emitters_sample(position: vec3<f32>, normal: vec3<f32>, two_sided: bool, u_in: f32, uv: vec2<f32>) -> EmitterDraw {
     var draw: EmitterDraw;
     draw.ok = false;
+    // A kernel without the glowing triangles (features.wgsl) never gets here:
+    // the frame's flags turn a scene without them away first. It stands for
+    // the walk down the tree with the tree's first record, which the driver
+    // cannot see through, so what follows the one call compiles as it does
+    // in the whole kernel. A draw it could see was none let it fold the
+    // glowing triangle's shadow ray away, and the sky's shadow ray through
+    // clear glass and cutouts then rounded otherwise (docs/07 R3).
+    if (!FEATURE_EMITTERS) {
+        let n = scene_emitter_nodes[0];
+        draw.ok = n.power > 0.0;
+        draw.position = n.a.xyz;
+        draw.normal = n.normal.xyz;
+        draw.radiance = n.radiance.xyz;
+        draw.density = n.a.w;
+        draw.instance = n.instance;
+        draw.primitive = n.primitive;
+        return draw;
+    }
     var node = 0u;
     var probability = 1.0;
     var u = clamp(u_in, 0.0, 1.0);

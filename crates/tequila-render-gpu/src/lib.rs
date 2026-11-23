@@ -36,6 +36,9 @@
 //!   OpenPBR surfaces under the environment and the lamps, on a shadow
 //!   catcher's floor, the processor's path draw for draw, its samples
 //!   accumulated by the processor's `Framebuffer`.
+//! - [`variants`]: the transport kernel built with only the parts a scene
+//!   uses, which the driver compiles in a fraction of the whole kernel's
+//!   time, and gives the whole kernel's picture.
 
 pub mod device;
 pub mod emitters;
@@ -49,5 +52,6 @@ pub mod shader;
 pub mod tables;
 pub mod textures;
 pub mod transport;
+pub mod variants;
 
 pub use device::{GpuDevice, Needs};
