@@ -1,6 +1,7 @@
 //! The environment light on the card: its images and its sampling tables as
 //! `Environment::tables` hands them over, uploaded unchanged, so the card
-//! draws from the very sky the processor draws from (`environment.wgsl`).
+//! draws from the very sky the processor draws from (`environment.wgsl`):
+//! the lights' and, for the shadow catcher, the floor's.
 
 use tequila_render_core::environment::{Environment, EnvironmentTables};
 use tequila_texture::Image;
@@ -27,6 +28,12 @@ pub struct EnvLayout {
     pub off_tile_column: u32,
     pub off_tile_row: u32,
     pub off_row_start: u32,
+    /// The rows' CDF a surface not facing straight up draws its light from,
+    /// and the one weighted towards straight up a floor draws from, with its
+    /// sum (`Environment::sample_irradiance`, the shadow catcher's).
+    pub off_marginal: u32,
+    pub off_upward: u32,
+    pub upward_sum: f32,
 }
 
 pub struct GpuEnvironment {
@@ -66,6 +73,8 @@ impl GpuEnvironment {
         let off_power = push_f(t.power);
         let off_rows = push_f(t.rows);
         let off_choice = push_f(t.choice);
+        let off_marginal = push_f(t.marginal_cdf);
+        let off_upward = push_f(t.upward_cdf);
         let mut ints: Vec<u32> = Vec::new();
         let mut push_u = |values: &mut dyn Iterator<Item = u32>| {
             let at = ints.len() as u32;
@@ -100,6 +109,9 @@ impl GpuEnvironment {
             off_tile_column,
             off_tile_row,
             off_row_start,
+            off_marginal,
+            off_upward,
+            upward_sum: t.upward_sum,
         };
         let storage = wgpu::BufferUsages::STORAGE;
         let init = |label: &str, contents: &[u8]| {

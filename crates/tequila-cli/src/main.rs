@@ -276,7 +276,8 @@ usage: tequila [options]
       --engine NAME     tequila or cycles: render with Blender's Cycles,
                         when tequila_cycles.dll is installed (default: a
                         project's own engine, else tequila)
-      --device NAME     the Cycles device: CPU, OPTIX, CUDA (default: the
+      --device NAME     Cycles: CPU, OPTIX, CUDA; Tequila's renderer: CPU,
+                        or GPU (experimental, docs/07) (default: the
                         engine's - a project's graphics-card engine uses the
                         card, else the processor)
       --hdri PATH       light with an HDR or EXR environment
@@ -1399,7 +1400,7 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     let card = if on_card {
         let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
             .map_err(|why| format!("--device GPU: {why}"))?;
-        println!("  on the graphics card, {}: every surface grey and diffuse for now (docs/07 R3)", gpu.describe());
+        println!("  on the graphics card, {}: opaque materials, the floor and the lamps; textures and glass are still to come (docs/07 R3)", gpu.describe());
         let settings = tequila_render_gpu::transport::FrameSettings {
             camera: context.camera,
             config: context.config.clone(),

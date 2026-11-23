@@ -13,8 +13,17 @@ pub const MODULES: &[(&str, &str)] = &[
     ("sobol", include_str!("wgsl/sobol.wgsl")),
     ("sampler", include_str!("wgsl/sampler.wgsl")),
     ("scene", include_str!("wgsl/scene.wgsl")),
+    ("microfacet", include_str!("wgsl/microfacet.wgsl")),
+    ("fresnel", include_str!("wgsl/fresnel.wgsl")),
+    ("energy", include_str!("wgsl/energy.wgsl")),
+    ("lobes", include_str!("wgsl/lobes.wgsl")),
+    ("sheen", include_str!("wgsl/sheen.wgsl")),
+    ("openpbr", include_str!("wgsl/openpbr.wgsl")),
     ("frame", include_str!("wgsl/frame.wgsl")),
     ("environment", include_str!("wgsl/environment.wgsl")),
+    ("onb", include_str!("wgsl/onb.wgsl")),
+    ("lights", include_str!("wgsl/lights.wgsl")),
+    ("lamps", include_str!("wgsl/lamps.wgsl")),
     ("transport", include_str!("wgsl/transport.wgsl")),
 ];
 

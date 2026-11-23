@@ -258,11 +258,30 @@ fn lookup(table: usize, cos_o: f32, roughness: f32) -> f32 {
     row(y0) * (1.0 - ty) + row(y1) * ty
 }
 
+/// The tables the lobe reads, for a renderer that reads them elsewhere -
+/// the graphics card's (`tequila-render-gpu`), which uploads them as they
+/// are: the three fitted tables end to end, `[table][roughness][cos_o]`, 32
+/// by 32 each, and the cosine-weighted average albedo per roughness row
+/// that [`Sheen::hemispherical_albedo`] interpolates.
+pub fn raw_tables() -> (&'static [f32], &'static [f32]) {
+    (&TABLE[..], &average_rows()[..])
+}
+
 /// `2 * integral of E(mu) mu dmu` per roughness row, by the midpoint rule
 /// over the same interpolation the lobe reads.
 fn average_albedo(roughness: f32) -> f32 {
+    let rows = average_rows();
+    let y = roughness.clamp(0.0, 1.0) * (SIZE - 1) as f32;
+    let i = (y as usize).min(SIZE - 1);
+    let j = (i + 1).min(SIZE - 1);
+    let t = y - i as f32;
+    rows[i] * (1.0 - t) + rows[j] * t
+}
+
+/// [`average_albedo`]'s rows, worked out once.
+fn average_rows() -> &'static [f32; SIZE] {
     static ROWS: std::sync::OnceLock<[f32; SIZE]> = std::sync::OnceLock::new();
-    let rows = ROWS.get_or_init(|| {
+    ROWS.get_or_init(|| {
         const STEPS: usize = 256;
         std::array::from_fn(|r| {
             let roughness = r as f32 / (SIZE - 1) as f32;
@@ -275,12 +294,7 @@ fn average_albedo(roughness: f32) -> f32 {
                 .sum();
             (total / STEPS as f32).clamp(0.0, 1.0)
         })
-    });
-    let y = roughness.clamp(0.0, 1.0) * (SIZE - 1) as f32;
-    let i = (y as usize).min(SIZE - 1);
-    let j = (i + 1).min(SIZE - 1);
-    let t = y - i as f32;
-    rows[i] * (1.0 - t) + rows[j] * t
+    })
 }
 
 #[cfg(test)]

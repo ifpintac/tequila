@@ -120,6 +120,22 @@ const MAX_IOR_PARAM: f32 = 0.5;
 /// roughness 1 are tabulated values rather than clamped extrapolations. A
 /// cell-centred grid biases the extremes by ~3%, enough on its own to fail the
 /// furnace test at roughness 1.
+/// [`GgxEnergyTable::raw`]'s tables: their names and lengths, and the grid
+/// they are laid out on (roughness, then side, then index of refraction,
+/// then the cosine, slowest to fastest).
+pub const ENERGY_TABLE_LAYOUT: [(&str, usize); 8] = [
+    ("scale", ROUGHNESS_STEPS * MU_STEPS),
+    ("bias", ROUGHNESS_STEPS * MU_STEPS),
+    ("average_scale", ROUGHNESS_STEPS),
+    ("average_bias", ROUGHNESS_STEPS),
+    ("white_average", ROUGHNESS_STEPS),
+    ("dielectric", ROUGHNESS_STEPS * IOR_STEPS * MU_STEPS),
+    ("dielectric_average", ROUGHNESS_STEPS * IOR_STEPS),
+    ("interface", ROUGHNESS_STEPS * SIDES * IOR_STEPS * MU_STEPS),
+];
+/// The grid's steps: cosine, roughness, index of refraction.
+pub const ENERGY_GRID: (usize, usize, usize) = (MU_STEPS, ROUGHNESS_STEPS, IOR_STEPS);
+
 #[derive(Debug)]
 pub struct GgxEnergyTable {
     /// Coefficient of `F0` in the Schlick split, indexed `[roughness][mu]`.
@@ -210,6 +226,23 @@ fn ior_param(ior: f32) -> f32 {
 }
 
 impl GgxEnergyTable {
+    /// The tables as they are, for a renderer that keeps its own copy: the
+    /// graphics card's (`tequila-render-gpu`), which uploads them unchanged
+    /// so its lobes compensate exactly as these do. In the order, and with
+    /// the lengths, [`ENERGY_TABLE_LAYOUT`] gives.
+    pub fn raw(&self) -> [&[f32]; 8] {
+        [
+            &self.scale,
+            &self.bias,
+            &self.average_scale,
+            &self.average_bias,
+            &self.white_average,
+            &self.dielectric,
+            &self.dielectric_average,
+            &self.interface,
+        ]
+    }
+
     /// Build by quasi-Monte-Carlo integration with a fixed seed, so the tables
     /// are bit-identical on every machine and every run. Determinism
     /// (`docs/01` §4.6) applies to precomputation too: a table that varied

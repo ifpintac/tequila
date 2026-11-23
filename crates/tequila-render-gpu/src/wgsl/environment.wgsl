@@ -211,3 +211,77 @@ fn env_sample_facing(normal: vec3<f32>, u: vec2<f32>) -> EnvSample {
     }
     return EnvSample(true, direction, env_radiance(false, direction), pdf);
 }
+
+// Environment::faces_up: a surface facing straight up, near enough to be
+// drawn for exactly, under a dome infinitely far.
+fn env_faces_up(normal: vec3<f32>) -> bool {
+    return frame.env_infinite != 0u && rows_vector(frame.env_inverse_rotation, normal).y >= 1.0 - 1e-5;
+}
+
+// Environment::irradiance_bound, the dome infinite (its spread bound 1).
+fn env_irradiance_bound(normal: vec3<f32>) -> f32 {
+    if (frame.env_weighted_sum <= 0.0) {
+        return 0.0;
+    }
+    let per_texel = frame.env_intensity * 2.0 * PI * PI / f32(frame.env_width * frame.env_height);
+    if (env_faces_up(normal)) {
+        return per_texel * frame.env_upward_sum;
+    }
+    return per_texel * frame.env_weighted_sum;
+}
+
+struct IrradianceSample {
+    ok: bool,
+    direction: vec3<f32>,
+    keep: f32,
+};
+
+// Environment::row_cosines: the cosines of the latitudes at the top and the
+// bottom of row y.
+fn env_row_cosines(y: u32) -> vec2<f32> {
+    let h = f32(frame.env_height);
+    return vec2<f32>(cos(f32(y) / h * PI), cos(f32(y + 1u) / h * PI));
+}
+
+// Environment::direction_at: the world direction dx across column x at
+// latitude cos_theta.
+fn env_direction_at(x: u32, dx: f32, cos_theta: f32) -> vec3<f32> {
+    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+    let phi = ((f32(x) + dx) / f32(frame.env_width) - 0.5) * TAU;
+    let local = vec3<f32>(sin_theta * sin(phi), cos_theta, -sin_theta * cos(phi));
+    return normalized(rows_vector(frame.env_rotation, local));
+}
+
+// Environment::sample_irradiance, the dome infinite: a direction towards the
+// sky for the light onto a surface facing `normal`, and the chance of keeping
+// it. A floor facing straight up draws rows by the light they bring onto it
+// (the upward CDF) and keeps every draw.
+fn env_sample_irradiance(normal: vec3<f32>, u: vec2<f32>) -> IrradianceSample {
+    var none: IrradianceSample;
+    none.ok = false;
+    if (frame.env_weighted_sum <= 0.0) {
+        return none;
+    }
+    let w = frame.env_width;
+    let h = frame.env_height;
+    let up = env_faces_up(normal);
+    if (up && frame.env_upward_sum <= 0.0) {
+        return none;
+    }
+    // texel_at: a row by the marginal, a column within it by its own CDF.
+    let marginal = select(frame.off_marginal, frame.off_upward, up);
+    let y = find_interval(marginal, h, u.y);
+    let dy = segment_offset(marginal, y, u.y);
+    let row = frame.off_cdf + y * (w + 1u);
+    let x = find_interval(row, w, u.x);
+    let dx = segment_offset(row, x, u.x);
+    let c = env_row_cosines(y);
+    if (up) {
+        let top = c.x;
+        let bottom = max(c.y, 0.0);
+        let cos_theta = sqrt(max(bottom * bottom + dy * (top * top - bottom * bottom), 0.0));
+        return IrradianceSample(true, env_direction_at(x, dx, cos_theta), 1.0);
+    }
+    let direction = env_direction_at(x, dx, c.x + dy * (c.y - c.x));
+    return IrradianceSample(true, direction, max(dot(normal, direction), 0.0));
+}

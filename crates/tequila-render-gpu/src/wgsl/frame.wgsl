@@ -43,7 +43,38 @@ struct FrameParams {
     off_tile_column: u32,
     off_tile_row: u32,
     off_row_start: u32,
+    // Path regularization (IntegratorConfig): from this bounce on, every
+    // reflection lobe at least this rough.
+    regularization_start: u32,
+    regularization_roughness: f32,
+    // The shadow catcher's tables in env_f32 (environment.wgsl's
+    // env_sample_irradiance): the rows' CDF, and the one weighted towards
+    // straight up, with its sum.
+    off_marginal: u32,
+    off_upward: u32,
+    env_upward_sum: f32,
+    // IntegratorConfig::shadows, and ::ground_illumination (a floor a bounce
+    // meets is shaded as its material rather than passed), 1 for on.
+    shadows: u32,
+    ground_illumination: u32,
+    // How many lamps the scene has (lamps.wgsl), whether its light
+    // hierarchy chooses among them rather than its alias table, and
+    // lights.rs's LAMPS_* flags.
+    light_count: u32,
+    light_hierarchy: u32,
+    lamp_flags: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
+
+// FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
+// enough reflection has a density to see by; a lamp a seeing bounce meets;
+// lamps shown in mirrors rather than by their stand-ins; one of the lamps a
+// bounce meets lights nothing diffusely.
+const LAMPS_SEEN: u32 = 1u;
+const LAMPS_MET: u32 = 2u;
+const LAMPS_IN_MIRRORS: u32 = 4u;
+const LAMPS_FOR_REFLECTIONS: u32 = 8u;
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;
 // Two vec4s a sample: radiance (and in w, 1 if the camera ray met
