@@ -502,6 +502,8 @@ pub struct SceneSnapshot {
     bending: BendingCache,
     /// Whether a part casts no shadow ([`SceneSnapshot::has_shadowless_parts`]).
     shadowless: ShadowlessCache,
+    /// Which parts are pieces of one solid ([`SceneSnapshot::solid`]).
+    solids: SolidCache,
 }
 
 /// [`SceneSnapshot::has_shadowless_parts`], worked out once a render rather
@@ -525,6 +527,18 @@ struct BendingCache(std::sync::OnceLock<Vec<Aabb>>);
 impl Clone for BendingCache {
     fn clone(&self) -> Self {
         BendingCache::default()
+    }
+}
+
+/// [`SceneSnapshot::solid`]'s table, worked out the first time it is asked
+/// for, as [`PaneCache`] is: which parts bound a medium is down to their
+/// materials, which a preview changes in place.
+#[derive(Debug, Default)]
+struct SolidCache(std::sync::OnceLock<Vec<InstanceId>>);
+
+impl Clone for SolidCache {
+    fn clone(&self) -> Self {
+        SolidCache::default()
     }
 }
 
@@ -825,6 +839,112 @@ fn panes(each: impl Iterator<Item = Option<Pane>>) -> Vec<Option<Pane>> {
     }
 }
 
+/// [`SceneSnapshot::solid`] for every part, or nothing where each part is a
+/// solid of its own, as in nearly every scene.
+///
+/// Only parts that bound a medium are joined, clear and not thin-walled,
+/// and only by the edges their meshes leave open: two parts that share one
+/// are two pieces of one surface. A closed part has none, so it is never
+/// joined to the part it touches. Positions are compared where the parts
+/// place them, to a step far finer than anything is modelled to, so pieces
+/// placed by different transforms still meet.
+fn solids(scene: &SceneSnapshot) -> Vec<InstanceId> {
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+    if !scene.has_transmissive() {
+        return Vec::new();
+    }
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let step = scene.bounds.diagonal().length().max(1e-6) / (1u32 << 22) as f32;
+    let mut open: HashMap<usize, Vec<(Vec3, Vec3)>> = HashMap::new();
+    let mut owner: HashMap<[i64; 6], usize> = HashMap::new();
+    let mut parent: Vec<usize> = (0..scene.instances.len()).collect();
+    let mut joined = false;
+    for (i, instance) in scene.instances.iter().enumerate() {
+        let bounds_medium = scene
+            .materials
+            .get(instance.material.index())
+            .is_some_and(|m| m.is_transmissive() && !m.geometry_thin_walled);
+        let Some(mesh) = scene.meshes.get(instance.mesh.index()).filter(|_| bounds_medium) else {
+            continue;
+        };
+        let key = |p: Vec3| {
+            let p = instance.transform.point(p);
+            [p.x, p.y, p.z].map(|c| (c / step).round() as i64)
+        };
+        for &(a, b) in open.entry(instance.mesh.index()).or_insert_with(|| open_edges(mesh)).iter() {
+            let (a, b) = (key(a), key(b));
+            let (a, b) = if a <= b { (a, b) } else { (b, a) };
+            match owner.entry([a[0], a[1], a[2], b[0], b[1], b[2]]) {
+                Entry::Vacant(entry) => {
+                    entry.insert(i);
+                }
+                Entry::Occupied(entry) => {
+                    // The lower of the two stays the root, so each solid is
+                    // named by its first part.
+                    let (x, y) = (root(&mut parent, *entry.get()), root(&mut parent, i));
+                    if x != y {
+                        parent[x.max(y)] = x.min(y);
+                        joined = true;
+                    }
+                }
+            }
+        }
+    }
+    if !joined {
+        return Vec::new();
+    }
+    (0..parent.len()).map(|i| InstanceId(root(&mut parent, i) as u32)).collect()
+}
+
+/// The edges of a mesh that only one of its triangles has, as their end
+/// points: none for a closed surface, however its vertices are split for
+/// normals or UVs, since vertices are taken as one where they lie.
+fn open_edges(mesh: &Mesh) -> Vec<(Vec3, Vec3)> {
+    // `+ 0.0` makes a negative zero the zero it lies at.
+    let at = |p: Vec3| [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()];
+    let mut welded: std::collections::HashMap<[u32; 3], u32> = std::collections::HashMap::with_capacity(mesh.positions.len());
+    let ids: Vec<u32> = mesh
+        .positions
+        .iter()
+        .map(|&p| {
+            let next = welded.len() as u32;
+            *welded.entry(at(p)).or_insert(next)
+        })
+        .collect();
+    let mut edges: Vec<(u64, u32, u32)> = Vec::with_capacity(mesh.indices.len());
+    for triangle in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(triangle[0], triangle[1]), (triangle[1], triangle[2]), (triangle[2], triangle[0])] {
+            let (Some(&x), Some(&y)) = (ids.get(a as usize), ids.get(b as usize)) else {
+                continue;
+            };
+            if x != y {
+                edges.push(((x.min(y) as u64) << 32 | x.max(y) as u64, a, b));
+            }
+        }
+    }
+    edges.sort_unstable_by_key(|e| e.0);
+    let mut open = Vec::new();
+    let mut i = 0;
+    while i < edges.len() {
+        let mut j = i + 1;
+        while j < edges.len() && edges[j].0 == edges[i].0 {
+            j += 1;
+        }
+        if j == i + 1 {
+            open.push((mesh.positions[edges[i].1 as usize], mesh.positions[edges[i].2 as usize]));
+        }
+        i = j;
+    }
+    open
+}
+
 impl SceneSnapshot {
     pub fn new(
         meshes: Vec<Arc<Mesh>>,
@@ -857,6 +977,7 @@ impl SceneSnapshot {
             panes: PaneCache::default(),
             bending: BendingCache::default(),
             shadowless: ShadowlessCache::default(),
+            solids: SolidCache::default(),
             materials,
         }
     }
@@ -913,6 +1034,22 @@ impl SceneSnapshot {
                 .filter_map(|instance| self.meshes.get(instance.mesh.index()).map(|mesh| mesh.bounds().transformed(&instance.transform)))
                 .collect()
         })
+    }
+
+    /// The solid a part's surface bounds, which is how the media a path is
+    /// inside are told apart: the part itself, or where one solid is
+    /// modelled as several parts that close each other's open edges, the
+    /// first of them.
+    ///
+    /// A model split by material is the usual way that happens: a clear
+    /// shell whose outside is one material slot and whose inside another
+    /// comes in as two parts, neither of them closed. Told apart by part, a
+    /// path that went in through the outside and on through the inside was
+    /// in both, and stayed in the first after leaving through the far wall:
+    /// the air in the shell and the room beyond took the shell's volume, and
+    /// the palma P8's clear lime shell rendered an opaque dark green.
+    pub fn solid(&self, instance: InstanceId) -> InstanceId {
+        self.solids.0.get_or_init(|| solids(self)).get(instance.index()).copied().unwrap_or(instance)
     }
 
     fn panes(&self) -> &[Option<Pane>] {
@@ -1015,6 +1152,7 @@ impl SceneSnapshot {
         });
         self.panes = PaneCache::default();
         self.bending = BendingCache::default();
+        self.solids = SolidCache::default();
         self.bumps = programs
             .iter()
             .map(|program| {
