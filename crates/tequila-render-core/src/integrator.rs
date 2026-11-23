@@ -3334,6 +3334,10 @@ fn nearness_at(intersector: &dyn Intersector, hit: &Hit, normal: Vec3, radius: f
 /// specific to keep going; only a shadow ray, whose two ends are already
 /// known, can take the average instead of a sample.
 ///
+/// `from` is already stepped off the surface it leaves, on the side
+/// `from_normal` points to (`Hit::offset`), and is not stepped again
+/// ([`crate::intersect::shadow_ray`]).
+///
 /// `blockers` are the parts that cast this light's shadow (shadow linking);
 /// the rest let it by. Every part, for a light without shadow links, takes
 /// the one `occluded` as before.
@@ -5981,8 +5985,10 @@ mod tests {
     /// everything a catcher reports, this is the number it is estimating.
     fn blocked_share(intersector: &AnalyticIntersector) -> f32 {
         let scene = intersector.scene();
+        // A step off the floor, as a shadow ray from a hit there starts.
+        let floor = tequila_core::math::offset_ray_origin(Vec3::ZERO, Vec3::Y);
         let blocked_towards =
-            |direction: Vec3, distance: f32| intersector.occluded(Vec3::ZERO, Vec3::Y, direction * distance, -direction);
+            |direction: Vec3, distance: f32| intersector.occluded(floor, Vec3::Y, direction * distance, -direction);
         let (mut blocked, mut total) = (0.0f64, 0.0f64);
         let (columns, rows) = (1440, 360);
         for row in 0..rows {

@@ -87,6 +87,10 @@ pub trait Intersector: Send + Sync {
     /// An instance with `casts_shadows` off does not occlude, though
     /// [`Self::intersect`] still meets it: its shadow is switched off, not the
     /// part.
+    ///
+    /// `from` is where the ray starts, already stepped off the surface it
+    /// leaves on the side `from_normal` points to, as [`shadow_ray`] takes
+    /// it; `to` is stepped off its own surface along `to_normal` here.
     fn occluded(&self, from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3) -> bool;
 
     /// [`Self::occluded`] past the shadow-catching floors the bounces pass
@@ -109,14 +113,23 @@ pub trait Intersector: Send + Sync {
     fn scene(&self) -> &SceneSnapshot;
 }
 
-/// Offsets and shortens a shadow ray so it neither self-intersects at its
-/// origin nor hits the light it is aimed at.
+/// A shadow ray from `from` to just short of `to`, so it neither meets the
+/// surface it leaves nor the light it is aimed at.
 ///
-/// Both ends need the treatment: offsetting only the origin leaves the ray
-/// terminating exactly on the light's surface, where it reliably reports an
-/// occlusion against the light itself and turns every light black.
+/// `from` is taken as it is: the caller steps it off its surface, once, on
+/// the side `from_normal` points to - from a hit by [`Hit::offset`], sized to
+/// the numbers the hit was worked out from, which this cannot know. It used
+/// to be stepped off again here, by the step for its coordinates alone, and
+/// the two came to 2.3 µm a hand's length from the world's origin: a shadow
+/// ray from paint 2 µm behind a thin lens started past the lens and missed
+/// it. `from_normal` is still the way the ray goes should the two ends meet.
+///
+/// The far end is stepped off its surface along `to_normal` and the ray
+/// stops short of it: ending exactly on the light's surface, the ray
+/// reliably reports an occlusion against the light itself and turns every
+/// light black.
 pub fn shadow_ray(from: Vec3, from_normal: Vec3, to: Vec3, to_normal: Vec3) -> Ray {
-    let origin = tequila_core::math::offset_ray_origin(from, from_normal);
+    let origin = from;
     let target = tequila_core::math::offset_ray_origin(to, to_normal);
     let delta = target - origin;
     let distance = delta.length();
@@ -177,8 +190,19 @@ mod tests {
         let ray = shadow_ray(vec3(0.0, 0.0, 0.0), Vec3::Y, vec3(0.0, 10.0, 0.0), -Vec3::Y);
         assert!(ray.t_max < 10.0, "ray reaches the light: {}", ray.t_max);
         assert!(ray.t_max > 9.99, "ray falls unreasonably short");
-        assert!(ray.origin.y > 0.0, "origin not offset off the surface");
         assert!((ray.direction - Vec3::Y).length() < 1e-4);
+    }
+
+    /// The start is stepped off its surface once, by the caller, and not
+    /// again here: a hand's length from the origin the second step took a
+    /// shadow ray from paint past a lens 2 µm in front of it.
+    #[test]
+    fn shadow_rays_start_where_they_are_put() {
+        let hit = Hit { position: vec3(0.0, 0.1, 0.3), ..hit_facing_up() };
+        let from = hit.offset(Vec3::Z);
+        let ray = shadow_ray(from, Vec3::Z, vec3(0.0, 0.1, 1.0), -Vec3::Z);
+        assert_eq!(ray.origin, from, "the start was stepped off its surface again");
+        assert!(ray.origin.z - 0.3 < 1.5e-6, "one step is {} m", ray.origin.z - 0.3);
     }
 
     #[test]
@@ -193,14 +217,16 @@ mod tests {
     #[test]
     fn shadow_rays_scale_their_offset_with_the_scene() {
         // At large coordinates a fixed epsilon would vanish into the float
-        // spacing; the offset has to scale (see `offset_ray_origin`).
+        // spacing; the far end's step has to scale (see `offset_ray_origin`).
         let far = vec3(1.0e5, 1.0e5, 1.0e5);
-        let ray = shadow_ray(far, Vec3::Y, far + vec3(0.0, 100.0, 0.0), -Vec3::Y);
-        assert!(ray.origin.y > far.y, "no offset applied at scale");
-        // The offset is a fixed number of ULPs, so its absolute size grows
+        let light = far + vec3(0.0, 100.0, 0.0);
+        let ray = shadow_ray(far, Vec3::Y, light, -Vec3::Y);
+        let end = ray.at(ray.t_max);
+        assert!(end.y < light.y, "the ray reaches the light at scale");
+        // The step is a fixed number of ULPs, so its absolute size grows
         // with the coordinate — that is the whole point of the method. What
         // must stay small is its size *relative* to the scene.
-        let relative = (ray.origin.y - far.y) / far.y;
+        let relative = (light.y - end.y) / light.y;
         assert!(relative < 1e-4, "offset too coarse at scale: {relative}");
     }
 }

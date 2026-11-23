@@ -986,7 +986,9 @@ mod tests {
             let leaving = Ray::new(hit.position, direction.normalize());
             assert!(bvh.intersect(&leaving).is_none(), "met the same fibre again going {direction:?}");
             let far = hit.position + direction.normalize() * 10.0;
-            assert!(!bvh.occluded(hit.position, hit.geometric_normal, far, -direction.normalize()), "shadowed by its own fibre going {direction:?}");
+            // From a step off the side it leaves by, as a light sample's.
+            let side = if direction.dot(hit.geometric_normal) < 0.0 { -hit.geometric_normal } else { hit.geometric_normal };
+            assert!(!bvh.occluded(hit.offset(side), side, far, -direction.normalize()), "shadowed by its own fibre going {direction:?}");
         }
         let across = bvh.intersect(&Ray::new(hit.position, vec3(1.0, 0.0, 0.0))).expect("the fibre beside it");
         assert_eq!(across.instance, InstanceId(1));
