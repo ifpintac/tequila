@@ -167,7 +167,9 @@ pub struct FrameParams {
     pub dome_radius: f32,
     pub dome_height: f32,
     pub dome_flatten: u32,
-    pub _pad6: u32,
+    /// Where the spectral tables start in the pictures' texels
+    /// (`spectral.wgsl`), under [`MODE_SPECTRAL`].
+    pub spectral_base: u32,
     pub filter_table: [[f32; 4]; 256],
 }
 
@@ -258,6 +260,45 @@ pub struct PixelSums {
 
 const MODE_ON_CARD: u32 = 1;
 const MODE_REJECT: u32 = 2;
+/// [`FrameParams::mode`]: the paths carry four wavelengths, not three
+/// channels (`SpectralMode`, resolved for the scene).
+pub const MODE_SPECTRAL: u32 = 4;
+/// With [`MODE_SPECTRAL`], each path carries its hero alone from the start
+/// (`IntegratorConfig::spectral_companions` off).
+pub const MODE_ALONE: u32 = 8;
+
+/// The spectral tables (`tequila_render_core::spectral`) as `spectral.wgsl`
+/// reads them, at its offsets: the film's response at its 81 nodes, the
+/// wavelength distribution's 401 edges as the least float at or above each
+/// and as a high and a low float, its 400 bins' densities, the coefficient
+/// table's 64 brightnesses and its 3 x 64^3 coefficient triples - 9.4 MB.
+pub fn spectral_tables() -> Vec<u32> {
+    use tequila_render_core::spectral;
+    let mut words: Vec<u32> = Vec::new();
+    for node in spectral::response_nodes() {
+        words.extend(node.map(f32::to_bits));
+    }
+    assert_eq!(words.len(), 243, "the film's response has 81 nodes, as the card reads it");
+    let (cdf, density) = spectral::sampling_tables();
+    assert_eq!((cdf.len(), density.len()), (401, 400), "the wavelength distribution has 400 bins, as the card reads it");
+    for &c in cdf {
+        // An f32 is at least `c` exactly when it is at least this.
+        let near = c as f32;
+        let up = if (near as f64) < c { f32::from_bits(near.to_bits() + 1) } else { near };
+        words.push(up.to_bits());
+    }
+    words.extend(cdf.iter().map(|&c| (c as f32).to_bits()));
+    words.extend(cdf.iter().map(|&c| ((c - (c as f32) as f64) as f32).to_bits()));
+    words.extend(density.iter().map(|d| d.to_bits()));
+    assert_eq!(words.len(), 1846);
+    let table = spectral::table();
+    words.extend(table.scale().map(f32::to_bits));
+    assert_eq!(words.len(), 1910);
+    for c in table.coefficients() {
+        words.extend(c.map(f32::to_bits));
+    }
+    words
+}
 
 /// What a render asks, as the processor's `RenderContext` has it.
 #[derive(Clone, Debug)]
@@ -313,8 +354,6 @@ struct GlassScene {
     panes: bool,
     dispersion: bool,
     subsurface: bool,
-    film: bool,
-    flakes: bool,
     scattering: bool,
     volume_maps: bool,
     folded_glass: bool,
@@ -349,11 +388,6 @@ impl GlassScene {
             panes: scene.has_panes(),
             dispersion: scene.has_dispersion(),
             subsurface: any(&|m| m.subsurface_weight != 0.0),
-            film: any(&|m| m.thin_film_weight > 1e-4),
-            // A material's coverage is always nought: it is the point's,
-            // which the processor fills in wherever the weight is over 1e-4
-            // (flakes.rs's apply).
-            flakes: any(&|m| m.flake_weight > 1e-4),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
@@ -367,19 +401,10 @@ impl GlassScene {
     }
 
     fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
-        use tequila_render_core::settings::{CausticsMethod, SpectralMode};
+        use tequila_render_core::settings::CausticsMethod;
+        // Rendered by wavelength or not as the processor renders it
+        // (`GpuRenderer::spectral`): no sentence for either.
         let mut limits = Vec::new();
-        let spectral = match config.spectral {
-            SpectralMode::Auto => self.dispersion,
-            SpectralMode::On => true,
-            SpectralMode::Off => false,
-        };
-        if spectral {
-            limits.push("the picture is traced in red, green and blue rather than by wavelength");
-        }
-        if self.dispersion {
-            limits.push("glass that disperses light bends every colour alike");
-        }
         if config.caustics {
             limits.push(match config.caustics_method {
                 CausticsMethod::Photons => "no caustic photons: the light glass and mirrors focus is left out",
@@ -394,12 +419,6 @@ impl GlassScene {
         }
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
-        }
-        if self.film {
-            limits.push("a thin film is left out");
-        }
-        if self.flakes {
-            limits.push("metallic flakes are left out");
         }
         if self.folded_glass {
             limits.push("glass whose graph sets its transmission is a medium as its graph's constants have it");
@@ -495,6 +514,15 @@ pub struct GpuRenderer {
     glass_scene: GlassScene,
     /// What [`crate::textures::texture_limits`] says of the scene.
     texture_limits: Vec<&'static str>,
+    /// Where the spectral tables start in the pictures' texels, nought
+    /// where the scene disperses no light and they are not there.
+    spectral_base: u32,
+    /// The scene's bind group's layout, for [`GpuRenderer::late_spectral`].
+    scene_layout: wgpu::BindGroupLayout,
+    /// The scene's bind group with the spectral tables at the end of a copy
+    /// of the pictures' texels, and where they start: built at the first
+    /// frame that traces wavelengths in a scene that disperses no light.
+    spectral_late: std::sync::OnceLock<(wgpu::BindGroup, u32)>,
     /// The glowing triangles' tree and leaves (`crate::emitters`), which the
     /// scene's bind group reads, and whether there are any.
     pub emitters: [wgpu::Buffer; 2],
@@ -744,7 +772,7 @@ impl GpuRenderer {
         // The materials as data: a material with a program has the constants
         // its graph folded to (`CompiledGraph::constants`), which the
         // program's driven parameters are written over at each point. One
-        // the card's stack cannot render yet (glass, skin, film, flakes)
+        // the card's stack cannot render yet (skin, scattering)
         // renders as its opaque part, and says so; one whose program the
         // card cannot run renders as its constants, and says why.
         let mut pictures = CardPictures::of(scene);
@@ -778,7 +806,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  or dispersion (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface or scattering (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
@@ -812,7 +840,26 @@ impl GpuRenderer {
         let emitter_leaves = if emitter_records.leaves.is_empty() { vec![crate::emitters::EMITTER_NONE] } else { emitter_records.leaves.clone() };
         let emitter_nodes = init("emitter nodes", bytemuck::cast_slice(&emitter_nodes));
         let emitter_leaves = init("emitter leaves", bytemuck::cast_slice(&emitter_leaves));
-        let texture_texels = init("texture texels", bytemuck::cast_slice(&pictures.texels));
+        // A scene that disperses light is rendered by wavelength (the
+        // render's SpectralMode Auto): the spectral tables ride at the end
+        // of the pictures' texels, no binding of their own.
+        let spectral_base = if scene.has_dispersion() {
+            let base = pictures.texels.len() as u32;
+            pictures.texels.extend(spectral_tables());
+            base
+        } else {
+            0
+        };
+        // Copied from as well, should a frame trace wavelengths in a scene
+        // that disperses no light (`GpuRenderer::late_spectral`).
+        let texture_texels = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("texture texels"),
+                contents: bytemuck::cast_slice(&pictures.texels),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            },
+        );
         let texture_header = init("texture header", bytemuck::cast_slice(&pictures.header));
 
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -951,6 +998,9 @@ impl GpuRenderer {
             lamp_scene: LampScene::of(scene),
             glass_scene,
             texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
+            spectral_base,
+            scene_layout,
+            spectral_late: std::sync::OnceLock::new(),
             emitters: [emitter_nodes, emitter_leaves],
             has_emitters,
             cut_programs,
@@ -992,7 +1042,84 @@ impl GpuRenderer {
     /// The parts of the kernel a frame of `settings` at `width` by `height`
     /// reaches through its camera and film ([`KernelFeatures::of_frame`]).
     pub fn frame_features(&self, settings: &FrameSettings, width: usize, height: usize) -> KernelFeatures {
-        KernelFeatures::of_frame(self.params(settings, width, height, 0, 1).camera_flags)
+        let params = self.params(settings, width, height, 0, 1);
+        KernelFeatures::of_frame(params.camera_flags) | if params.mode & MODE_SPECTRAL != 0 { KernelFeatures::SPECTRAL } else { KernelFeatures::NONE }
+    }
+
+    /// Whether a frame under `config` traces wavelengths (the scene's
+    /// SpectralMode resolved, as the processor resolves it): where the
+    /// spectral tables are on the card, which they are wherever the scene
+    /// disperses light.
+    fn spectral(&self, config: &IntegratorConfig) -> bool {
+        use tequila_render_core::settings::SpectralMode;
+        let wanted = match config.spectral {
+            SpectralMode::Auto => self.glass_scene.dispersion,
+            SpectralMode::On => true,
+            SpectralMode::Off => false,
+        };
+        wanted
+    }
+
+    /// The scene's bind group a frame under `config` renders with: the
+    /// scene's own, or where it traces wavelengths in a scene that
+    /// disperses no light, the one with the spectral tables.
+    fn scene_group_for(&self, config: &IntegratorConfig) -> &wgpu::BindGroup {
+        if self.spectral_base == 0 && self.spectral(config) {
+            &self.late_spectral().0
+        } else {
+            &self.scene_group
+        }
+    }
+
+    /// The scene's bind group with the spectral tables added at the end of
+    /// a copy of the pictures' texels, and where they start: for a frame
+    /// that traces wavelengths (SpectralMode On) in a scene that disperses
+    /// no light, whose tables were not uploaded with it. Built once.
+    fn late_spectral(&self) -> &(wgpu::BindGroup, u32) {
+        self.spectral_late.get_or_init(|| {
+            let device = &self.gpu.device;
+            let old = &self.pictures[0];
+            let tables = spectral_tables();
+            let texels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("texture texels and the spectral tables"),
+                size: old.size() + tables.len() as u64 * 4,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("spectral tables") });
+            encoder.copy_buffer_to_buffer(old, 0, &texels, 0, old.size());
+            self.gpu.queue.submit(Some(encoder.finish()));
+            self.gpu.queue.write_buffer(&texels, old.size(), bytemuck::cast_slice(&tables));
+            let s = &self.scene;
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scene, with the spectral tables"),
+                layout: &self.scene_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::AccelerationStructure(&s.tlas) },
+                    wgpu::BindGroupEntry { binding: 1, resource: s.positions.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 2, resource: s.normals.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: s.indices.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: s.meshes.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 5, resource: s.instances.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: self.materials.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: s.catchers.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 8, resource: self.lights.lights.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 9, resource: self.lights.nodes.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 10, resource: self.lights.links.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 11, resource: self.programs[0].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 12, resource: self.programs[1].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 13, resource: self.programs[2].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 14, resource: s.uvs.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 15, resource: s.tangents.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 16, resource: texels.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 17, resource: self.pictures[1].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 18, resource: self.emitters[0].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 19, resource: self.emitters[1].as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 20, resource: s.attributes.as_entire_binding() },
+                ],
+            });
+            (group, (old.size() / 4) as u32)
+        })
     }
 
     /// The pipeline a pass that reaches the frame's parts `frame` renders
@@ -1134,7 +1261,10 @@ impl GpuRenderer {
             env_intensity: e.intensity,
             env_weighted_sum: e.weighted_sum,
             env_infinite: e.infinite as u32,
-            mode: if self.accumulate_on_card { MODE_ON_CARD } else { 0 } | if settings.reject_fireflies { MODE_REJECT } else { 0 },
+            mode: if self.accumulate_on_card { MODE_ON_CARD } else { 0 }
+                | if settings.reject_fireflies { MODE_REJECT } else { 0 }
+                | if self.spectral(&settings.config) { MODE_SPECTRAL } else { 0 }
+                | if self.spectral(&settings.config) && !settings.config.spectral_companions { MODE_ALONE } else { 0 },
             off_luminance: e.off_luminance,
             off_cdf: e.off_cdf,
             off_power: e.off_power,
@@ -1193,7 +1323,7 @@ impl GpuRenderer {
             dome_radius: self.dome.radius.unwrap_or(0.0),
             dome_height: self.dome.height,
             dome_flatten: self.dome.flatten as u32,
-            _pad6: 0,
+            spectral_base: if self.spectral_base != 0 || !self.spectral(&settings.config) { self.spectral_base } else { self.late_spectral().1 },
         }
     }
 
@@ -1308,7 +1438,7 @@ impl GpuRenderer {
                 {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("transport"), timestamp_writes: None });
                     pass.set_pipeline(pipeline);
-                    pass.set_bind_group(0, &self.scene_group, &[]);
+                    pass.set_bind_group(0, self.scene_group_for(&settings.config), &[]);
                     pass.set_bind_group(1, &self.tables.bind_group, &[]);
                     pass.set_bind_group(2, &self.environment_group, &[]);
                     pass.set_bind_group(3, &frame_group, &[]);
@@ -1345,6 +1475,7 @@ impl GpuRenderer {
                 let view = readback.slice(..used).get_mapped_range().expect("the samples are mapped");
                 let values: &[[f32; 4]] = bytemuck::cast_slice(&view[..]);
                 let reject = settings.reject_fireflies;
+                let spectral = self.spectral(&settings.config);
                 for (index, pixel) in framebuffer.pixels_mut().iter_mut().enumerate() {
                     for i in 0..count as usize {
                         let at = (i * pixels + index) * 2;
@@ -1354,6 +1485,11 @@ impl GpuRenderer {
                             background: Spectrum { r: b[0], g: b[1], b: b[2] },
                             coverage: r[3],
                             escaped: r[3] == 0.0,
+                            // The one wavelength a dispersed path carried,
+                            // or how luminous a spectral path's are, which
+                            // the firefly rejection judges it by.
+                            wavelength: (!spectral && b[3] > 0.0).then_some(b[3]),
+                            hue: spectral.then_some(b[3]),
                             ..Default::default()
                         };
                         pixel.accumulate_with(&result, reject, None);

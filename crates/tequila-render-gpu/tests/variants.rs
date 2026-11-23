@@ -72,6 +72,9 @@ fn each_scene_keeps_the_parts_it_reaches() {
         assert_eq!(features.contains(F::BACKGROUND), ["background_colour", "backplate"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::BACKPLATE), *name == "backplate", "{name}: {}", features.names());
         assert_eq!(features.contains(F::DOME), *name == "finite_dome", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::FLAKES), *name == "metallic_paint", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::FILM), *name == "thin_film", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::DISPERSION), name.starts_with("dispersion") || *name == "spectral_floor", "{name}: {}", features.names());
         let frame_parts = F::THIN_LENS | F::BLADES | F::SHIFT | F::ORTHOGRAPHIC | F::EQUIRECTANGULAR | F::FILTER;
         assert!(F::of_frame(u32::MAX).contains(frame_parts) && !F::of_frame(u32::MAX).contains(F::DOME));
         assert!(features.without(frame_parts) == *features, "{name}: {}", features.names());
@@ -96,14 +99,14 @@ fn each_scene_keeps_the_parts_it_reaches() {
     // Only the scenes with hidden parts, shadow links, parts that cast no
     // shadow or IES lamps keep those parts.
     for (name, features) in &chosen {
-        assert_eq!(features.contains(F::UNSEEN), *name == "hidden_parts", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::UNSEEN), ["hidden_parts", "spectral_options"].contains(name), "{name}: {}", features.names());
         assert_eq!(features.contains(F::SHADOW_LINKS), ["shadow_links", "floor_lamps"].contains(name), "{name}: {}", features.names());
-        assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts"].contains(name), "{name}: {}", features.names());
-        assert_eq!(features.contains(F::IES), *name == "ies_lamps", "{name}: {}", features.names());
+        assert_eq!(features.contains(F::PASSES_PARTS), ["shadow_links", "shadowless_parts", "spectral_options"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::IES), ["ies_lamps", "spectral_options"].contains(name), "{name}: {}", features.names());
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
@@ -133,6 +136,10 @@ fn frame_parts_are_the_cameras() {
             "all_round" => F::EQUIRECTANGULAR,
             "shifted_lens" => F::SHIFT,
             "soft_filter" | "wide_box" => F::FILTER,
+            // A render by wavelength: Spectral On whatever the scene; Auto
+            // only where it disperses, which the grey product's renderer,
+            // the one asked here, does not.
+            "spectral_lamps" | "spectral_options" => F::SPECTRAL,
             _ => F::NONE,
         };
         eprintln!("{}: the frame reaches {}", scene.name, parts.names());

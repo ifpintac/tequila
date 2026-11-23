@@ -2,14 +2,16 @@
 //! `tequila_materials::openpbr::Material` that `openpbr.wgsl`'s stack reads,
 //! laid out for a storage buffer.
 //!
-//! The stack on the card is fuzz, coat, metal, dielectric specular, the
-//! transmission lobe (glass, thin-walled or solid) and the diffuse
-//! substrate, and this holds what that reads; and what the integrator reads
-//! of glass besides - the medium a solid part is (its priority, its index as
-//! the scene has it, whether its volume absorbs) and the clear glass a
-//! shadow ray passes (`Pane`). Subsurface, thin film and flakes are not on
-//! the card yet, so their parameters are not here; [`GpuMaterial::supports`]
-//! says whether a material is one the card's stack is the processor's for.
+//! The stack on the card is fuzz, coat, a metal flake under the coat,
+//! metal and dielectric specular (each under a thin film where the material
+//! has one), the transmission lobe (glass, thin-walled or
+//! solid) and the diffuse substrate, and this holds what that reads; and
+//! what the integrator reads of glass besides - the medium a solid part is
+//! (its priority, its index as the scene has it, whether its volume absorbs)
+//! and the clear glass a shadow ray passes (`Pane`); and the thin film over
+//! the metal and the interface. Subsurface is not on the card yet, so its
+//! parameters are not here; [`GpuMaterial::supports`] says whether a
+//! material is one the card's stack is the processor's for.
 //! Cutout opacity and emission are the integrator's, not the BSDF's, and
 //! are here for it to read (`transport.wgsl`: a cutout's holes, a glowing
 //! surface), among the floats a program writes.
@@ -95,6 +97,23 @@ pub struct GpuMaterial {
     /// where the strength is none), and in `[3]` what it absorbs a metre
     /// before its colour, `volume_density` over `transmission_depth`.
     pub volume_glow: [f32; 4],
+    /// Metallic paint's flakes (`flakes.rs`): `flake_color`, and in `[3]`
+    /// `flake_weight`, how much of the surface they cover.
+    pub flake_color: [f32; 4],
+    /// `flake_size`, `flake_spread` and `flake_roughness`, and in `[3]` the
+    /// point's `flake_coverage`: nought in a scene's record, filled in at
+    /// each point by the kernel (`flakes.wgsl`) as the processor fills it
+    /// in, wherever the weight is over 1e-4.
+    pub flake: [f32; 4],
+    /// The point's `flake_normal`, the flake's lean in the shading frame:
+    /// straight up in a scene's record, the kernel's at a point. `[3]`
+    /// unused.
+    pub flake_normal: [f32; 4],
+    /// The thin film over the metal and the dielectric interface
+    /// (`thin_film.rs`): `thin_film_weight`, `thin_film_thickness` in
+    /// nanometres and `thin_film_ior`; and in `[3]`
+    /// `transmission_dispersion_abbe`, the glass's dispersion.
+    pub film: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -199,20 +218,19 @@ impl GpuMaterial {
                 let per_metre = if m.transmission_depth > 0.0 { m.volume_density.max(0.0) / m.transmission_depth } else { 0.0 };
                 [glow.r, glow.g, glow.b, per_metre]
             },
+            flake_color: [m.flake_color.r, m.flake_color.g, m.flake_color.b, m.flake_weight],
+            flake: [m.flake_size, m.flake_spread, m.flake_roughness, m.flake_coverage],
+            flake_normal: [m.flake_normal.x, m.flake_normal.y, m.flake_normal.z, 0.0],
+            film: [m.thin_film_weight, m.thin_film_thickness, m.thin_film_ior, m.transmission_dispersion_abbe],
         }
     }
 
     /// Whether the card renders `m` as the processor does: no subsurface at
-    /// all (even a share too small for its own lobe takes from the diffuse),
-    /// no thin film the processor would put on, no flake under this point;
-    /// and as glass, none that scatters in its volume (a random walk) or
-    /// that disperses light (a wavelength of its own).
+    /// all (even a share too small for its own lobe takes from the diffuse);
+    /// and as glass, none that scatters in its volume (a random walk).
+    /// Flakes, thin films and glass that disperses light it renders.
     pub fn supports(m: &Material) -> bool {
         let glass = m.transmission_weight > 0.0;
-        m.subsurface_weight == 0.0
-            && m.thin_film_weight <= 1e-4
-            && (m.flake_weight <= 1e-4 || m.flake_coverage <= 0.0)
-            && !(glass && m.volume_scattering().is_some())
-            && !(glass && m.transmission_dispersion_abbe > 0.0)
+        m.subsurface_weight == 0.0 && !(glass && m.volume_scattering().is_some())
     }
 }

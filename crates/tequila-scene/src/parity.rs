@@ -582,6 +582,102 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: direct_off,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "metallic_paint",
+    covers: "R3 tier A, flakes: lamp_lit's product in metallic paints - the body candy red under a clear coat, \
+             flakes 3 mm across over half of it leaning up to half of sixty degrees; the buttons mirror-smooth \
+             flakes all over, no coat, leaning anywhere to sixty degrees; the bezel a half metal under a coat and a \
+             fuzz, flakes 2 mm over a third of it - the flake field (Worley cells in the part's object space, a \
+             flake's presence and lean from its cell), the metal lobe in the flake's frame under the coat in place \
+             of that share of the base, its share of the base's response the coat traps light against, mirror flakes \
+             as delta lobes and Filter Glossy's blur of them, the stack's choice of a flake by its albedo where it faces",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: metallic_paint,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "thin_film",
+    covers: "R3 tier A, thin film: the product under the environment, films over every kind of interface - a \
+             rough plastic body under a film 450 nm thick, an aluminium bezel anodised under one 320 nm thick of \
+             index 2, a mirror-smooth lens coated against reflection (110 nm of index 1.38), the trim mirror-smooth \
+             gold under a thick film (1.2 um) at seven tenths, the buttons half metal half plastic under a film \
+             at half its weight and a coat with none - the Airy sum at 600, 550 and 450 nm over a dielectric and \
+             over a metal's complex index, both polarizations, blended with the bare interface by the film's weight, \
+             on rough and mirror-smooth lobes",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: thin_film,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_rgb",
+    covers: "R3 tier B, dispersion in an RGB render (spectral off): lamp_lit's product with a smooth ball of \
+             dispersive glass (index 1.9, Abbe number 18) and a rough one (0.2, Abbe number 30) in front of it - \
+             a wavelength drawn at the first such glass a path meets (a draw of the open stream), the path \
+             weighed by the colour it stands for, the index at that wavelength at every dispersive surface after, \
+             entering and leaving alike; no split at dispersive glass; the firefly rejection judging a dispersed \
+             path by the light it carries",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_rgb,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_spectral",
+    covers: "R3 tier B, spectral mode: dispersion_rgb's balls rendered by wavelength, as Auto renders a scene that \
+             disperses - four wavelengths a path from the sample's wavelength dimension (the hero and three spaced \
+             evenly in the sampling distribution's measure), every colour read at them by the processor's \
+             Jakob-Hanika table, the hero's index at a dispersive surface, the hero alone through it (and for the \
+             light sampled through the rough one), the film's response at the end, the firefly rejection judging \
+             a path by how luminous its wavelengths are",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_spectral,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_floor",
+    covers: "R3 tier B, spectral mode on the floor: glass_ball_floor and a small dispersive gem beside the ball, so \
+             the picture is traced by wavelength - the sky at an escape and in light samples, the floor's shadow \
+             and its reflection (a path of its own on the same wavelengths), the split at the plain glass ball \
+             (its reflection filtered by the weight the wavelengths share), Beer-Lambert inside it, the clamps \
+             judged by the colour the wavelengths register as",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_floor,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_lamps",
+    covers: "R3 tier B, spectral mode on: lamps_in_view rendered by wavelength though nothing in it disperses, as              the render's Spectral On renders it - the spectral tables put on the card at the first frame that asks              for them; the lamps met along the way and their stand-ins, the sky, the lamps' and the sky's light              samples summed as one colour and read at the four wavelengths, plastics, metals and the ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_options",
+    covers: "R3 tier B with tier A's options, spectral mode on: shadowless_parts rendered by wavelength - the lamps,              the sky and the glowing panel met past the balls and the card that cast no shadow, through a fill disc              that casts none, and the studio floor's nearness measured past them - with an IES downlight over the              floor drawn for its shadows, a ball the camera does not see and one held out; every colour that meets              a path there read at the four wavelengths",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_options,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -886,6 +982,7 @@ fn wide_box() -> SceneDocument {
 pub fn config(document: &SceneDocument) -> IntegratorConfig {
     let mut config = document.lighting.config();
     config.pixel_filter = document.render.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    config.spectral = document.render.spectral;
     config
 }
 
@@ -1951,6 +2048,181 @@ fn driven_film() -> SceneDocument {
     let checker = graph.add_node(checker);
     graph.connect(m, checker, Socket::Input(0));
     graph.connect(checker, output, Socket::Param(Param::TransmissionWeight));
+    document
+}
+
+/// `document`'s material `name` changed by `change`.
+fn repainted(document: &mut SceneDocument, name: &str, change: &dyn Fn(&mut Material)) {
+    let key = document.materials.iter().find(|(_, m)| m.name == name).map(|(k, _)| k).expect("the material");
+    change(document.materials.get_mut(key).expect("the material").graph.material_mut());
+}
+
+/// lamp_lit's product in metallic paints (`flakes.rs`): flakes of a few
+/// millimetres, a pixel or so across here, so each sparkles on its own.
+fn metallic_paint() -> SceneDocument {
+    let mut document = lamp_lit();
+    repainted(&mut document, "Body", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.3, g: 0.02, b: 0.025 },
+            flake_weight: 0.5,
+            flake_size: 0.003,
+            flake_spread: 0.5,
+            flake_roughness: 0.15,
+            flake_color: Spectrum { r: 0.9, g: 0.55, b: 0.45 },
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Button", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.05, g: 0.1, b: 0.3 },
+            coat_weight: 0.0,
+            flake_weight: 1.0,
+            flake_size: 0.004,
+            flake_spread: 1.0,
+            flake_roughness: 0.0,
+            flake_color: Spectrum::splat(0.95),
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Bezel", &|m| {
+        m.base_color = Spectrum { r: 0.2, g: 0.6, b: 0.3 };
+        m.base_metalness = 0.5;
+        m.coat_weight = 1.0;
+        m.fuzz_weight = 0.5;
+        m.fuzz_color = Spectrum { r: 0.9, g: 0.9, b: 1.0 };
+        m.flake_weight = 0.3;
+        m.flake_size = 0.002;
+        m.flake_spread = 0.8;
+        m.flake_roughness = 0.3;
+        m.flake_color = Spectrum { r: 0.8, g: 0.85, b: 0.9 };
+    });
+    document
+}
+
+/// `simple_product` with thin films over its interfaces (`thin_film.rs`):
+/// over a rough dielectric, a rough metal, a smooth dielectric, a smooth
+/// metal and a half metal under a coat.
+fn thin_film() -> SceneDocument {
+    use tequila_materials::fresnel::metals;
+    let film = |m: &mut Material, weight: f32, thickness: f32, ior: f32| {
+        m.thin_film_weight = weight;
+        m.thin_film_thickness = thickness;
+        m.thin_film_ior = ior;
+    };
+    simple_product_mapped(&|(name, material_type, mut m)| {
+        match name {
+            "Body" => film(&mut m, 1.0, 450.0, 1.45),
+            "Bezel" => film(&mut m, 1.0, 320.0, 2.0),
+            "Lens" => {
+                m.specular_roughness = 0.0;
+                film(&mut m, 1.0, 110.0, 1.38);
+            }
+            "Trim" => {
+                m = Material::metal(metals::GOLD, 0.0);
+                film(&mut m, 0.7, 1200.0, 1.6);
+            }
+            "Button" => {
+                m.base_metalness = 0.5;
+                m.coat_weight = 1.0;
+                m.coat_roughness = 0.1;
+                film(&mut m, 0.5, 600.0, 1.33);
+            }
+            _ => {}
+        }
+        (name, material_type, m)
+    })
+    .0
+}
+
+/// lamp_lit's product with two balls of dispersive glass in front of it,
+/// one smooth and one rough, rendered as `spectral` says.
+fn dispersive_balls(spectral: tequila_render_core::settings::SpectralMode) -> SceneDocument {
+    let mut document = lamp_lit();
+    let mut bus = crate::command::CommandBus::new();
+    let smooth = Material {
+        transmission_depth: 0.4,
+        transmission_color: Spectrum { r: 0.95, g: 0.97, b: 0.9 },
+        specular_ior: 1.9,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 18.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let rough = Material { specular_roughness: 0.2, specular_ior: 1.6, transmission_dispersion_abbe: 30.0, ..smooth.clone() };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Smooth Gem", ball(0.12), MaterialType::GlassSolid, smooth, Transform::translation(vec3(0.25, 0.121, 0.85))),
+            ("Rough Gem", ball(0.08), MaterialType::GlassSolid, rough, Transform::translation(vec3(-0.25, 0.081, 0.9))),
+        ],
+    );
+    document.render.spectral = spectral;
+    document
+}
+
+/// The dispersive balls in an RGB render.
+fn dispersion_rgb() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Off)
+}
+
+/// lamps_in_view rendered by wavelength, though nothing in it disperses.
+fn spectral_lamps() -> SceneDocument {
+    let mut document = lamps_in_view();
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// shadowless_parts rendered by wavelength (Spectral On), though nothing in
+/// it disperses, with an IES downlight over the floor, a ball the camera
+/// does not see and one held out, standing clear of every other part.
+fn spectral_options() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape, Photometry};
+    use crate::tree::Rays;
+    let mut document = shadowless_parts();
+    let mut bus = crate::command::CommandBus::new();
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Downlight",
+        LightSettings { shape: LightShape::Point { radius: 0.0 }, photometry: Some(Photometry { path: PROFILES[0].to_string() }), intensity: Intensity::Candela(0.02), ..LightSettings::default() },
+        Transform::translation(vec3(0.2, 1.8, 0.4)),
+    );
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Unseen Ball", ball(0.06), MaterialType::Diffuse, Material::diffuse(Spectrum { r: 0.2, g: 0.3, b: 0.85 }), Transform::translation(vec3(0.05, 0.062, 0.95))),
+            ("Held Out", ball(0.07), MaterialType::Plastic, Material::plastic(Spectrum { r: 0.9, g: 0.85, b: 0.2 }, 0.2), Transform::translation(vec3(0.75, 0.072, 0.95))),
+        ],
+    );
+    for (name, rays) in [("Unseen Ball", Rays { camera: false, ..Rays::default() }), ("Held Out", Rays { holdout: true, ..Rays::default() })] {
+        for id in parts_named(&document, name) {
+            bus.apply(&mut document, Command::set_rays(id, rays)).expect("the part's rays are set");
+        }
+    }
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// The dispersive balls rendered by wavelength.
+fn dispersion_spectral() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Auto)
+}
+
+/// glass_ball_floor and a small dispersive gem beside the ball, so the
+/// picture is traced by wavelength.
+fn spectral_floor() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let gem = Material {
+        transmission_depth: 0.2,
+        transmission_color: Spectrum { r: 0.9, g: 0.95, b: 1.0 },
+        specular_ior: 2.0,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 25.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Gem", ball(0.05), MaterialType::GlassSolid, gem, Transform::translation(vec3(-0.1, 0.051, 0.95)))]);
     document
 }
 

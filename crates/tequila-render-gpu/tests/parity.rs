@@ -340,6 +340,125 @@ fn direct_lighting_off_is_the_processors_picture() {
     same_picture("direct_off");
 }
 
+/// Metallic paints: flakes under a coat, mirror flakes with none, flakes
+/// over a half metal under a fuzz.
+#[test]
+fn metallic_paint_is_the_processors_picture() {
+    same_picture("metallic_paint");
+}
+
+/// Thin films over a rough and a smooth dielectric, a rough and a smooth
+/// metal, a half metal under a coat.
+#[test]
+fn thin_films_are_the_processors_picture() {
+    same_picture("thin_film");
+}
+
+/// Dispersive glass in an RGB render: a wavelength drawn at the first such
+/// glass a path meets, the index at it from there on.
+#[test]
+fn dispersion_in_rgb_is_the_processors_picture() {
+    same_picture("dispersion_rgb");
+}
+
+/// Dispersive glass rendered by wavelength, as Auto renders it: four
+/// wavelengths a path, the hero alone through the glass.
+#[test]
+fn dispersion_by_wavelength_is_the_processors_picture() {
+    same_picture("dispersion_spectral");
+}
+
+/// A floor, the sky, the split at plain glass, all by wavelength.
+#[test]
+fn a_spectral_floor_is_the_processors_picture() {
+    same_picture("spectral_floor");
+}
+
+/// A render by wavelength of a scene that disperses nothing: the spectral
+/// tables put on the card at the first frame that asks for them.
+#[test]
+fn spectral_lamps_are_the_processors_picture() {
+    same_picture("spectral_lamps");
+}
+
+/// Spectral On with the options: the light past parts that cast no shadow,
+/// the floor's nearness past them, an IES downlight over the floor, a part
+/// the camera does not see and one held out, all read at the wavelengths.
+#[test]
+fn the_options_by_wavelength_are_the_processors_picture() {
+    same_picture("spectral_options");
+}
+
+/// The library's presets of glass that disperses light, every one of them,
+/// on the Headphones' parts, rendered by wavelength as Auto renders them.
+#[test]
+fn a_wall_of_dispersive_presets_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let dispersive: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.transmission_weight > 0.0
+                && m.transmission_dispersion_abbe > 0.0
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(!dispersive.is_empty() && dispersive.len() <= keys.len(), "{} dispersive presets for {} parts", dispersive.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &dispersive[j % dispersive.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("dispersive wall ({} presets): {}", dispersive.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "dispersive_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// The library's presets with metallic flakes (`flakes.rs`) on the
+/// Headphones' parts, every one of them, as the presets have them - their
+/// programs' bumps and rounded edges kept: the flake field in each part's
+/// object space, at flakes far smaller than a pixel here, and the flake's
+/// lobe under the coat.
+#[test]
+fn a_wall_of_flake_presets_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let flaked: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.flake_weight > 1e-4
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(flaked.len() <= keys.len(), "{} flake presets, more than the {} parts one wall wears", flaked.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &flaked[j % flaked.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("flake wall ({} presets): {}", flaked.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "flake_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]
@@ -778,9 +897,12 @@ fn rounding_presets() -> Vec<tequila_format::library::LibraryEntry> {
                 && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 && m.fuzz_density <= 0.0
-                // Nor flakes, which the processor puts wherever the weight
-                // is over 1e-4 and the card leaves out.
+                // Nor flakes, which the card left out when these walls
+                // were chosen: kept out, so the walls keep their members
+                // (the flake presets have a wall of their own).
                 && m.flake_weight <= 1e-4
+                // Nor glass that disperses light, for the same reason.
+                && !(m.transmission_weight > 0.0 && m.transmission_dispersion_abbe > 0.0)
         })
         .collect()
 }

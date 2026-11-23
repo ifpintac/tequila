@@ -67,6 +67,7 @@ fn sampler_get2(s: ptr<function, Sampler>, dimension: u32) -> vec2<f32> {
 fn sampler_pixel_jitter(s: ptr<function, Sampler>) -> vec2<f32> { return sampler_get2(s, DIM_PIXEL); }
 fn sampler_lens(s: ptr<function, Sampler>) -> vec2<f32> { return sampler_get2(s, DIM_LENS); }
 fn sampler_time(s: ptr<function, Sampler>) -> f32 { return sampler_get(s, DIM_TIME); }
+fn sampler_wavelength(s: ptr<function, Sampler>) -> f32 { return sampler_get(s, DIM_WAVELENGTH); }
 fn sampler_light_select(s: ptr<function, Sampler>) -> f32 { return sampler_get(s, (*s).bounce_base + DIM_LIGHT_SELECT); }
 fn sampler_light_sample(s: ptr<function, Sampler>) -> vec2<f32> { return sampler_get2(s, (*s).bounce_base + DIM_LIGHT_SAMPLE); }
 fn sampler_bsdf_lobe(s: ptr<function, Sampler>) -> f32 { return sampler_get(s, (*s).bounce_base + DIM_BSDF_LOBE); }

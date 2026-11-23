@@ -121,9 +121,20 @@ impl KernelFeatures {
     pub const PASSES_PARTS: KernelFeatures = part(24);
     /// An IES lamp's profile.
     pub const IES: KernelFeatures = part(25);
+    /// Metallic paint's flakes: the flake field at a point and the metal
+    /// lobe under the coat in the flake's frame.
+    pub const FLAKES: KernelFeatures = part(26);
+    /// A thin film over the metal and the dielectric interface.
+    pub const FILM: KernelFeatures = part(27);
+    /// Glass that disperses light: a wavelength drawn at it, its index at
+    /// that wavelength.
+    pub const DISPERSION: KernelFeatures = part(28);
+    /// Paths that carry four wavelengths (a frame's part: its render's
+    /// spectral mode, `GpuRenderer::frame_features`).
+    pub const SPECTRAL: KernelFeatures = part(29);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 26] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 30] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -150,6 +161,10 @@ impl KernelFeatures {
         (Self::SHADOW_LINKS, "FEATURE_SHADOW_LINKS"),
         (Self::PASSES_PARTS, "FEATURE_PASSES_PARTS"),
         (Self::IES, "FEATURE_IES"),
+        (Self::FLAKES, "FEATURE_FLAKES"),
+        (Self::FILM, "FEATURE_FILM"),
+        (Self::DISPERSION, "FEATURE_DISPERSION"),
+        (Self::SPECTRAL, "FEATURE_SPECTRAL"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -276,6 +291,16 @@ impl KernelFeatures {
         // lamp_sample's and light_irradiance_bound's IES lamp (a lamp's
         // flags).
         keep(r.lamp_flags & FLAG_IES != 0, Self::IES);
+        // The flake field and the flake's lobe (shade_vertex, openpbr_build:
+        // a material record's flake weight, which no program drives).
+        keep(any_material(&|m| m.flake_color[3] > 1e-4), Self::FLAKES);
+        // The film over the metal and the interface (openpbr_build: a
+        // material record's film weight, which no program drives).
+        keep(any_material(&|m| m.film[0] > 1e-4), Self::FILM);
+        // A dispersive surface (shade_vertex: a material record's Abbe
+        // number, which no program drives, whatever its transmission, which
+        // a program may).
+        keep(any_material(&|m| m.film[3] > 0.0), Self::DISPERSION);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of

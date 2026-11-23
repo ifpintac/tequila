@@ -92,3 +92,16 @@ override FEATURE_SHADOW_LINKS: bool = true;
 override FEATURE_PASSES_PARTS: bool = true;
 // An IES lamp: its profile read towards the way its light leaves it.
 override FEATURE_IES: bool = true;
+// Metallic paint's flakes: the flake field at a point (flakes.wgsl) and
+// the metal lobe under the coat in the flake's frame (openpbr.wgsl).
+override FEATURE_FLAKES: bool = true;
+// A thin film over the metal and the dielectric interface: the Airy sum in
+// place of their Fresnel (film.wgsl).
+override FEATURE_FILM: bool = true;
+// Glass that disperses light, in an RGB render: a wavelength drawn at the
+// first such glass a path meets, the index at it (dispersion.wgsl).
+override FEATURE_DISPERSION: bool = true;
+// Paths that carry four wavelengths rather than three channels (a frame's
+// part: its spectral mode), every colour read at them by the spectral
+// tables (spectral.wgsl).
+override FEATURE_SPECTRAL: bool = true;
