@@ -300,6 +300,7 @@ fn material_from_words() -> String {
     parts.push("inp(55u)".into());
     parts.extend((56..62).map(at));
     parts.push(format!("vec2<f32>({}, {})", at(62), at(63)));
+    parts.push(format!("vec4<f32>({}, {}, {}, {})", at(64), at(65), at(66), at(67)));
     format!("GpuMaterial({})", parts.join(", "))
 }
 
@@ -341,7 +342,7 @@ fn seeing_share(roughness: f32) -> f32 {
 
 fn the_glass_stack(seed: u64, aimed: bool) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 64);
+    assert_eq!(MATERIAL_WORDS, 68);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut through, mut deltas, mut misses, mut dropped, mut inside_count) = (0, 0, 0, 0, 0);

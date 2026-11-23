@@ -78,6 +78,22 @@ pub struct EmitterSample {
     pub density: f32,
 }
 
+/// A node of the tree as [`Emitters::nodes`] shows it.
+#[derive(Clone, Copy, Debug)]
+pub struct EmitterNode {
+    pub bounds: Aabb,
+    /// The power-weighted mean of the triangles' normals.
+    pub axis: Vec3,
+    /// The half-angle about `axis` that their normals spread over.
+    pub theta_o: f32,
+    pub power: f32,
+    /// The node above, `u32::MAX` at the root.
+    pub parent: u32,
+    pub children: Option<(u32, u32)>,
+    /// A leaf's triangle: its instance, its index in its mesh, its area.
+    pub triangle: Option<(u32, u32, f32)>,
+}
+
 /// One node of the tree: what the importance needs to know about the
 /// triangles beneath it.
 #[derive(Clone, Copy, Debug)]
@@ -224,6 +240,40 @@ impl Emitters {
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// The tree's nodes, the root first, as they are: for a copy of the tree
+    /// elsewhere (the graphics card's, `docs/07` R3) to choose exactly as
+    /// this one does.
+    pub fn nodes(&self) -> impl ExactSizeIterator<Item = EmitterNode> + '_ {
+        self.nodes.iter().map(|n| EmitterNode {
+            bounds: n.bounds,
+            axis: n.axis,
+            theta_o: n.theta_o,
+            power: n.power,
+            parent: n.parent,
+            children: n.children,
+            triangle: n.children.is_none().then(|| self.triangles[n.first as usize]),
+        })
+    }
+
+    /// Per instance, where its triangles start in [`Emitters::leaves`], and
+    /// `u32::MAX` for a part that is not one of these lights.
+    pub fn first_leaves(&self) -> &[u32] {
+        &self.first
+    }
+
+    /// Per triangle of each glowing part, in its mesh's order, the leaf node
+    /// that holds it, and `u32::MAX` for one too small to have any area.
+    pub fn leaves(&self) -> &[u32] {
+        &self.leaves
+    }
+
+    /// The share of a light sample from `at` that the left child of node
+    /// `node` gets, `None` for a leaf: what [`Emitters::sample`] and
+    /// [`Emitters::density`] weigh each step by.
+    pub fn left_share_at(&self, node: u32, at: &Receiver) -> Option<f32> {
+        self.nodes.get(node as usize)?.children.map(|children| self.left_share(children, at))
     }
 
     /// What a light sample finds a glowing part of `instance` gives off,

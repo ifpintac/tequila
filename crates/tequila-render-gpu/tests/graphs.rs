@@ -39,11 +39,13 @@ use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::projection::{PointWorld, RayKind, SurfacePoint};
 
 /// Words an item gives back: the material (40 floats), the bump's height
-/// here, the Tangent drawn (world space), the shading normal.
-const OUT: usize = 49;
+/// here, the Tangent drawn (world space), the shading normal, the bump's
+/// heights a step along, and the material's glow (4 floats).
+const OUT: usize = 53;
 /// Words an item takes: the program's header, the point, the surface, the
-/// material it is written over, the point's footprints, the mesh's tangent.
-const IN: usize = 131;
+/// material it is written over, the point's footprints, the mesh's tangent,
+/// and the glow it is written over.
+const IN: usize = 135;
 
 /// Everything the card needs of a point beyond the program.
 #[derive(Clone, Copy)]
@@ -107,6 +109,9 @@ fn kernel_body() -> String {
     for (var k = 0u; k < 40u; k++) {{
         b[k] = inf(83u + k);
     }}
+    for (var k = 0u; k < 4u; k++) {{
+        b[40u + k] = inf(131u + k);
+    }}
     pt.footprint = inf(123u);
     pt.uv_footprint = vec2<f32>(inf(124u), inf(125u));
     pt.has_uv_footprint = inp(126u);
@@ -119,7 +124,10 @@ fn kernel_body() -> String {
     outf(40u, r.here);
     outf(41u, r.drawn.x); outf(42u, r.drawn.y); outf(43u, r.drawn.z);
     outf(44u, r.normal.x); outf(45u, r.normal.y); outf(46u, r.normal.z);
-    outf(47u, r.heights.x); outf(48u, r.heights.y);",
+    outf(47u, r.heights.x); outf(48u, r.heights.y);
+    for (var k = 0u; k < 4u; k++) {{
+        outf(49u + k, f[40u + k]);
+    }}",
         v3(11),
         v3(15),
         v3(23),
@@ -142,11 +150,17 @@ fn kernel_body() -> String {
     )
 }
 
-/// GpuMaterial's floats before its emission, which no stage-1 program
-/// drives (the kernel leaves it at nought).
+/// GpuMaterial's floats before its emission: the stack's, the anisotropy's
+/// turn and the cutout's opacity.
 fn floats(m: &GpuMaterial) -> [f32; 40] {
     let all: &[f32] = bytemuck::cast_slice(std::slice::from_ref(m));
     all[..40].try_into().expect("forty floats")
+}
+
+/// GpuMaterial's glow: the emission's colour and its luminance.
+fn glow(m: &GpuMaterial) -> [f32; 4] {
+    let all: &[f32] = bytemuck::cast_slice(std::slice::from_ref(m));
+    all[40..44].try_into().expect("four floats")
 }
 
 fn ray_code(ray: RayKind) -> u32 {
@@ -179,6 +193,7 @@ fn processor(case: &Case, textures: &TextureTable) -> [f32; OUT] {
     let material = shade(&case.program, textures, &case.point, &mut registers, &mut scratch).clone();
     let mut out = [0.0f32; OUT];
     out[..40].copy_from_slice(&floats(&GpuMaterial::from_material(&material)));
+    out[49..53].copy_from_slice(&glow(&GpuMaterial::from_material(&material)));
     let register = |p: Param| case.program.driven.iter().find(|(q, _)| *q == p).map(|(_, r)| *r);
     if let Some(r) = bump_param(&case.program).and_then(register) {
         out[40] = registers.value(r).as_float();
@@ -249,6 +264,7 @@ fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram], pictures: &C
         inputs.push(has);
         let t = s.tangent.map_or([0.0; 4], |(t, sign)| [t.x, t.y, t.z, sign]);
         inputs.extend(t.iter().map(|v| v.to_bits()));
+        inputs.extend(glow(&GpuMaterial::from_material(&case.program.constants)).iter().map(|v| v.to_bits()));
     }
     assert_eq!(inputs.len(), cases.len() * IN);
     let words = harness.run_wgsl_with(
@@ -316,7 +332,9 @@ fn compare_in(harness: &Harness, name: &str, cases: &[Case], bound: Bound, norma
             if k == 40 && case.normal.is_some() && case.heights.is_none() {
                 continue;
             }
-            let b = if k >= 47 {
+            let b = if k >= 49 {
+                bound
+            } else if k >= 47 {
                 match case.heights {
                     Some(_) => Bound { absolute: 2e-9, relative: 1e-4 },
                     None => continue,
@@ -823,6 +841,37 @@ fn the_librarys_presets_are_the_processors() {
     }
     eprintln!("the library: {} points, {outside} outside the bound", cases.len());
     within_budget("the library", outside, cases.len());
+}
+
+/// Programs that drive what the integrator reads rather than the stack:
+/// the glow's colour and luminance and the cutout's opacity, written as
+/// `shade` writes them (a colour, the luminance of one where a number is
+/// asked), from nodes of every kind of output.
+#[test]
+fn glows_and_cutouts_a_program_drives_are_the_processors() {
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(12, 1);
+    let mut cases = Vec::new();
+    let nodes: [(ShaderNode, u8); 4] = [(ShaderNode::Checker, 0), (ShaderNode::Checker, 1), (ShaderNode::GradientTexture { kind: GradientKind::Linear }, 1), (ShaderNode::WhiteNoise { dims: 3 }, 1)];
+    for _ in 0..300 {
+        for (node, output) in nodes {
+            for param in [Param::EmissionColor, Param::EmissionLuminance, Param::Opacity] {
+                let kind = NodeKind::Node(node);
+                let inputs: Vec<Value> = node.inputs().iter().map(|spec| random_value(&mut rng, spec)).collect();
+                let mut program = single_node(&kind, &inputs, &[output]);
+                program.driven[0].0 = param;
+                program.constants = Material {
+                    emission_color: Spectrum { r: rng.next_f32(), g: rng.next_f32(), b: rng.next_f32() },
+                    emission_luminance: uniform(&mut rng, 0.0, 20.0),
+                    geometry_opacity: rng.next_f32(),
+                    ..Material::default()
+                };
+                let point = random_point(&mut rng, 1.0);
+                cases.push(Case { label: format!("{node:?} output {output} into {param:?}"), program, surface: flat_surface(&point), point, normal: None, heights: None });
+            }
+        }
+    }
+    compare_all(&h, "glows and cutouts", &cases, ARITHMETIC);
 }
 
 // ---- The bump ------------------------------------------------------------

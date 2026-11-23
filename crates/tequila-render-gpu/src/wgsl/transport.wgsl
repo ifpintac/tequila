@@ -2,8 +2,10 @@
 // OpenPBR surfaces (openpbr.wgsl), glass among them, under the environment
 // and the analytic lamps (lamps.wgsl), standing on a shadow catcher, draw
 // for draw - camera ray, next-event estimation of the sky by its facing
-// tables (the whole sky through glass) with power-heuristic MIS and of one
-// lamp chosen as the processor chooses it, shadow rays through clear glass,
+// tables (the whole sky through glass) with power-heuristic MIS, of one
+// lamp chosen as the processor chooses it and of one glowing triangle chosen
+// down the processor's tree of them (emitters.wgsl), weighed against the
+// bounces that hit a glow, shadow rays through clear glass,
 // the stack's bounce, Russian roulette, the bounce limit, the clamps; the
 // lamps a bounce off a sharp enough reflection meets along its way, shared
 // with the light sample there, and the stand-ins the camera sees them by;
@@ -21,6 +23,7 @@
 //#include environment
 //#include openpbr
 //#include lamps
+//#include emitters
 //#include program
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
@@ -411,6 +414,30 @@ fn transmittance_over(m: GpuMaterial, distance: f32) -> vec3<f32> {
     return beer_lambert(m.transmission_color.xyz, cy_div(distance * max(m.volume_density, 0.0), depth));
 }
 
+// Material::emitted_over: what `distance` of the volume gives off, less
+// what it absorbs of that on the way out, channel by channel - the glow
+// times the distance where it absorbs next to nothing, else
+// glow (1 - e^(-s d)) / s for an absorption of s a metre.
+fn glow_along(c: f32, glow: f32, per_metre: f32, distance: f32) -> f32 {
+    var absorbed = 0.0;
+    if (is_finite(c)) {
+        absorbed = -log(clamp(c, 1e-6, 1.0)) * per_metre;
+    }
+    if (absorbed * distance < 1e-5) {
+        return glow * distance;
+    }
+    return glow * (1.0 - exp(-absorbed * distance)) / absorbed;
+}
+
+fn emitted_over(m: GpuMaterial, distance: f32) -> vec3<f32> {
+    if (all(m.volume_glow.xyz == vec3<f32>(0.0)) || distance <= 0.0 || !is_finite(distance)) {
+        return vec3<f32>(0.0);
+    }
+    let c = m.transmission_color.xyz;
+    let g = m.volume_glow;
+    return vec3<f32>(glow_along(c.x, g.x, g.w, distance), glow_along(c.y, g.y, g.w, distance), glow_along(c.z, g.z, g.w, distance));
+}
+
 // enclosing_media (ic:240-286): the media a path starts inside, by counting
 // along its first ray, through everything - opaque surfaces too - up to 32
 // surfaces, the crossings of each medium's boundary: an odd count of one
@@ -493,20 +520,22 @@ struct Visibility {
 
 // shadow_transmittance_through (ic:3308-3447), every part a blocker (a
 // lamp's shadow links are a lamp limit), both ends offset and stopped just
-// short of the aim (intersect.rs's shadow_ray): where no glass is passed,
-// one any-hit query among the parts that cast shadows, all or nothing
-// (Intersector::occluded, Embree's MASK_SHADOW); else the closest surfaces
-// along the shadow ray one after another, over every part, at most 64 -
-// clear glass taking its tint at each face and its volume between the way
-// in and the way out of one solid (one at a time, as the processor pairs
-// them), a part that casts no shadow passed, anything else (the card has no
-// cutouts) a shadow. One ray query either way, for the code's size.
+// short of the aim (intersect.rs's shadow_ray): where no glass is passed
+// and nothing is cut out, one any-hit query among the parts that cast
+// shadows, all or nothing (Intersector::occluded, Embree's MASK_SHADOW);
+// else the closest surfaces along the shadow ray one after another, over
+// every part, at most 64 - clear glass taking its tint at each face and its
+// volume between the way in and the way out of one solid (one at a time, as
+// the processor pairs them), a part that casts no shadow passed, anything
+// else letting by what its opacity does not stop (a wall nothing, a
+// cutout's hole the rest; crossing_opacity). One ray query either way, for
+// the code's size.
 fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> Visibility {
     var glass = glass_in;
     if ((frame.glass_flags & SCENE_PANES) == 0u) {
         glass = GLASS_SOLID;
     }
-    let solid = glass == GLASS_SOLID;
+    let solid = glass == GLASS_SOLID && (frame.glass_flags & SCENE_CUTOUTS) == 0u;
     let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
     let mask = select(MASK_SURFACE, MASK_SHADOW, solid);
     let start = offset_at(from_point, from_normal, 0.0);
@@ -551,7 +580,7 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
                 }
             }
         } else if (!open) {
-            return Visibility(vec3<f32>(0.0), false);
+            through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);
         }
         if (max(max(through.x, through.y), through.z) < 1e-3) {
             return Visibility(vec3<f32>(0.0), false);
@@ -589,6 +618,162 @@ fn seen_weight(seen: SeenFrom, straight: f32, reach: f32) -> f32 {
     let from_point = offset_at(seen.position, seen.normal, seen.magnitude);
     let open = shadow_through(GLASS_CLEAR, from_point, seen.normal, target_point, -seen.direction);
     return select(weight, 1.0, all(open.through == vec3<f32>(0.0)));
+}
+
+// mis_power of a bounce's density `pdf` against a light sample's `density`
+// per unit area of a point `distance_squared` away, met at `cos` to its
+// normal (area_to_solid_angle_pdf, whose infinity weighs the bounce
+// nothing).
+fn mis_against_area(pdf: f32, density: f32, distance_squared: f32, cos: f32) -> f32 {
+    let c = abs(cos);
+    if (c <= 1e-9) {
+        return 0.0;
+    }
+    return mis_power(pdf, density * distance_squared / c);
+}
+
+// The surface a light sample of the glowing triangles is weighed by: its
+// part's first leaf slot (`emitter`), the triangle, the point and its
+// geometric normal; not ok where there is none to weigh by.
+struct GlowTarget {
+    ok: bool,
+    first: u32,
+    primitive: u32,
+    position: vec3<f32>,
+    geometric: vec3<f32>,
+};
+
+// SeenFrom::weight_of_glow's walk (ic:2730): from the surface a seeing
+// bounce left, along the way it left, the first surface past what a shadow
+// ray passes - a part that casts no shadow, clear glass, a cutout - which
+// must face the way; a glowing part met past glass the bounce saw is
+// weighed against the light sample there as that surface's.
+fn glow_target(seen: SeenFrom) -> GlowTarget {
+    var none: GlowTarget;
+    none.ok = false;
+    var origin = offset_at(seen.position, seen.normal, seen.magnitude);
+    for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
+        let hit = trace(origin, seen.direction);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
+            return none;
+        }
+        let inst = scene_instances[hit.instance_custom_data];
+        let raw = hit_place(hit);
+        let backface = dot(seen.direction, raw.geometric) > 0.0;
+        if ((inst.flags & INSTANCE_CASTS_SHADOWS) == 0u || (scene_materials[inst.material].glass & GLASS_PANE) != 0u || cut_out(inst.material)) {
+            let g = select(raw.geometric, -raw.geometric, backface);
+            origin = offset_at(raw.position, -g, raw.magnitude);
+            continue;
+        }
+        if (backface) {
+            return none;
+        }
+        return GlowTarget(true, inst.emitter, hit.primitive_index, raw.position, raw.geometric);
+    }
+    return none;
+}
+
+// Whether a shadow ray passes a surface of `material` as a cutout
+// (SceneSnapshot::opacity_of below 0.999, or a program's).
+fn cut_out(material: u32) -> bool {
+    return scene_materials[material].geometry_opacity < 0.999 || (scene_programs[material].flags & PROGRAM_CUTS) != 0u;
+}
+
+// ---- Cutouts a program drives ----------------------------------------------
+
+// What the one place a program runs is asked for (path()): nothing, the
+// material at the segment's hit, or a cutout's opacity where a walk
+// crossed it.
+const WANT_NONE: u32 = 0u;
+const WANT_MAIN: u32 = 1u;
+const WANT_CROSSING: u32 = 2u;
+
+// settings.rs's DEFAULT_PIXEL_SPREAD: the footprint a shadow ray's program
+// is read with.
+const DEFAULT_PIXEL_SPREAD: f32 = 0.001;
+
+// How many crossings of cutouts a program drives one segment remembers:
+// past them a crossing is solid.
+const MAX_CUT_PROGRAMS: u32 = 32u;
+
+// The opacities of the cutouts a program drives that this segment's walks
+// have crossed, in the order crossed; how many are known; the place in that
+// order of the next crossing this pass meets; and the crossing still to be
+// worked out, if one is.
+var<private> cut_known_opacity: array<f32, 32>;
+var<private> cut_known: u32;
+var<private> cut_next: u32;
+var<private> cut_wanted: bool;
+var<private> cut_hit: RayIntersection;
+var<private> cut_direction: vec3<f32>;
+
+// SceneSnapshot::opacity_of at a crossing a walk makes along `direction`:
+// the material's own number, or for a cutout a program drives, the
+// program's at the point - known from an earlier pass of this segment, or
+// asked for, when this pass is thrown away and run again once it is known
+// (path()); solid for now.
+fn crossing_opacity(hit: RayIntersection, direction: vec3<f32>, material: u32) -> f32 {
+    if ((scene_programs[material].flags & PROGRAM_CUTS) == 0u) {
+        return scene_materials[material].geometry_opacity;
+    }
+    let k = cut_next;
+    cut_next += 1u;
+    if (k < cut_known) {
+        return cut_known_opacity[k];
+    }
+    if (!cut_wanted && cut_known < MAX_CUT_PROGRAMS) {
+        cut_wanted = true;
+        cut_hit = hit;
+        cut_direction = direction;
+    }
+    return 1.0;
+}
+
+// The surface a walk crossed, as a shadow ray's program reads it
+// (Hit::facing_forward): both normals turned to the side the ray came from,
+// and nothing more.
+fn crossing_surface(hit: RayIntersection, direction: vec3<f32>) -> Surface {
+    var surf = surface_of(hit);
+    surf.backfacing = false;
+    if (dot(direction, surf.geometric) > 0.0) {
+        surf.geometric = -surf.geometric;
+        surf.shading = -surf.shading;
+        surf.backfacing = true;
+    }
+    return surf;
+}
+
+// camera_coverage (ic:3467): how much of a camera ray's pixel sample is
+// covered, where the first surface it meets is a cutout of `first` opacity
+// and the ray carries on from `start` - one less the light that gets
+// through every surface along it; and whether a shadow catcher ends the
+// walk, whose own coverage is its shadow's, which only the path finds.
+struct Coverage {
+    coverage: f32,
+    catcher: bool,
+};
+
+fn camera_coverage(start: vec3<f32>, direction: vec3<f32>, first: f32) -> Coverage {
+    var through = 1.0 - clamp(first, 0.0, 1.0);
+    var origin = start;
+    for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
+        if (through < 1e-4) {
+            return Coverage(1.0, false);
+        }
+        let hit = trace(origin, direction);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
+            return Coverage(1.0 - through, false);
+        }
+        let inst = scene_instances[hit.instance_custom_data];
+        if (inst.catcher != NO_CATCHER) {
+            return Coverage(1.0 - through, true);
+        }
+        let raw = hit_place(hit);
+        let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
+        through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);
+        origin = offset_at(raw.position, -g, raw.magnitude);
+    }
+    return Coverage(1.0, false);
 }
 
 // What a path carries from one segment to the next: the ray, what it has
@@ -631,6 +816,15 @@ struct PathState {
     reflected: bool,
     in_floor: bool,
     fresh: bool,
+    // Where the path last sampled the glowing parts from, if it did where
+    // it last scattered (ic:850's emitters_from): a glow its bounce then
+    // hits was one of two ways of finding that light, weighed against the
+    // other as seen from there. Its point, its geometric normal on the side
+    // the path left by, and whether it transmits (chose both ways).
+    receiver: bool,
+    receiver_position: vec3<f32>,
+    receiver_normal: vec3<f32>,
+    receiver_two_sided: bool,
 };
 
 // A path from `origin` along `direction` (trace's set-up): the camera's, a
@@ -665,6 +859,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.reflected = reflected;
     st.in_floor = in_floor;
     st.fresh = true;
+    st.receiver = false;
     return st;
 }
 
@@ -813,27 +1008,64 @@ fn left_to_bounces(pdf: f32, seen_in: f32) -> vec3<f32> {
 }
 
 // Next-event estimation at a vertex (ic:2043-2201): one sample of the sky
-// (sample_environment_light, ic:4279) and one of the lamps
-// (sample_analytic_lights, ic:4550), each with its own shadow ray, summed
+// (sample_environment_light, ic:4279), one of the lamps
+// (sample_analytic_lights, ic:4550) and one of the glowing triangles
+// (sample_emissive_surfaces, ic:4447), each with its own shadow ray, summed
 // before the throughput, as the processor sums them. One pass of the loop
-// is one light source, so the two share their evaluation of the stack,
+// is one light source, so the three share their evaluation of the stack,
 // their shadow ray and their arithmetic. An environment turned down to
-// nothing, and a scene with no lamp, draw nothing (ic:4299, 4565). A
-// surface that transmits is lit from both sides: it draws the whole sky,
-// chooses lamps on both sides, and its shadow rays leave from the side the
-// light is on; the light through clear glass is tinted, and through glass
-// that bends light the sky's is shared with the bounces that see it.
+// nothing, a scene with no lamp, and one with no glowing triangle a light
+// sample takes draw nothing (ic:4299, 4565, 2117). A surface that
+// transmits is lit from both sides: it draws the whole sky, chooses lamps
+// and glowing triangles on both sides, and its shadow rays leave from the
+// side the light is on; the light through clear glass is tinted, and
+// through glass that bends light the sky's and the glowing triangles' is
+// shared with the bounces that see it.
 fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
-    for (var source = 0u; source < 2u; source++) {
+    for (var source = 0u; source < 3u; source++) {
         let sky = source == 0u;
+        let glow = source == 2u;
         var draw: LightDraw;
         var diffuse = true;
         var specular = true;
         var shadow = true;
         var p_select = 1.0;
         var is_shared = false;
-        if (sky) {
+        // A glowing triangle's shadow ray ends at the point chosen on it,
+        // moved off it along its normal.
+        var glow_point = vec3<f32>(0.0);
+        var glow_normal = vec3<f32>(0.0);
+        if (glow) {
+            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {
+                continue;
+            }
+            // Chosen from here down the tree, on the bounce's light choice
+            // and light sample, as the lamp was.
+            let e = emitters_sample(surf.position, surf.geometric, transmissive, sampler_light_select(s), sampler_light_sample(s));
+            if (!e.ok) {
+                continue;
+            }
+            let to_light = e.position - surf.position;
+            let distance_squared = dot(to_light, to_light);
+            if (!(distance_squared > 0.0 && is_finite(distance_squared))) {
+                continue;
+            }
+            let direction = to_light * (1.0 / sqrt(distance_squared));
+            // It glows from the side its winding faces, to a light sample as
+            // to a bounce; seen edge on its density is no number.
+            let cos_light = -dot(direction, e.normal);
+            if (cos_light <= 1e-9) {
+                continue;
+            }
+            let pdf = e.density * distance_squared / cos_light;
+            if (!(pdf > 0.0 && is_finite(pdf))) {
+                continue;
+            }
+            draw = LightDraw(true, direction, e.radiance, 0.0, false, pdf, false);
+            glow_point = e.position;
+            glow_normal = e.normal;
+        } else if (sky) {
             if (frame.env_intensity <= 0.0) {
                 continue;
             }
@@ -894,7 +1126,13 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
                 reach = draw.distance * (1.0 - 1e-3);
             }
             let leaving = select(surf.geometric, -surf.geometric, below);
-            let v = shadow_through(frame.shadow_glass, offset_at(surf.position, leaving, surf.magnitude), leaving, surf.position + draw.direction * reach, -draw.direction);
+            var aim = surf.position + draw.direction * reach;
+            var aim_normal = -draw.direction;
+            if (glow) {
+                aim = glow_point;
+                aim_normal = glow_normal;
+            }
+            let v = shadow_through(frame.shadow_glass, offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
             if (all(v.through == vec3<f32>(0.0))) {
                 continue;
             }
@@ -902,7 +1140,8 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             bent = v.bent;
         }
         var scale: vec3<f32>;
-        if (sky) {
+        if (!(source == 1u)) {
+            // The sky, or a glowing triangle, which the bounce can meet too.
             var weight = mis_power(draw.pdf, bsdf_pdf);
             // Through glass that bends light, shared with the bounces that
             // pass it and those that see it.
@@ -1135,10 +1374,10 @@ fn generated_at(mesh: GpuMesh, object: vec3<f32>) -> vec3<f32> {
 }
 
 // The material at `hit`, seen along `direction` by a ray of kind `ray`
-// (ic:1626-1710): the shading point its program reads
-// (SceneSnapshot::shading_point_along), and prog_shade's program, write-back
-// and bump at it.
-fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32) -> ProgShaded {
+// whose footprint widens by `spread` (ic:1626-1710): the shading point its
+// program reads (SceneSnapshot::shading_point_along), and prog_shade's
+// program, write-back and bump at it.
+fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32, spread: f32) -> ProgShaded {
     let inst = scene_instances[hit.instance_custom_data];
     let p = scene_programs[inst.material];
     let base = scene_materials[inst.material];
@@ -1181,7 +1420,7 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     pt.closeness = measures.closeness;
     pt.vertex_color = measures.colour;
     // No ray differentials: the footprint widens with the distance alone.
-    let world = hit.t * frame.pixel_spread;
+    let world = hit.t * spread;
     s.footprint = world * inst.inv_length_scale;
     pt.footprint = s.footprint;
     let derivatives = uv_derivatives(inst, mesh, c);
@@ -1253,16 +1492,14 @@ fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
 // bounce sees, Filter Glossy, next-event estimation of the sky and the
 // lamps, the split at the first plain glass the camera sees or the bounce,
 // the media crossed, whether it sees, the catcher's view and Russian
-// roulette (ic:1862-2562).
-fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, split: ptr<function, SplitOff>) -> u32 {
+// roulette (ic:1862-2562), off the material `shaded` (material_at).
+fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>) -> u32 {
     let bounce = (*st).bounce;
     if (bounce >= (*st).max_bounces) {
         return SHADE_END;
     }
-    // The material at this point: its program run and its bump applied
-    // (ic:1626-1710), then the frame - along the anisotropy's tangent where
-    // the material is anisotropic (ic:1866-1885).
-    let shaded = material_at(hit, surf, (*st).direction, (*st).ray);
+    // The frame: along the anisotropy's tangent where the material is
+    // anisotropic (ic:1866-1885).
     let material = shaded.material;
     var f: Frame;
     if (material.specular_roughness_anisotropy > 0.0) {
@@ -1343,8 +1580,19 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // clamped as one. A surface that transmits draws the whole sky.
     let transmissive = openpbr_transmits(bsdf);
     let samples_lights = !pure_delta(bsdf) && !passing;
+    // Where the glowing parts were last sampled from: here, if they are
+    // sampled here; kept through glass being passed (ic:2057, 2117).
+    if (!passing) {
+        (*st).receiver = false;
+    }
     if (samples_lights) {
         (*st).sky_facing = select(surf.geometric, vec3<f32>(0.0), transmissive);
+        if ((frame.glass_flags & SCENE_EMITTERS) != 0u) {
+            (*st).receiver = true;
+            (*st).receiver_position = surf.position;
+            (*st).receiver_normal = surf.geometric;
+            (*st).receiver_two_sided = transmissive;
+        }
         let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);
         (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce));
     }
@@ -1453,6 +1701,11 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         if (seen_on && meets_glass && !sample.is_delta && !sees) {
             (*st).pass_pdf = max(sample.pdf - chosen.seen, 0.0);
         }
+        // Turned back off glass being passed, the path goes where no light
+        // sample of the glowing parts looked (ic:2439).
+        if (passing) {
+            (*st).receiver = false;
+        }
     }
     // What meets the lamps along the way on (ic:2442-2498): a bounce that
     // sees; the same view on through mirror-smooth glass passed or seen,
@@ -1527,13 +1780,58 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
 
 // ---- The shadow catcher -------------------------------------------------
 
-// blocked_towards with neither glass nor cutouts, as ambient occlusion asks
-// it: one shadow ray from the point to `reach` along `direction`, and 1
-// less the luminance of what gets through - 0 or 1.
+// blocked_towards with no glass let by, as ambient occlusion asks it: one
+// shadow ray from the point to `reach` along `direction`, and 1 less the
+// luminance of what gets through - 0 or 1, or through cutouts what their
+// opacities leave.
 fn blocked_towards(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, direction: vec3<f32>, reach: f32) -> f32 {
     let aim = position + direction * reach;
-    let through = select(1.0, 0.0, occluded(offset_at(position, normal, magnitude), normal, aim, -direction));
+    let from_point = offset_at(position, normal, magnitude);
+    var through = 0.0;
+    if ((frame.glass_flags & SCENE_CUTOUTS) != 0u) {
+        through = cutout_walk(from_point, normal, aim, -direction);
+    } else {
+        through = select(1.0, 0.0, occluded(from_point, normal, aim, -direction));
+    }
     return 1.0 - clamp(luminance(vec3<f32>(through)), 0.0, 1.0);
+}
+
+// cutout_transmittance with no glass let by (ic:3333): what gets through
+// the surfaces between two points, a part that casts no shadow passed and
+// every other surface letting by what its opacity does not stop.
+fn cutout_walk(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> f32 {
+    let start = offset_at(from_point, from_normal, 0.0);
+    let aim = offset_at(to, to_normal, 0.0);
+    let delta = aim - start;
+    let distance = sqrt(dot(delta, delta));
+    let direction = select(from_normal, delta / distance, distance > 0.0);
+    var origin = start;
+    var remaining = distance * (1.0 - 1e-4);
+    var through = 1.0;
+    for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
+        var rq: ray_query;
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, remaining, origin, direction));
+        rayQueryProceed(&rq);
+        let hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
+            return through;
+        }
+        let inst = scene_instances[hit.instance_custom_data];
+        if ((inst.flags & INSTANCE_CASTS_SHADOWS) != 0u) {
+            through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);
+            if (through < 1e-3) {
+                return 0.0;
+            }
+        }
+        remaining -= max(hit.t, 1e-6);
+        if (remaining <= 0.0) {
+            return through;
+        }
+        let raw = hit_place(hit);
+        let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
+        origin = offset_at(raw.position, -g, raw.magnitude);
+    }
+    return 0.0;
 }
 
 // occlusion_at: ambient occlusion within `radius`, one cosine-weighted
@@ -1786,6 +2084,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
     var split_share = 0.0;
     var carried = vec3<f32>(0.0);
     var split_light = vec3<f32>(0.0);
+    // The camera's coverage, settled at the first cutout it sees as the
+    // light through every surface along the ray (camera_coverage), below
+    // nought until then; and whether a shadow catcher lies behind those
+    // cutouts, whose shadow's coverage is added where the path reaches it.
+    var settled = -1.0;
+    var catcher_behind = false;
     var out: PathOut;
     loop {
         if (st.fresh) {
@@ -1793,129 +2097,326 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             st.fresh = false;
         }
         // One segment of the path: `ended` false where the path goes on.
+        // It may be run more than once. Where a walk - a shadow ray, the
+        // camera's coverage, the floor's shadow - meets a cutout a program
+        // drives whose opacity this segment has not worked out yet, the pass
+        // is thrown away: the path and the sampler are put back as they were
+        // where the segment set out, or where it stood at its hit; the
+        // program runs, at the one place a program runs; and the segment
+        // runs again, the opacity known (crossing_opacity). Each pass meets
+        // the same crossings in the same order, so the opacities are
+        // remembered by their place in it.
         var ended = true;
+        // 0: from the segment's start; 1: at its hit, its material known.
+        var phase = 0u;
+        var want = WANT_NONE;
+        var replay = false;
+        cut_known = 0u;
+        cut_wanted = false;
+        var seg_hit: RayIntersection;
+        var seg_st: PathState;
+        var seg_s: Sampler;
+        var hit_st: PathState;
+        var hit_s: Sampler;
+        var hit_next = 0u;
+        var seg_raw: Surface;
+        var seg_surf: Surface;
+        var material: ProgShaded;
+        let programs_cut = (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
         loop {
-            var hit: RayIntersection;
-            if (have_next) {
-                hit = next;
-                have_next = false;
-            } else {
-                hit = trace(st.origin, st.direction);
+            // ---- The one place a material's program runs (docs/07 §7) ----
+            // The material at the segment's hit (ic:1626-1710), or a cutout's
+            // opacity where a walk crossed it, as a shadow ray sees it
+            // (shading_point_along with the default spread, ic:3404).
+            if (want != WANT_NONE) {
+                var at = seg_hit;
+                var surf = seg_surf;
+                var along = st.direction;
+                var ray = st.ray;
+                var spread = frame.pixel_spread;
+                if (want == WANT_CROSSING) {
+                    at = cut_hit;
+                    along = cut_direction;
+                    surf = crossing_surface(cut_hit, cut_direction);
+                    ray = RAY_SHADOW;
+                    spread = DEFAULT_PIXEL_SPREAD;
+                }
+                let shaded = material_at(at, surf, along, ray, spread);
+                if (want == WANT_CROSSING) {
+                    cut_known_opacity[cut_known] = shaded.material.geometry_opacity;
+                    cut_known += 1u;
+                } else {
+                    material = shaded;
+                }
+                want = WANT_NONE;
             }
-            // The lamps met on the way, and the sky where the ray escapes.
-            let sky = meet_and_escape(&st, hit);
-            if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
-                if (st.bounce == 0u) {
-                    if (mirror) {
-                        escaped = true;
-                    } else if (!st.reflected) {
-                        background = sky;
+            if (phase == 0u) {
+                var hit: RayIntersection;
+                if (replay) {
+                    hit = seg_hit;
+                    replay = false;
+                } else {
+                    if (have_next) {
+                        hit = next;
+                        have_next = false;
+                    } else {
+                        hit = trace(st.origin, st.direction);
+                    }
+                    seg_hit = hit;
+                    if (programs_cut) {
+                        seg_st = st;
+                        seg_s = s;
                     }
                 }
-                break;
-            }
-            if (st.bounce == 0u) {
-                if (mirror) {
-                    depth = hit.t;
-                } else if (!st.reflected) {
-                    coverage = 1.0;
+                cut_next = 0u;
+                // The lamps met on the way, and the sky where the ray escapes.
+                let sky = meet_and_escape(&st, hit);
+                if (cut_wanted) {
+                    st = seg_st;
+                    s = seg_s;
+                    replay = true;
+                    cut_wanted = false;
+                    want = WANT_CROSSING;
+                    continue;
                 }
-            }
-            let raw = surface_of(hit);
-            let inst = scene_instances[hit.instance_custom_data];
-            if (inst.catcher != NO_CATCHER) {
-                let c = scene_catchers[inst.catcher];
-                if (st.catcher_view) {
-                    // Seen as the camera would see it (ic:1396-1471): what it
-                    // stands in front of, by the rule an escaping path follows,
-                    // with its shadow and its reflection on it; and nothing
-                    // further along this path. Never in the reflection's path,
-                    // whose catcher_view is false.
-                    let view = st.direction;
-                    let normal = select(-raw.geometric, raw.geometric, dot(raw.geometric, -view) > 0.0);
-                    let behind = env_radiance(st.bounce == 0u && !st.reflected, view);
-                    let caught = catch_shadow(c, raw, normal, behind, st.bounce, &s);
-                    floor = FloorSeen(st.radiance, st.throughput, st.bounce, behind, caught, c, normal, view, 0.0, 1.0, !st.reflected);
-                    on_floor = true;
-                    if (c.reflections > 0.0) {
-                        let ray = mirror_ray(c, raw, normal, view, &s);
-                        if (ray.ok) {
-                            // A short reflection is gone above its fade, and
-                            // one that never fades meets nothing over most of
-                            // the floor: one intersection says so first.
-                            let first = trace(ray.origin, ray.direction);
-                            let met = first.kind != RAY_QUERY_INTERSECTION_NONE;
-                            let reaches = c.fade == FADE_BY_DISTANCE || (met && !(c.fade == FADE_BY_HEIGHT && first.t * ray.rise >= c.reflection_fade));
-                            if (reaches) {
-                                floor.rise = ray.rise;
-                                floor.near = ray.near;
-                                st = path_start(ray.origin, ray.direction, min(st.max_bounces, 3u), st.reflected, true);
-                                mirror = true;
-                                next = first;
-                                have_next = true;
-                                ended = false;
-                            }
+                if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
+                    if (st.bounce == 0u) {
+                        if (mirror) {
+                            escaped = true;
+                        } else if (!st.reflected) {
+                            background = sky;
+                            // Past cutouts, the coverage they settled; else
+                            // none (ic:1308).
+                            coverage = max(settled, 0.0);
                         }
                     }
                     break;
                 }
-                let met = floor_met(&st, &s, c, raw);
-                if (met == MET_END) {
-                    break;
+                if (st.bounce == 0u) {
+                    if (mirror) {
+                        depth = hit.t;
+                    } else if (!st.reflected) {
+                        coverage = select(1.0, settled, settled >= 0.0);
+                    }
                 }
-                if (met == MET_PASSED) {
-                    ended = false;
-                    break;
-                }
-            }
-            // Beer-Lambert across the segment just travelled, in the medium
-            // present (ic:1527-1556): only between two surfaces.
-            let top = media_top(st.media, NO_MEDIUM);
-            if (top != NO_MEDIUM) {
-                let medium = scene_materials[st.media.media[top].material];
-                if ((medium.glass & GLASS_VOLUME) != 0u) {
-                    let t = st.throughput * transmittance_over(medium, hit.t);
-                    st.throughput = t;
-                    if (!(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {
+                let raw = surface_of(hit);
+                let inst = scene_instances[hit.instance_custom_data];
+                if (inst.catcher != NO_CATCHER) {
+                    let c = scene_catchers[inst.catcher];
+                    if (st.catcher_view) {
+                        // Seen as the camera would see it (ic:1396-1471): what it
+                        // stands in front of, by the rule an escaping path follows,
+                        // with its shadow and its reflection on it; and nothing
+                        // further along this path. Never in the reflection's path,
+                        // whose catcher_view is false.
+                        let view = st.direction;
+                        let normal = select(-raw.geometric, raw.geometric, dot(raw.geometric, -view) > 0.0);
+                        let behind = env_radiance(st.bounce == 0u && !st.reflected, view);
+                        let caught = catch_shadow(c, raw, normal, behind, st.bounce, &s);
+                        if (cut_wanted) {
+                            st = seg_st;
+                            s = seg_s;
+                            replay = true;
+                            cut_wanted = false;
+                            want = WANT_CROSSING;
+                            continue;
+                        }
+                        floor = FloorSeen(st.radiance, st.throughput, st.bounce, behind, caught, c, normal, view, 0.0, 1.0, !st.reflected);
+                        on_floor = true;
+                        if (c.reflections > 0.0) {
+                            let ray = mirror_ray(c, raw, normal, view, &s);
+                            if (cut_wanted) {
+                                st = seg_st;
+                                s = seg_s;
+                                replay = true;
+                                cut_wanted = false;
+                                want = WANT_CROSSING;
+                                continue;
+                            }
+                            if (ray.ok) {
+                                // A short reflection is gone above its fade, and
+                                // one that never fades meets nothing over most of
+                                // the floor: one intersection says so first.
+                                let first = trace(ray.origin, ray.direction);
+                                let met = first.kind != RAY_QUERY_INTERSECTION_NONE;
+                                let reaches = c.fade == FADE_BY_DISTANCE || (met && !(c.fade == FADE_BY_HEIGHT && first.t * ray.rise >= c.reflection_fade));
+                                if (reaches) {
+                                    floor.rise = ray.rise;
+                                    floor.near = ray.near;
+                                    st = path_start(ray.origin, ray.direction, min(st.max_bounces, 3u), st.reflected, true);
+                                    mirror = true;
+                                    next = first;
+                                    have_next = true;
+                                    ended = false;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    let met = floor_met(&st, &s, c, raw);
+                    if (cut_wanted) {
+                        st = seg_st;
+                        s = seg_s;
+                        replay = true;
+                        cut_wanted = false;
+                        want = WANT_CROSSING;
+                        continue;
+                    }
+                    if (met == MET_END) {
+                        break;
+                    }
+                    if (met == MET_PASSED) {
+                        ended = false;
                         break;
                     }
                 }
-            }
-            // A lamp's stand-in shows only where the camera sees it straight on
-            // (stand_in_shows, ic:1330); past the first surface the lamp itself
-            // is met (meet_and_escape), and any other path passes the stand-in,
-            // as shadow rays do (ic:1568).
-            let stand_in = (inst.flags & INSTANCE_STAND_IN) != 0u;
-            if (stand_in && !(st.specular_chain && ((frame.lamp_flags & LAMPS_IN_MIRRORS) == 0u || (st.bounce == 0u && !st.reflected)))) {
-                if (st.crossings < MAX_CUTOUT_CROSSINGS) {
+                // Beer-Lambert across the segment just travelled, in the medium
+                // present (ic:1527-1556): only between two surfaces.
+                let top = media_top(st.media, NO_MEDIUM);
+                if (top != NO_MEDIUM) {
+                    let medium = scene_materials[st.media.media[top].material];
+                    if ((medium.glass & GLASS_VOLUME) != 0u) {
+                        // What the medium gives off along the way, a lit
+                        // light guide's glow, before what it absorbs of the
+                        // rest; times the square of its index, as light born
+                        // inside a denser medium leaves it (ic:1527-1545).
+                        let ior = st.media.media[top].ior;
+                        let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);
+                        if (any(glow != vec3<f32>(0.0))) {
+                            let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
+                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                        }
+                        let t = st.throughput * transmittance_over(medium, hit.t);
+                        st.throughput = t;
+                        if (!(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {
+                            break;
+                        }
+                    }
+                }
+                // A lamp's stand-in shows only where the camera sees it straight on
+                // (stand_in_shows, ic:1330); past the first surface the lamp itself
+                // is met (meet_and_escape), and any other path passes the stand-in,
+                // as shadow rays do (ic:1568).
+                let stand_in = (inst.flags & INSTANCE_STAND_IN) != 0u;
+                if (stand_in && !(st.specular_chain && ((frame.lamp_flags & LAMPS_IN_MIRRORS) == 0u || (st.bounce == 0u && !st.reflected)))) {
+                    if (st.crossings < MAX_CUTOUT_CROSSINGS) {
+                        st.crossings += 1u;
+                        let g = select(raw.geometric, -raw.geometric, dot(st.direction, raw.geometric) > 0.0);
+                        st.origin = offset_at(raw.position, -g, raw.magnitude);
+                        ended = false;
+                    }
+                    break;
+                }
+                // A medium's surface inside a medium that outranks it - the glass
+                // wall inside the liquid it holds - is no interface: the path
+                // goes straight on, and only the media it is in change
+                // (ic:1581-1599).
+                let base = scene_materials[inst.material];
+                if ((base.glass & GLASS_BOUNDARY) != 0u
+                    && st.crossings < MAX_CUTOUT_CROSSINGS
+                    && media_beyond(st.media, inst.solid, base.medium_priority) == media_solid(st.media, top)) {
                     st.crossings += 1u;
+                    var media = st.media;
+                    media_cross(&media, inst.solid, base.medium_priority, base.base_ior, inst.material);
+                    st.media = media;
                     let g = select(raw.geometric, -raw.geometric, dot(st.direction, raw.geometric) > 0.0);
                     st.origin = offset_at(raw.position, -g, raw.magnitude);
                     ended = false;
+                    break;
                 }
-                break;
+                // The material at this point (ic:1626-1710): its program run and
+                // its bump applied, ahead of the cutout and the glow it may
+                // drive and of the bounce limit, as the processor shades it
+                // there too; past the limit only where the program drives
+                // what is read before it.
+                seg_raw = raw;
+                seg_surf = facing(raw, st.direction);
+                material = ProgShaded(base, seg_surf.shading, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
+                let program = scene_programs[inst.material];
+                if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
+                    want = WANT_MAIN;
+                }
+                phase = 1u;
+                hit_next = cut_next;
+                if (programs_cut) {
+                    hit_st = st;
+                    hit_s = s;
+                }
+                continue;
             }
-            // A medium's surface inside a medium that outranks it - the glass
-            // wall inside the liquid it holds - is no interface: the path
-            // goes straight on, and only the media it is in change
-            // (ic:1581-1599).
-            let base = scene_materials[inst.material];
-            if ((base.glass & GLASS_BOUNDARY) != 0u
-                && st.crossings < MAX_CUTOUT_CROSSINGS
-                && media_beyond(st.media, inst.solid, base.medium_priority) == media_solid(st.media, top)) {
-                st.crossings += 1u;
-                var media = st.media;
-                media_cross(&media, inst.solid, base.medium_priority, base.base_ior, inst.material);
-                st.media = media;
-                let g = select(raw.geometric, -raw.geometric, dot(st.direction, raw.geometric) > 0.0);
-                st.origin = offset_at(raw.position, -g, raw.magnitude);
-                ended = false;
-                break;
+            // ---- At the segment's hit, its material known ----
+            let hit = seg_hit;
+            let raw = seg_raw;
+            let surf = seg_surf;
+            let inst = scene_instances[hit.instance_custom_data];
+            cut_next = hit_next;
+            // A cutout (ic:1710-1747): a hole, not a filter - the path meets
+            // the surface or carries straight on, by a draw of the open
+            // stream against its opacity, spending no bounce and changing no
+            // weight. At the first one the camera sees, the pixel's coverage
+            // is the light through every surface along the ray, averaged.
+            if ((frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {
+                let opacity = material.material.geometry_opacity;
+                let beyond = offset_at(raw.position, -surf.geometric, raw.magnitude);
+                if (st.bounce == 0u && !st.reflected && !mirror && settled < 0.0) {
+                    let covered = camera_coverage(beyond, st.direction, opacity);
+                    if (cut_wanted) {
+                        st = hit_st;
+                        s = hit_s;
+                        cut_wanted = false;
+                        want = WANT_CROSSING;
+                        continue;
+                    }
+                    settled = covered.coverage;
+                    catcher_behind = covered.catcher;
+                    coverage = covered.coverage;
+                }
+                if (st.crossings < MAX_CUTOUT_CROSSINGS && sampler_next_unstructured(&s) >= opacity) {
+                    st.crossings += 1u;
+                    st.origin = beyond;
+                    ended = false;
+                    break;
+                }
             }
-            // A glowing surface met from the front (ic:1813-1860): a stand-in,
-            // its face as its lamp lights, falling off to its edges.
-            let glow = base.emission;
-            if (glow.w != 0.0 && dot(st.direction, raw.geometric) <= 0.0) {
+            // A glowing surface met from the front (ic:1813-1860), but by a
+            // diffuse bounce where glows light nothing: weighed against the
+            // light sample of the glowing parts the last vertex took, or past
+            // glass a glossy bounce saw against the one its straight line
+            // meets; a stand-in its face as its lamp lights, falling off to
+            // its edges.
+            let lit = (frame.glass_flags & SCENE_LIGHT_MATERIALS) != 0u || st.ray != RAY_DIFFUSE;
+            if (material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {
+                // The light sample it is weighed against: the one taken where
+                // the path last scattered, of this point; or past glass a
+                // glossy bounce saw, the one taken there, of the glowing
+                // surface its straight line meets (one density for both, for
+                // the code's size).
+                var weigh = false;
+                var from_point = st.receiver_position;
+                var from_normal = st.receiver_normal;
+                var from_two_sided = st.receiver_two_sided;
+                var pdf = st.prev_pdf;
+                var met = GlowTarget(true, inst.emitter, hit.primitive_index, raw.position, raw.geometric);
+                var along = st.direction;
+                if (st.receiver && st.prev_pdf < PDF_INFINITE) {
+                    weigh = true;
+                } else if (st.seen.valid && st.seen.met && (frame.glass_flags & SCENE_EMITTERS) != 0u && st.seen.density < PDF_INFINITE) {
+                    met = glow_target(st.seen);
+                    weigh = met.ok;
+                    from_point = st.seen.position;
+                    from_normal = st.seen.normal;
+                    from_two_sided = st.seen.two_sided;
+                    pdf = st.seen.density;
+                    along = st.seen.direction;
+                }
+                var weight = 1.0;
+                if (weigh) {
+                    let density = emitters_density(from_point, from_normal, from_two_sided, met.first, met.primitive);
+                    if (density > 0.0) {
+                        let to = met.position - from_point;
+                        weight = mis_against_area(pdf, density, dot(to, to), dot(along, met.geometric));
+                    }
+                }
                 var face = 1.0;
                 if (inst.light != NO_LIGHT) {
                     let lamp = scene_lights[inst.light];
@@ -1924,10 +2425,17 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     }
                 }
                 let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                st.radiance += clamp_light(st.throughput * glow.xyz * (1.0 * face), light_ceiling(st.specular_chain, found_at));
+                st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
             }
             var off: SplitOff;
-            let shaded = shade_vertex(&st, &s, hit, facing(raw, st.direction), &off);
+            let shaded = shade_vertex(&st, &s, hit, surf, material, &off);
+            if (cut_wanted) {
+                st = hit_st;
+                s = hit_s;
+                cut_wanted = false;
+                want = WANT_CROSSING;
+                continue;
+            }
             if (shaded == SHADE_ON) {
                 ended = false;
             } else if (shaded == SHADE_SPLIT) {
@@ -1957,7 +2465,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             result = floor.radiance + floor.throughput * caught.radiance;
             if (floor.bounce == 0u && floor.camera) {
                 background = floor.throughput * floor.behind * (1.0 - caught.coverage);
-                coverage = caught.coverage;
+                // Through cutouts, whose share is settled: the floor adds its
+                // shadow's on the paths that reach it (ic:1452).
+                coverage = select(caught.coverage, settled + caught.coverage, settled >= 0.0 && catcher_behind);
             }
             on_floor = false;
             mirror = false;

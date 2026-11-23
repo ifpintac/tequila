@@ -36,6 +36,10 @@ const PROGRAM_BUMPS: u32 = 2u;
 // space there (OP_TEXTURE's normal mode).
 const PROGRAM_NORMAL_UV: u32 = 4u;
 const PROGRAM_NORMAL_PROJECTED: u32 = 8u;
+// It drives what the integrator reads at a hit ahead of the bounce limit
+// (the glow, the cutout's opacity); it drives the cutout's opacity.
+const PROGRAM_AT_HIT: u32 = 16u;
+const PROGRAM_CUTS: u32 = 32u;
 const PROGRAM_NONE: u32 = 0xFFFFFFFFu;
 
 const OP_INPUT: u32 = 1u;
@@ -371,8 +375,8 @@ fn prog_material_floats(m: GpuMaterial) -> array<f32, 44> {
         m.base_weight, m.base_metalness, m.base_diffuse_roughness, m.specular_weight,
         m.specular_roughness, m.specular_roughness_anisotropy, m.specular_ior, m.coat_weight,
         m.coat_roughness, m.coat_ior, m.coat_darkening, m.fuzz_weight,
-        m.fuzz_roughness, m.geometry_occlusion, m.specular_rotation, m._pad,
-        m.emission.x, m.emission.y, m.emission.z, m.emission.w,
+        m.fuzz_roughness, m.geometry_occlusion, m.specular_rotation, m.geometry_opacity,
+        m.emission_color.x, m.emission_color.y, m.emission_color.z, m.emission_color.w,
     );
 }
 
@@ -390,6 +394,7 @@ fn prog_material_from(f: array<f32, 44>, base: GpuMaterial) -> GpuMaterial {
         vec4<f32>(f[40], f[41], f[42], f[43]),
         base.transmission_color, base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
         base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base._pad2,
+        base.volume_glow,
     );
 }
 

@@ -5,6 +5,7 @@
 //! not, fails here rather than as a picture that is subtly wrong.
 
 use std::mem::{offset_of, size_of};
+use tequila_render_gpu::emitters::GpuEmitterNode;
 use tequila_render_gpu::lights::{GpuLight, GpuLightNode};
 use tequila_render_gpu::material::GpuMaterial;
 use tequila_render_gpu::program::GpuProgram;
@@ -46,7 +47,7 @@ fn records_have_one_layout_on_both_sides() {
     layout!(
         &module,
         GpuInstance {
-            object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, solid, _pad, object_color, inv_length_scale,
+            object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, solid, emitter, object_color, inv_length_scale,
             scale, object_random, object_number,
         }
     );
@@ -79,9 +80,9 @@ fn records_have_one_layout_on_both_sides() {
         GpuMaterial {
             base_color, metal_n, metal_k, specular_color, coat_color, fuzz_color, base_weight, base_metalness,
             base_diffuse_roughness, specular_weight, specular_roughness, specular_roughness_anisotropy, specular_ior,
-            coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, specular_rotation, _pad,
-            emission, transmission_color, transmission_tint, volume_density, medium_priority, base_ior, glass, pane_weight,
-            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, _pad2,
+            coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, specular_rotation, geometry_opacity,
+            emission_color, transmission_color, transmission_tint, volume_density, medium_priority, base_ior, glass, pane_weight,
+            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, _pad2, volume_glow,
         }
     );
     let source = shader::source("lights");
@@ -95,10 +96,24 @@ fn records_have_one_layout_on_both_sides() {
         }
     );
     layout!(&module, GpuLightNode { centre, axis, cos_o, sin_o, cos_e, distant, left, right, parent, light });
+    let source = shader::source("emitters");
+    let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+    layout!(&module, GpuEmitterNode { centre, axis, a, b, c, normal, radiance, power, parent, left, right, instance, primitive, _pad });
     let source = shader::source("program");
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
     layout!(
         &module,
         GpuProgram { main_start, main_end, bump_start, bump_end, constants, writes_start, writes_count, bump_here, bump_height, tangent, flags, _pad }
     );
+}
+
+/// The processor's numbers the transport repeats as constants: a shadow
+/// ray's footprint for a program at a crossing.
+#[test]
+fn constants_the_kernel_repeats_are_the_processors() {
+    let source = shader::source("transport");
+    let spread = tequila_render_core::settings::DEFAULT_PIXEL_SPREAD;
+    let line = source.lines().find(|l| l.starts_with("const DEFAULT_PIXEL_SPREAD: f32 = ")).expect("the transport has it");
+    let value: f32 = line.trim_start_matches("const DEFAULT_PIXEL_SPREAD: f32 = ").trim_end_matches(';').parse().expect("a number");
+    assert_eq!(value, spread, "the transport's DEFAULT_PIXEL_SPREAD is {value}, settings.rs's {spread}");
 }

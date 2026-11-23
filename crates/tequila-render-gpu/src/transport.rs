@@ -121,7 +121,9 @@ pub struct FrameParams {
     /// `IntegratorConfig::shadow_glass`: [`GLASS_SOLID`], [`GLASS_CLEAR`] or
     /// [`GLASS_UNBENT`].
     pub shadow_glass: u32,
-    /// [`SCENE_TRANSMITS`] and [`SCENE_PANES`].
+    /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_CUTOUTS`],
+    /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`] and
+    /// [`SCENE_CUT_PROGRAMS`].
     pub glass_flags: u32,
     pub _pad3: [u32; 2],
 }
@@ -137,6 +139,19 @@ pub const GLASS_UNBENT: u32 = 2;
 pub const SCENE_TRANSMITS: u32 = 1;
 /// Some material is clear glass a shadow ray passes (`SceneSnapshot::has_panes`).
 pub const SCENE_PANES: u32 = 2;
+/// Some material is cut out (`SceneSnapshot::has_cutouts`): a path crosses
+/// its holes, and shadow rays walk through them.
+pub const SCENE_CUTOUTS: u32 = 4;
+/// The glowing triangles are lights a light sample chooses among
+/// (`SceneSnapshot::emitters` is not empty and
+/// `IntegratorConfig::light_source_materials` is on).
+pub const SCENE_EMITTERS: u32 = 8;
+/// `IntegratorConfig::light_source_materials`: a glow a diffuse bounce meets
+/// lights what the bounce left.
+pub const SCENE_LIGHT_MATERIALS: u32 = 16;
+/// A program on the card drives some material's opacity
+/// (`crate::program::PROGRAM_CUTS`): a walk crossing it asks the program.
+pub const SCENE_CUT_PROGRAMS: u32 = 32;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -215,11 +230,10 @@ struct GlassScene {
     film: bool,
     flakes: bool,
     scattering: bool,
-    glowing_volume: bool,
-    cut_glass: bool,
     volume_maps: bool,
     unseen_parts: bool,
     folded_glass: bool,
+    cutouts: bool,
 }
 
 impl GlassScene {
@@ -242,6 +256,8 @@ impl GlassScene {
                 || m.volume_density != own.volume_density
                 || m.medium_priority != own.medium_priority
                 || m.geometry_thin_walled != own.geometry_thin_walled
+                || m.volume_emission_color != own.volume_emission_color
+                || m.volume_emission_strength != own.volume_emission_strength
         });
         GlassScene {
             transmits: scene.has_transmissive(),
@@ -251,20 +267,19 @@ impl GlassScene {
             film: any(&|m| m.thin_film_weight > 1e-4),
             flakes: any(&|m| m.flake_weight > 1e-4 && m.flake_coverage > 0.0),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
-            glowing_volume: any(&|m| m.has_volume() && m.volume_emission_strength > 0.0),
-            cut_glass: any(&|m| m.transmission_weight > 0.0 && m.geometry_opacity < 0.999),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             unseen_parts: scene
                 .instances
                 .iter()
                 .any(|i| !i.visible_to_camera || !i.seen_by_diffuse || !i.seen_by_glossy || !i.seen_by_transmission || i.holdout),
             folded_glass: folded,
+            cutouts: scene.has_cutouts(),
         }
     }
 
     /// [`FrameParams::glass_flags`].
     fn flags(&self) -> u32 {
-        (if self.transmits { SCENE_TRANSMITS } else { 0 }) | if self.panes { SCENE_PANES } else { 0 }
+        (if self.transmits { SCENE_TRANSMITS } else { 0 }) | if self.panes { SCENE_PANES } else { 0 } | if self.cutouts { SCENE_CUTOUTS } else { 0 }
     }
 
     fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
@@ -296,17 +311,11 @@ impl GlassScene {
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
         }
-        if self.glowing_volume {
-            limits.push("a glowing volume does not glow");
-        }
         if self.film {
             limits.push("a thin film is left out");
         }
         if self.flakes {
             limits.push("metallic flakes are left out");
-        }
-        if self.cut_glass {
-            limits.push("glass with a cutout's holes in it renders whole");
         }
         if self.unseen_parts {
             limits.push("a part hidden from some rays, or held out, is seen by every ray");
@@ -361,6 +370,12 @@ pub struct GpuRenderer {
     glass_scene: GlassScene,
     /// What [`crate::textures::texture_limits`] says of the scene.
     texture_limits: Vec<&'static str>,
+    /// The glowing triangles' tree and leaves (`crate::emitters`), which the
+    /// scene's bind group reads, and whether there are any.
+    pub emitters: [wgpu::Buffer; 2],
+    has_emitters: bool,
+    /// Whether a program on the card drives some opacity.
+    cut_programs: bool,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -370,7 +385,6 @@ struct FloorScene {
     catcher_shadows: bool,
     lamps: bool,
     finite_dome: bool,
-    cutouts: bool,
     shadowless_parts: bool,
     background: bool,
 }
@@ -382,7 +396,6 @@ impl FloorScene {
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
             finite_dome: !scene.environment.dome().is_infinite(),
-            cutouts: scene.has_cutouts(),
             shadowless_parts: scene.has_shadowless_parts(),
             background: !scene.background.is_environment(),
         }
@@ -399,9 +412,6 @@ impl FloorScene {
         }
         if self.finite_dome {
             limits.push("the floor is lit and shadowed as under an infinitely far dome");
-        }
-        if self.cutouts {
-            limits.push("a cutout casts a solid shadow on the floor");
         }
         if self.shadowless_parts {
             limits.push("a part that casts no shadow shadows the floor all the same");
@@ -521,7 +531,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  dispersion, glowing volume or holes in glass (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  or dispersion (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
@@ -540,6 +550,20 @@ impl GpuRenderer {
         let program_words = init("program words", bytemuck::cast_slice(&programs.words));
         let program_constants = init("program constants", bytemuck::cast_slice(&programs.constants));
         let program_headers = init("programs", bytemuck::cast_slice(&programs.headers));
+        // The glowing triangles, their parts numbered as the card's
+        // instances are.
+        let mut slots = vec![crate::emitters::EMITTER_NONE; scene.instances.len()];
+        for (slot, record) in uploaded.instance_records.iter().enumerate() {
+            if let Some(at) = slots.get_mut(record.instance as usize) {
+                *at = slot as u32;
+            }
+        }
+        let emitter_records = crate::emitters::EmitterRecords::of(scene, &|n| slots.get(n as usize).copied().unwrap_or(crate::emitters::EMITTER_NONE));
+        let has_emitters = !emitter_records.is_empty();
+        let emitter_nodes = if has_emitters { emitter_records.nodes.clone() } else { vec![crate::emitters::GpuEmitterNode::default()] };
+        let emitter_leaves = if emitter_records.leaves.is_empty() { vec![crate::emitters::EMITTER_NONE] } else { emitter_records.leaves.clone() };
+        let emitter_nodes = init("emitter nodes", bytemuck::cast_slice(&emitter_nodes));
+        let emitter_leaves = init("emitter leaves", bytemuck::cast_slice(&emitter_leaves));
         let texture_texels = init("texture texels", bytemuck::cast_slice(&pictures.texels));
         let texture_header = init("texture header", bytemuck::cast_slice(&pictures.header));
 
@@ -564,6 +588,8 @@ impl GpuRenderer {
                 entry(15, storage(true)),
                 entry(16, storage(true)),
                 entry(17, storage(true)),
+                entry(18, storage(true)),
+                entry(19, storage(true)),
                 entry(20, storage(true)),
             ],
         });
@@ -610,6 +636,8 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 15, resource: uploaded.tangents.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 16, resource: texture_texels.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 17, resource: texture_header.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 18, resource: emitter_nodes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 19, resource: emitter_leaves.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 20, resource: uploaded.attributes.as_entire_binding() },
             ],
         });
@@ -644,6 +672,9 @@ impl GpuRenderer {
             lamp_scene: LampScene::of(scene),
             glass_scene: GlassScene::of(scene),
             texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
+            emitters: [emitter_nodes, emitter_leaves],
+            has_emitters,
+            cut_programs: programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0),
         }
     }
 
@@ -729,7 +760,10 @@ impl GpuRenderer {
                 ShadowGlass::Clear => GLASS_CLEAR,
                 ShadowGlass::Unbent => GLASS_UNBENT,
             },
-            glass_flags: self.glass_scene.flags(),
+            glass_flags: self.glass_scene.flags()
+                | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
+                | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
+                | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
             _pad3: [0; 2],
         }
     }

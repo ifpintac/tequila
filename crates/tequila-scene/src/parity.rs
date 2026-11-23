@@ -247,6 +247,82 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: bumped_product,
     pictures: parity_pictures,
+}, ParityScene {
+    name: "glowing_pattern",
+    covers: "R3 tier A, emission a program drives: the product on its modelled ground under the environment, its \
+             screen glowing in a checker planar from above (the glow's colour), its lens orange by the colour \
+             picture through its UVs (the glow's luminance) - glows no light sample takes, found by the camera \
+             and by bounces alone, weighed whole, lighting the bezel, the body and the ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_pattern,
+    pictures: parity_pictures,
+}, ParityScene {
+    name: "glowing_screen",
+    covers: "R3 tier A, glowing parts as lights: the product on its modelled ground under the environment turned \
+             down to a sixth, its screen glowing blue, its lens and its feet orange, the same all over - every \
+             triangle of them in the tree of glowing triangles, a light sample choosing one down it from each \
+             point the path scatters at and a point on it, weighed against the bounces that hit the same point; \
+             the screen lighting the bezel and the body, the feet the ground under the product",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_screen,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "glow_under_glass",
+    covers: "R3 tier A/B, a glow seen through glass: glowing_screen with a block of solid clear glass lying over the \
+             screen - the camera seeing the glow split at and refracted through the glass, the light samples of the \
+             glowing triangles passing the glass, the glossy bezel's bounces seeing the glass as glass and the glow \
+             past it weighed against the glowing surface their straight line meets",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glow_under_glass,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "cutout_grille",
+    covers: "R3 tier A, cutout opacity: the product on the Headphones' floor under the environment, a perforated \
+             grille lying over its screen - its holes a checker a program draws into its opacity, a hole or a \
+             wall - and a sheet of smoked plastic standing on the floor in front, its opacity 0.45 everywhere: \
+             the camera and the bounces crossing the holes by a draw of the open stream, the camera's coverage \
+             averaged along its ray (the program run at every crossing, the floor's shadow added behind the \
+             sheet), the shadow rays of the sky through both, the floor's shadow of them, its reflection \
+             crossing them",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: cutout_grille,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "cut_glass",
+    covers: "R3 tier A/B, glass with a cutout's holes: glass_ball_floor's ball 0.55 opaque - the path crossing its \
+             holes without entering it, refracting where it meets the glass, no split at the first glass that is \
+             not plain; shadow rays through it taking its holes with its tint (Pane::crossing), the floor's shadow \
+             of it, the camera's coverage through it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: cut_glass,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "glowing_volume",
+    covers: "R3 tier B, a glowing volume: glass_ball's ball of solid glass, its volume glowing orange and absorbing \
+             - the glow given off along every stretch a path travels inside it, less what it absorbs on the way, \
+             times the square of its index, seen through the glass by the camera and lighting what is round it \
+             by the bounces that pass through",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_volume,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -937,6 +1013,142 @@ fn projected_product() -> SceneDocument {
         graph.connect(scale, image, Socket::Input(0));
         graph.connect(image, output, Socket::Param(Param::BaseColor));
     }
+    document
+}
+
+/// `simple_product` on its modelled ground, its screen glowing in a checker
+/// and its lens by a picture, both driven by programs.
+fn glowing_pattern() -> SceneDocument {
+    let (mut document, _) = simple_product_mapped(&|(name, material_type, material)| match name {
+        "Screen" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 0.5, g: 0.7, b: 1.0 }, emission_luminance: 3.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Lens" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.45, b: 0.15 }, emission_luminance: 2.0, ..MaterialType::Emissive.defaults() },
+        ),
+        _ => (name, material_type, material),
+    });
+    store_pictures(&mut document);
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Screen").map(|(k, _)| k).expect("the screen");
+        let graph = &mut document.materials.get_mut(key).expect("the screen").graph;
+        let output = graph.output();
+        let planar = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(1.2, 1.2, 1.0), ..Mapping::default() };
+        let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+        let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
+        graph.connect(m, checker, Socket::Input(0));
+        graph.connect(checker, output, Socket::Param(Param::EmissionColor));
+    }
+    texture_material(&mut document, "Lens", &[wire(1, Some(uv_repeats(2.0, 2.0)), Param::EmissionLuminance)]);
+    document
+}
+
+/// `simple_product` on its modelled ground, the environment down to a sixth,
+/// its screen glowing blue, its lens and its feet orange, each the same all
+/// over: glowing parts a light sample chooses.
+fn glowing_screen() -> SceneDocument {
+    glowing_screen_and_bus().0
+}
+
+fn glowing_screen_and_bus() -> (SceneDocument, CommandBus) {
+    let (mut document, mut bus) = simple_product_mapped(&|(name, material_type, material)| match name {
+        "Screen" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 0.45, g: 0.65, b: 1.0 }, emission_luminance: 4.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Lens" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.6, b: 0.3 }, emission_luminance: 8.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Foot" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.5, b: 0.2 }, emission_luminance: 12.0, ..MaterialType::Emissive.defaults() },
+        ),
+        _ => (name, material_type, material),
+    });
+    bus.apply(&mut document, Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 1.0 / 6.0) })
+        .expect("the environment turns down");
+    (document, bus)
+}
+
+/// glowing_screen with a block of solid clear glass over the screen.
+fn glow_under_glass() -> SceneDocument {
+    let (mut document, mut bus) = glowing_screen_and_bus();
+    let glass = Material { specular_ior: 1.5, ..MaterialType::GlassSolid.defaults() };
+    let block = crate::bench::rounded_box(vec3(0.5, 0.012, 0.3), 0.004, 12);
+    add_parts(&mut document, &mut bus, vec![("Cover Glass", block, MaterialType::GlassSolid, glass, Transform::translation(vec3(0.15, 0.345, 0.08)))]);
+    document
+}
+
+/// The Headphones' floor, a perforated grille over the product's screen,
+/// its holes a checker a program draws into its opacity, and a sheet of
+/// smoked plastic, 0.45 opaque, standing on the floor in front.
+fn cutout_grille() -> SceneDocument {
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let grille = Material::plastic(Spectrum { r: 0.7, g: 0.68, b: 0.62 }, 0.3);
+    let sheet = Material { geometry_opacity: 0.45, ..Material::plastic(Spectrum { r: 0.12, g: 0.14, b: 0.18 }, 0.08) };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Grille", crate::bench::rounded_box(vec3(0.8, 0.004, 0.46), 0.002, 8), MaterialType::Plastic, grille, Transform::translation(vec3(0.0, 0.42, 0.0))),
+            (
+                "Sheet",
+                crate::bench::rounded_box(vec3(0.3, 0.2, 0.004), 0.002, 8),
+                MaterialType::Plastic,
+                sheet,
+                Transform::translation(vec3(0.75, 0.2, 1.0)) * Transform::rotation(Vec3::Y, 0.5),
+            ),
+        ],
+    );
+    let key = document.materials.iter().find(|(_, m)| m.name == "Grille").map(|(k, _)| k).expect("the grille");
+    let graph = &mut document.materials.get_mut(key).expect("the grille").graph;
+    let output = graph.output();
+    let planar = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(1.6, 1.6, 1.0), ..Mapping::default() };
+    let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+    let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
+    graph.connect(m, checker, Socket::Input(0));
+    graph.connect_output(checker, 1, output, Socket::Param(Param::Opacity));
+    document
+}
+
+/// The Headphones' floor and glass_ball's ball on it, 0.55 opaque.
+fn cut_glass() -> SceneDocument {
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        geometry_opacity: 0.55,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Cut Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// `simple_product` on its modelled ground, a ball of solid glass on the
+/// ground in front of the body, its volume glowing orange.
+fn glowing_volume() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.95, g: 0.8, b: 0.6 },
+        specular_ior: 1.5,
+        volume_emission_color: Spectrum { r: 1.0, g: 0.55, b: 0.2 },
+        volume_emission_strength: 6.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Glowing Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
     document
 }
 
