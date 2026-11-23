@@ -78,7 +78,8 @@ struct FrameParams {
     // SCENE_CUTOUTS: some material is cut out (SceneSnapshot::has_cutouts);
     // SCENE_CUT_PROGRAMS: a program on the card drives some opacity;
     // SCENE_EMITTERS: the glowing triangles are lights (emitters.wgsl);
-    // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials.
+    // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials;
+    // SCENE_BEVEL: some material rounds its edges (edge_radius).
     glass_flags: u32,
     _pad3: vec2<u32>,
 };
@@ -95,6 +96,7 @@ const SCENE_CUTOUTS: u32 = 4u;
 const SCENE_EMITTERS: u32 = 8u;
 const SCENE_LIGHT_MATERIALS: u32 = 16u;
 const SCENE_CUT_PROGRAMS: u32 = 32u;
+const SCENE_BEVEL: u32 = 64u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

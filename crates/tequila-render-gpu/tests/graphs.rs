@@ -40,12 +40,13 @@ use tequila_texture::projection::{PointWorld, RayKind, SurfacePoint};
 
 /// Words an item gives back: the material (40 floats), the bump's height
 /// here, the Tangent drawn (world space), the shading normal, the bump's
-/// heights a step along, and the material's glow (4 floats).
-const OUT: usize = 53;
+/// heights a step along, and the material's glow and transmission colour
+/// and weight (8 floats).
+const OUT: usize = 57;
 /// Words an item takes: the program's header, the point, the surface, the
 /// material it is written over, the point's footprints, the mesh's tangent,
-/// and the glow it is written over.
-const IN: usize = 135;
+/// and the glow and transmission it is written over.
+const IN: usize = 139;
 
 /// Everything the card needs of a point beyond the program.
 #[derive(Clone, Copy)]
@@ -105,11 +106,11 @@ fn kernel_body() -> String {
     s.dpdv = {};
     s.object_to_world = array<vec4<f32>, 3>({}, {}, {});
     s.world_to_object = array<vec4<f32>, 3>({}, {}, {});
-    var b: array<f32, 44>;
+    var b: array<f32, 48>;
     for (var k = 0u; k < 40u; k++) {{
         b[k] = inf(83u + k);
     }}
-    for (var k = 0u; k < 4u; k++) {{
+    for (var k = 0u; k < 8u; k++) {{
         b[40u + k] = inf(131u + k);
     }}
     pt.footprint = inf(123u);
@@ -125,7 +126,7 @@ fn kernel_body() -> String {
     outf(41u, r.drawn.x); outf(42u, r.drawn.y); outf(43u, r.drawn.z);
     outf(44u, r.normal.x); outf(45u, r.normal.y); outf(46u, r.normal.z);
     outf(47u, r.heights.x); outf(48u, r.heights.y);
-    for (var k = 0u; k < 4u; k++) {{
+    for (var k = 0u; k < 8u; k++) {{
         outf(49u + k, f[40u + k]);
     }}",
         v3(11),
@@ -157,10 +158,11 @@ fn floats(m: &GpuMaterial) -> [f32; 40] {
     all[..40].try_into().expect("forty floats")
 }
 
-/// GpuMaterial's glow: the emission's colour and its luminance.
-fn glow(m: &GpuMaterial) -> [f32; 4] {
+/// GpuMaterial's glow and transmission: the emission's colour and its
+/// luminance, the transmission's colour and its weight.
+fn glow(m: &GpuMaterial) -> [f32; 8] {
     let all: &[f32] = bytemuck::cast_slice(std::slice::from_ref(m));
-    all[40..44].try_into().expect("four floats")
+    all[40..48].try_into().expect("eight floats")
 }
 
 fn ray_code(ray: RayKind) -> u32 {
@@ -193,7 +195,7 @@ fn processor(case: &Case, textures: &TextureTable) -> [f32; OUT] {
     let material = shade(&case.program, textures, &case.point, &mut registers, &mut scratch).clone();
     let mut out = [0.0f32; OUT];
     out[..40].copy_from_slice(&floats(&GpuMaterial::from_material(&material)));
-    out[49..53].copy_from_slice(&glow(&GpuMaterial::from_material(&material)));
+    out[49..57].copy_from_slice(&glow(&GpuMaterial::from_material(&material)));
     let register = |p: Param| case.program.driven.iter().find(|(q, _)| *q == p).map(|(_, r)| *r);
     if let Some(r) = bump_param(&case.program).and_then(register) {
         out[40] = registers.value(r).as_float();
@@ -872,6 +874,33 @@ fn glows_and_cutouts_a_program_drives_are_the_processors() {
         }
     }
     compare_all(&h, "glows and cutouts", &cases, ARITHMETIC);
+}
+
+/// Programs driving how much light a surface lets through (Transmission
+/// Weight), over constants of every transmission colour and weight.
+#[test]
+fn transmission_a_program_drives_is_the_processors() {
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(13, 1);
+    let mut cases = Vec::new();
+    let nodes: [(ShaderNode, u8); 4] = [(ShaderNode::Checker, 0), (ShaderNode::Checker, 1), (ShaderNode::GradientTexture { kind: GradientKind::Linear }, 1), (ShaderNode::WhiteNoise { dims: 3 }, 1)];
+    for _ in 0..900 {
+        for (node, output) in nodes {
+            let kind = NodeKind::Node(node);
+            let inputs: Vec<Value> = node.inputs().iter().map(|spec| random_value(&mut rng, spec)).collect();
+            let mut program = single_node(&kind, &inputs, &[output]);
+            program.driven[0].0 = Param::TransmissionWeight;
+            program.constants = Material {
+                transmission_color: Spectrum { r: rng.next_f32(), g: rng.next_f32(), b: rng.next_f32() },
+                transmission_weight: rng.next_f32(),
+                geometry_thin_walled: rng.next_f32() < 0.5,
+                ..Material::default()
+            };
+            let point = random_point(&mut rng, 1.0);
+            cases.push(Case { label: format!("{node:?} output {output} into the transmission's weight"), program, surface: flat_surface(&point), point, normal: None, heights: None });
+        }
+    }
+    compare_all(&h, "transmission", &cases, ARITHMETIC);
 }
 
 // ---- The bump ------------------------------------------------------------

@@ -84,7 +84,12 @@ pub struct GpuMaterial {
     pub pane_coat: f32,
     pub pane_coat_ior: f32,
     pub pane_depth: f32,
-    pub _pad2: [f32; 2],
+    /// Rounded edges (Cycles' Bevel, `bevel.rs`): the radius the normal is
+    /// rounded over at the surface a path meets first, none at 0, and how
+    /// many probes round it (`edge_samples as u32`, as the integrator
+    /// counts them).
+    pub edge_radius: f32,
+    pub edge_samples: u32,
     /// What the volume behind the surface gives off (`emitted_over`): the
     /// glow, `volume_emission_color` times `volume_emission_strength` (none
     /// where the strength is none), and in `[3]` what it absorbs a metre
@@ -186,7 +191,8 @@ impl GpuMaterial {
             pane_coat: p.map_or(0.0, |p| p.coat),
             pane_coat_ior: p.map_or(1.0, |p| p.coat_ior),
             pane_depth: p.and_then(|p| p.volume).map_or(0.0, |(_, depth)| depth),
-            _pad2: [0.0; 2],
+            edge_radius: m.edge_radius,
+            edge_samples: m.edge_samples as u32,
             volume_glow: {
                 // As Material::emitted_over works them out.
                 let glow = if m.volume_emission_strength > 0.0 { m.volume_emission_color * m.volume_emission_strength } else { Spectrum::ZERO };
