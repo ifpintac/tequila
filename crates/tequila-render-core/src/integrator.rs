@@ -4737,6 +4737,98 @@ pub fn supports_next_event_estimation(flags: BsdfFlags) -> bool {
     !flags.is_pure_delta()
 }
 
+/// The random walk's pieces as they stand, for the graphics card's
+/// differential tests (`docs/07` R3, `tequila-render-gpu`'s
+/// `tests/media.rs`): each the integrator's own function, called as the
+/// walk calls it, so the card's ports are held to what the processor does.
+/// Nothing here is used by the renderer.
+#[doc(hidden)]
+pub mod walk_twins {
+    use super::*;
+    pub use tequila_materials::openpbr::SubsurfaceMedium;
+
+    /// `henyey_greenstein`.
+    pub fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
+        super::henyey_greenstein(cos_theta, g)
+    }
+
+    /// `walk_flight` on an RGB path: each channel's chance, and the optical
+    /// depth flown.
+    pub fn walk_flight(throughput: Spectrum, albedo: Spectrum, sigma: Spectrum, stretch: f32, draws: (f32, f32)) -> (Spectrum, f32) {
+        super::walk_flight(throughput, albedo, sigma, stretch, draws)
+    }
+
+    /// A walk's guide (`WalkGuide`), held to the card's.
+    #[derive(Clone, Copy, Debug)]
+    pub struct Guide(WalkGuide);
+
+    impl Guide {
+        /// `WalkGuide::new`, the instance by its index.
+        pub fn new(instance: u32, entry: Vec3, normal: Vec3, walk: &SubsurfaceMedium) -> Option<Guide> {
+            WalkGuide::new(InstanceId(instance), entry, normal, walk).map(Guide)
+        }
+
+        /// `WalkGuide::look`.
+        pub fn look(sigma: Spectrum) -> f32 {
+            WalkGuide::look(sigma)
+        }
+
+        /// `WalkGuide::stretch`.
+        pub fn stretch(&self) -> f32 {
+            self.0.stretch()
+        }
+
+        /// Its Dwivedi diffusion length, the logarithm with it, and the
+        /// share of turns guided.
+        pub fn parts(&self) -> (f32, f32, f32) {
+            (self.0.diffusion, self.0.phase_log, self.0.share)
+        }
+
+        /// What the first flight saw of the surface opposite, as the walk
+        /// sets it.
+        pub fn set_opposite(&mut self, opposite: Option<f32>) {
+            self.0.opposite = opposite;
+        }
+
+        /// `WalkGuide::turn`.
+        pub fn turn(&mut self, at: Vec3, forward: Vec3, g: f32, sampler: &mut Sampler) -> Vec3 {
+            self.0.turn(at, forward, g, sampler)
+        }
+
+        /// `GuidedTurn::density` of the turn last taken; none before one.
+        pub fn density(&self, chance: Spectrum, sigma: Spectrum, t: f32, collided: bool) -> Option<f32> {
+            self.0.turn.map(|turn| turn.density(chance, sigma, t, collided))
+        }
+
+        /// The turn last taken: guided, backward, its backward fraction, the
+        /// factors and the stretches out and across.
+        pub fn last_turn(&self) -> Option<(bool, bool, f32, f32, f32, f32, f32)> {
+            self.0.turn.map(|t| (t.guided, t.backward, t.backward_fraction, t.forward_factor, t.backward_factor, t.forward_stretch, t.backward_stretch))
+        }
+    }
+
+    /// `medium_transmittance` through a uniform medium inside `instance`,
+    /// every part a blocker.
+    pub fn medium_transmittance(intersector: &dyn Intersector, from: Vec3, direction: Vec3, reach: f32, instance: u32, walk: &SubsurfaceMedium, sampler: &mut Sampler) -> Spectrum {
+        super::medium_transmittance(intersector, from, direction, reach, InstanceId(instance), walk, None, sampler, &LightLinks::All)
+    }
+
+    /// `medium_direct_light` in a uniform medium inside `instance`: the
+    /// sky's share and the lamps', before the path's throughput.
+    pub fn medium_direct_light(
+        intersector: &dyn Intersector,
+        config: &IntegratorConfig,
+        at: Vec3,
+        forward: Vec3,
+        walk: &SubsurfaceMedium,
+        instance: u32,
+        sampler: &mut Sampler,
+    ) -> (Spectrum, Spectrum) {
+        let (sky, lights, _) = super::medium_direct_light(intersector, config, at, forward, walk, None, InstanceId(instance), sampler);
+        (sky, lights)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

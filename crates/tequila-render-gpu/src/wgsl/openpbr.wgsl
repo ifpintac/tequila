@@ -12,17 +12,17 @@
 // the material's thin film where it has one (film.wgsl's Airy sum, which
 // stands in for their Fresnel) - the transmission lobe (glass, solid or
 // thin-walled, its reflect-or-refract choice the stack's rescaled lobe
-// variate) and the diffuse substrate (EON), with base_weight and
+// variate), the diffuse substrate (EON) and the subsurface lobe beside it
+// (DiffuseTransmission: the doorway into the integrator's random walk,
+// white, or on a thin wall the light the sheet scatters through in its
+// subsurface colour), with base_weight and
 // geometry_occlusion in the lobes' scales; the interface and the diffuse
 // share what the transmission leaves (`opaque`), and the coat traps light
-// against the transmission colour as well as the diffuse. Seven lobes in
+// against the transmission colour as well as the diffuse. Eight lobes in
 // their slots, at most five of them in a stack, as the processor's
 // MAX_LOBES drops the sixth pushed. The flake a point lies on is the
 // integrator's to find (flakes.wgsl) and write into the material's
-// flake_coverage and flake_normal. NOT here, and not in GpuMaterial
-// (GpuMaterial::supports refuses a material that has them):
-// - subsurface: subsurface_weight = 0, no walk doorway, and the diffuse
-//   albedo the trapped light bounces against is base_color's alone;
+// flake_coverage and flake_normal. NOT here, and not in GpuMaterial:
 // - emission and geometry_opacity: not the BSDF's at all (the integrator's;
 //   GpuMaterial carries both for it).
 //
@@ -37,6 +37,7 @@
 //#include features
 //#include sheen
 //#include onb
+//#include media
 
 // Which layer of §2.1's stack a lobe belongs to (openpbr.rs's Depth), in
 // its order; deeper layers are attenuated by everything above them.
@@ -57,7 +58,8 @@ const LOBE_METAL: u32 = 3u;
 const LOBE_SPECULAR: u32 = 4u;
 const LOBE_TRANSMISSION: u32 = 5u;
 const LOBE_DIFFUSE: u32 = 6u;
-const OPENPBR_LOBES: u32 = 7u;
+const LOBE_SUBSURFACE: u32 = 7u;
+const OPENPBR_LOBES: u32 = 8u;
 // How many of them a stack holds at once (openpbr.rs's MAX_LOBES): a sixth
 // pushed is dropped, so with fuzz, coat, metal, interface and transmission
 // all there, the diffuse is not.
@@ -139,6 +141,18 @@ struct GpuMaterial {
     // thickness in nanometres and its index; and in w the glass's Abbe
     // number, its dispersion (none at 0).
     film: vec4<f32>,
+    // A volume that scatters (Material::volume_scattering, GLASS_SCATTERS):
+    // its extinction per metre, and in w its phase function's anisotropy;
+    // its single-scattering albedo. The integrator's.
+    volume_extinction: vec4<f32>,
+    volume_albedo: vec4<f32>,
+    // subsurface_color, and in w subsurface_weight; the medium a walk under
+    // the surface crosses (Material::subsurface_medium) - its extinction per
+    // metre, and in w its phase function's anisotropy - and its
+    // single-scattering albedo.
+    subsurface_color: vec4<f32>,
+    subsurface_extinction: vec4<f32>,
+    subsurface_albedo: vec4<f32>,
 };
 
 // Material::emission, in nits: the colour times the luminance.
@@ -159,6 +173,7 @@ const GLASS_PANE: u32 = 8u;
 const GLASS_PLAIN: u32 = 16u;
 const GLASS_BENDS: u32 = 32u;
 const GLASS_PANE_VOLUME: u32 = 64u;
+const GLASS_SCATTERS: u32 = 128u;
 
 // The assembled stack for one shading point.
 struct OpenPbr {
@@ -169,9 +184,9 @@ struct OpenPbr {
     last: u32,
     // Each lobe's scale and weight, and its selection probability
     // (normalized), by slot.
-    scales: array<vec3<f32>, 7>,
-    weights: array<f32, 7>,
-    probabilities: array<f32, 7>,
+    scales: array<vec3<f32>, 8>,
+    weights: array<f32, 8>,
+    probabilities: array<f32, 8>,
     // The lobes. The fuzz, the coat and the interface are also the layers
     // over the base, kept so their attenuation is evaluated for the actual
     // pair of directions: `has_*` says the layer is there, which it can be
@@ -190,6 +205,13 @@ struct OpenPbr {
     has_specular: bool,
     transmission: Transmission,
     diffuse: Diffuse,
+    // The subsurface lobe (DiffuseTransmission): what it passes, white for a
+    // walk's doorway; what the surface looks like, the colour the walk is
+    // tuned to give back; and whether it is a doorway, or a thin sheet's
+    // light through it.
+    subsurface_tint: vec3<f32>,
+    subsurface_appearance: vec3<f32>,
+    subsurface_walk: bool,
     coat_weight: f32,
     coat_darkening: f32,
     // The hemispherical response of what the coat sits on, and of the
@@ -224,7 +246,7 @@ fn openpbr_depth(slot: u32) -> u32 {
         case LOBE_FUZZ: { return DEPTH_FUZZ; }
         case LOBE_COAT: { return DEPTH_COAT; }
         case LOBE_FLAKE: { return DEPTH_FLAKE; }
-        case LOBE_DIFFUSE: { return DEPTH_SUBSTRATE; }
+        case LOBE_DIFFUSE, LOBE_SUBSURFACE: { return DEPTH_SUBSTRATE; }
         default: { return DEPTH_BASE; }
     }
 }
@@ -317,7 +339,8 @@ fn openpbr_lobe_albedo(b: OpenPbr, slot: u32, wo: vec3<f32>) -> vec3<f32> {
         case LOBE_METAL: { return conductor_albedo(b.metal, wo); }
         case LOBE_SPECULAR: { return b.specular.tint * specular_directional_albedo(b.specular, wo); }
         case LOBE_TRANSMISSION: { return transmission_albedo(b.transmission); }
-        default: { return b.diffuse.albedo; }
+        case LOBE_DIFFUSE: { return b.diffuse.albedo; }
+        default: { return b.subsurface_appearance; }
     }
 }
 
@@ -428,7 +451,8 @@ fn openpbr_lobe_eval(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> vec
         case LOBE_METAL: { return conductor_eval_given(b.metal, wo, wi, filmed); }
         case LOBE_SPECULAR: { return specular_eval_given(b.specular, wo, wi, filmed); }
         case LOBE_TRANSMISSION: { return transmission_eval(b.transmission, wo, wi); }
-        default: { return diffuse_eval(b.diffuse, wo, wi); }
+        case LOBE_DIFFUSE: { return diffuse_eval(b.diffuse, wo, wi); }
+        default: { return select(vec3<f32>(0.0), b.subsurface_tint * L_FRAC_1_PI, wo.z * wi.z < 0.0); }
     }
 }
 
@@ -445,7 +469,8 @@ fn openpbr_lobe_pdf(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> f32 
         case LOBE_METAL: { return conductor_pdf(b.metal, wo, wi); }
         case LOBE_SPECULAR: { return specular_pdf(b.specular, wo, wi); }
         case LOBE_TRANSMISSION: { return transmission_pdf(b.transmission, wo, wi); }
-        default: { return diffuse_pdf(b.diffuse, wo, wi); }
+        case LOBE_DIFFUSE: { return diffuse_pdf(b.diffuse, wo, wi); }
+        default: { return select(0.0, cosine_pdf(abs(wi.z)), wo.z * wi.z < 0.0); }
     }
 }
 
@@ -472,7 +497,15 @@ fn openpbr_lobe_draw(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32
         case LOBE_METAL: { return conductor_draw_given(b.metal, wo, u, uc, filmed); }
         case LOBE_SPECULAR: { return specular_draw_given(b.specular, wo, u, uc, filmed); }
         case LOBE_TRANSMISSION: { return transmission_draw(b.transmission, wo, u, uc); }
-        default: { return diffuse_draw(b.diffuse, wo, u); }
+        case LOBE_DIFFUSE: { return diffuse_draw(b.diffuse, wo, u); }
+        default: {
+            // Cosine-weighted, across the surface from where the light came.
+            var wi = md_cosine_hemisphere(u);
+            if (wo.z > 0.0) {
+                wi.z = -wi.z;
+            }
+            return LobeSample(true, wi, b.subsurface_tint * L_FRAC_1_PI, cosine_pdf(abs(wi.z)), false, true, 1.0);
+        }
     }
 }
 
@@ -489,9 +522,9 @@ fn openpbr_reflection_roughness(b: OpenPbr, slot: u32) -> f32 {
 }
 
 // face_on_probabilities: each lobe by its albedo seen face on (§2.4), the
-// interfaces floored at 0.05 (not the transmission).
-fn openpbr_face_on(b: OpenPbr) -> array<f32, 7> {
-    var probabilities: array<f32, 7>;
+// interfaces and the walk's doorway floored at 0.05 (not the transmission).
+fn openpbr_face_on(b: OpenPbr) -> array<f32, 8> {
+    var probabilities: array<f32, 8>;
     var total = 0.0;
     let z = vec3<f32>(0.0, 0.0, 1.0);
     for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
@@ -499,7 +532,7 @@ fn openpbr_face_on(b: OpenPbr) -> array<f32, 7> {
             continue;
         }
         var estimate = spectrum_luminance(openpbr_lobe_albedo(b, slot, z));
-        if (slot == LOBE_COAT || slot == LOBE_SPECULAR) {
+        if (slot == LOBE_COAT || slot == LOBE_SPECULAR || slot == LOBE_SUBSURFACE) {
             estimate = max(estimate, 0.05);
         }
         let p = max(estimate * spectrum_luminance(b.scales[slot]) * b.weights[slot], 1e-4);
@@ -596,13 +629,27 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
                 b.transmission = transmission_new(openpbr_rough(m.specular_roughness, roughness_floor), m.specular_ior, m.transmission_tint.xyz, (m.glass & GLASS_THIN) != 0u, from_inside);
                 openpbr_push(&b, LOBE_TRANSMISSION, base_scale, dielectric * transmission_weight, occlusion);
             }
-            // No subsurface: the substrate returns base_color, and has
-            // whatever the transmission did not take.
-            diffuse_albedo = clamp(spectrum_luminance(m.base_color.xyz), 0.0, 1.0);
-            let diffuse_weight = dielectric * opaque;
+            // Whatever the transmission did not take is diffuse, and the
+            // subsurface's share of it the walk's doorway; the trapped light
+            // bounces against both, the walk's at the colour it gives back.
+            let remainder = dielectric * opaque;
+            let subsurface = clamp(m.subsurface_color.w, 0.0, 1.0);
+            diffuse_albedo = clamp(spectrum_luminance(m.base_color.xyz * (1.0 - subsurface) + m.subsurface_color.xyz * subsurface), 0.0, 1.0);
+            let diffuse_weight = remainder * (1.0 - subsurface);
             if (diffuse_weight > 1e-4) {
                 b.diffuse = diffuse_new(m.base_color.xyz, m.base_diffuse_roughness);
                 openpbr_push(&b, LOBE_DIFFUSE, base_scale, diffuse_weight, occlusion);
+            }
+            // The doorway into the random walk, white; on a thin wall, which
+            // has no inside, the light the sheet scatters through to its far
+            // side in its subsurface colour.
+            let walk_weight = remainder * subsurface;
+            if (FEATURE_SUBSURFACE && walk_weight > 1e-4) {
+                let thin = (m.glass & GLASS_THIN) != 0u;
+                b.subsurface_walk = !thin;
+                b.subsurface_tint = select(vec3<f32>(1.0), m.subsurface_color.xyz, thin);
+                b.subsurface_appearance = m.subsurface_color.xyz;
+                openpbr_push(&b, LOBE_SUBSURFACE, base_scale, walk_weight, occlusion);
             }
         }
     }
@@ -765,7 +812,9 @@ fn openpbr_eval_selective(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>, diffuse: boo
         if (!openpbr_has(b, slot)) {
             continue;
         }
-        let is_diffuse = slot == LOBE_DIFFUSE;
+        // The lobes whose flags say DIFFUSE: the substrate and the
+        // subsurface lobe.
+        let is_diffuse = slot == LOBE_DIFFUSE || slot == LOBE_SUBSURFACE;
         if ((is_diffuse && !diffuse) || (!is_diffuse && !specular)) {
             continue;
         }
@@ -794,9 +843,10 @@ fn openpbr_has_delta(b: OpenPbr) -> bool {
 }
 
 // flags().contains(TRANSMISSION): the transmission lobe is in the stack (a
-// transmission weight whose lobe was dropped transmits nothing).
+// transmission weight whose lobe was dropped transmits nothing), or the
+// subsurface lobe, through to the walk or the sheet's far side.
 fn openpbr_transmits(b: OpenPbr) -> bool {
-    return openpbr_has(b, LOBE_TRANSMISSION);
+    return openpbr_has(b, LOBE_TRANSMISSION) || openpbr_has(b, LOBE_SUBSURFACE);
 }
 
 // The share of a reflection of roughness `r` kept, faded out between
@@ -853,7 +903,7 @@ fn openpbr_values(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> StackValue {
         let through = openpbr_attenuation(b, openpbr_depth(slot), wo, wi);
         let term = openpbr_lobe_eval(b, slot, wo, wi) * (b.scales[slot] * (b.weights[slot] * through));
         v.total += term;
-        if (slot != LOBE_DIFFUSE) {
+        if (slot != LOBE_DIFFUSE && slot != LOBE_SUBSURFACE) {
             v.glossy += term;
         }
     }
@@ -956,7 +1006,7 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
         let through = openpbr_attenuation(b, openpbr_depth(slot), wo, s.wi);
         let term = raw * (b.scales[slot] * (b.weights[slot] * through));
         value.total += term;
-        if (slot != LOBE_DIFFUSE) {
+        if (slot != LOBE_DIFFUSE && slot != LOBE_SUBSURFACE) {
             value.glossy += term;
         }
     }
@@ -990,7 +1040,7 @@ fn openpbr_albedo(b: OpenPbr, wo: vec3<f32>) -> vec3<f32> {
 
 struct AimChoice {
     ok: bool,
-    probabilities: array<f32, 7>,
+    probabilities: array<f32, 8>,
 };
 
 // aim_choosing: each lobe by its albedo towards `wo` through the layers
@@ -1008,7 +1058,7 @@ fn openpbr_aim_choosing(b: OpenPbr, wo: vec3<f32>) -> AimChoice {
         }
         let through = openpbr_attenuation(b, openpbr_depth(slot), wo, wo);
         let seen = spectrum_luminance(openpbr_seen_albedo(b, slot, wo));
-        let least = select(0.0, 0.05, slot == LOBE_COAT || slot == LOBE_SPECULAR);
+        let least = select(0.0, 0.05, slot == LOBE_COAT || slot == LOBE_SPECULAR || slot == LOBE_SUBSURFACE);
         let p = max(max(seen, least) * through * spectrum_luminance(b.scales[slot]) * b.weights[slot], 1e-4);
         choice.probabilities[slot] = p;
         total += p;

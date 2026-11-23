@@ -353,8 +353,8 @@ struct GlassScene {
     transmits: bool,
     panes: bool,
     dispersion: bool,
-    subsurface: bool,
-    scattering: bool,
+    // A medium a path walks: a subsurface, or glass whose volume scatters.
+    walks: bool,
     volume_maps: bool,
     folded_glass: bool,
     cutouts: bool,
@@ -370,7 +370,6 @@ impl GlassScene {
                 None => &scene.materials[i],
             })
             .collect();
-        let any = |test: &dyn Fn(&tequila_materials::openpbr::Material) -> bool| shaded.iter().any(|m| test(m));
         // The integrator reads a medium's boundary, priority and volume off
         // the scene's own material, the card off one record for both.
         let folded = shaded.iter().zip(&scene.materials).any(|(m, own)| {
@@ -382,13 +381,14 @@ impl GlassScene {
                 || m.geometry_thin_walled != own.geometry_thin_walled
                 || m.volume_emission_color != own.volume_emission_color
                 || m.volume_emission_strength != own.volume_emission_strength
+                || m.transmission_scatter != own.transmission_scatter
+                || m.transmission_scatter_anisotropy != own.transmission_scatter_anisotropy
         });
         GlassScene {
             transmits: scene.has_transmissive(),
             panes: scene.has_panes(),
             dispersion: scene.has_dispersion(),
-            subsurface: any(&|m| m.subsurface_weight != 0.0),
-            scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
+            walks: shaded.iter().any(|m| m.subsurface_weight != 0.0 || (m.transmission_weight > 0.0 && m.volume_scattering().is_some())),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             folded_glass: folded,
             cutouts: scene.has_cutouts(),
@@ -403,7 +403,8 @@ impl GlassScene {
     fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
         use tequila_render_core::settings::CausticsMethod;
         // Rendered by wavelength or not as the processor renders it
-        // (`GpuRenderer::spectral`): no sentence for either.
+        // (`GpuRenderer::spectral`): no sentence for either - but for the
+        // media below.
         let mut limits = Vec::new();
         if config.caustics {
             limits.push(match config.caustics_method {
@@ -411,11 +412,18 @@ impl GlassScene {
                 CausticsMethod::Manifold => "no manifold caustics: a lamp's light through glass that bends it is left out",
             });
         }
-        if self.subsurface {
-            limits.push("subsurface scattering is left out: no random walk under a surface");
-        }
-        if self.scattering {
-            limits.push("a volume that scatters light only absorbs it");
+        // By wavelength the processor walks each of the path's four in its
+        // own medium - the colour's sigmoid spectrum at the wavelength made
+        // an extinction and an albedo by walk_coefficients or
+        // volume_coefficients (integrator.rs's walk_medium) - where the
+        // card's walk carries three channels.
+        let spectral = match config.spectral {
+            tequila_render_core::settings::SpectralMode::Auto => self.dispersion,
+            tequila_render_core::settings::SpectralMode::On => true,
+            tequila_render_core::settings::SpectralMode::Off => false,
+        };
+        if spectral && self.walks {
+            limits.push("subsurface and volumes that scatter are walked in three channels, not at the path's wavelengths");
         }
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
@@ -806,7 +814,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface or scattering (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now otherwise than on the processor (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };

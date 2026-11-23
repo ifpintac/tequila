@@ -12,7 +12,7 @@
 //! Generated, as the benchmark scenes are (`bench`), so they are the same
 //! on every machine and in every version.
 
-use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped};
+use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped, subsurface_product};
 use crate::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
 use crate::{CommandBus, SceneDocument};
 use tequila_core::math::{vec2, vec3, Transform};
@@ -676,6 +676,55 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: spectral_options,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "milk_in_glass",
+    covers: "R3 tier B, a volume that scatters: liquid_in_glass with its liquid cloudy - a walk through the medium              it fills, each flight drawn in a channel chosen by the path's throughput times the medium's albedo and              weighed over all three, a collision turning the path by Henyey-Greenstein's phase function (forward a              little), a flight that reaches the surface weighed by what survives it, Russian roulette in a long              walk; refracting where the liquid meets the glass, the glass's own absorption between",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: milk_in_glass,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "scattering_volumes",
+    covers: "R3 tier B, volumes whose surfaces bend nothing (Scattering Medium): a haze and a forward-scattering wax              under the sky, a key panel and a spot - at each collision the lights sampled directly (one draw of the              whole sky, one lamp chosen by power), each weighed by the phase function and by what of the medium              lies between (medium_transmittance, the medium's own surface passed), the sky past it weighed by the              phase function's density against the sky's own",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: scattering_volumes,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "subsurface_product",
+    covers: "R3 tier B, subsurface scattering: the bench's subsurface_product, simple_product with a translucent body \
+             - the stack's subsurface lobe beside the diffuse, the walk's doorway: a path that takes it starts a \
+             random walk under the surface, guided back towards where it came in (Dwivedi's turns, half of them, \
+             each flight weighed by every way it could have been drawn), its first flight looking ten mean free \
+             paths ahead for the surface opposite, and leaves through the part's own surface, spread over the \
+             hemisphere outside, sampling the sky that side of it and the lamps",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: subsurface_product,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "backlit_translucency",
+    covers: "R3 tier B, subsurface scattering lit from behind: simple_product on its modelled ground under the sky, \
+             a translucent slab a centimetre thick and a thin-walled translucent sheet standing in front of it, a \
+             panel lamp behind them - the slab's walks guided across to its far side once the first flight has \
+             seen it, the sheet's light through it in its subsurface colour (no walk), both lit from the side the \
+             lamp is on",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: backlit_translucency,
     lens: framed,
     pictures: no_pictures,
 }];
@@ -2248,5 +2297,135 @@ fn bumped_product() -> SceneDocument {
     texture_material(&mut document, "Bezel", &[wire(6, Some(tri_planar), Param::Bump)]);
     let from_above = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(12.0, 12.0, 1.0), ..Mapping::default() };
     texture_material(&mut document, "Button", &[wire(6, Some(from_above), Param::Bump)]);
+    document
+}
+
+/// liquid_in_glass with its liquid cloudy: a medium that scatters as well
+/// as absorbs (`Material::volume_scattering`), nested in the glass that
+/// outranks it nowhere but where they overlap.
+fn milk_in_glass() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let milky = Material {
+        transmission_color: Spectrum { r: 0.96, g: 0.9, b: 0.75 },
+        transmission_depth: 0.1,
+        transmission_scatter: Spectrum { r: 2.0, g: 2.5, b: 3.0 },
+        transmission_scatter_anisotropy: 0.3,
+        medium_priority: 1.0,
+        ..MaterialType::Liquid.defaults()
+    };
+    let at = Transform::translation(vec3(0.3, 0.151, 0.85));
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glass Shell", hollow_ball(0.15, 0.14), MaterialType::GlassSolid, glass, at),
+            ("Milky Liquid", ball(0.142), MaterialType::Liquid, milky, at),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground under the sky and two lamps - a
+/// key panel and a spot from behind - with two volumes whose surfaces bend
+/// nothing (Scattering Medium's index of 1) in front of the body: a haze
+/// that scatters every way, and a waxy one that scatters forward.
+fn scattering_volumes() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::Vec3;
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let lamps = [
+        ("Key", LightShape::Area { width: 0.8, height: 0.6, disc: false, two_sided: false }, 160.0, vec3(0.55, 1.2, 0.75), panel_down),
+        ("Rim", LightShape::Spot { inner_degrees: 20.0, outer_degrees: 35.0, falloff: 1.0 }, 80.0, vec3(0.0, 1.4, -0.9), spot_down),
+    ];
+    for (name, shape, lumens, at, down) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(
+            &mut document,
+            Command::AddLight { parent: None, name: name.into(), settings: Box::new(LightSettings { shape, intensity: Intensity::Lumens(lumens), ..LightSettings::default() }) },
+        )
+        .expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
+    }
+    let haze = Material { transmission_color: Spectrum { r: 0.9, g: 0.92, b: 0.97 }, ..MaterialType::ScatteringMedium.defaults() };
+    let wax = MaterialType::TranslucentMedium.defaults();
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Haze", ball(0.15), MaterialType::ScatteringMedium, haze, Transform::translation(vec3(0.3, 0.151, 0.85))),
+            ("Wax", ball(0.1), MaterialType::TranslucentMedium, wax, Transform::translation(vec3(-0.3, 0.101, 0.95))),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground under the sky, a translucent
+/// slab a centimetre thick and a thin-walled translucent sheet standing in
+/// front of it, facing the camera, and a panel lamp behind them shining
+/// through towards it.
+fn backlit_translucency() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let eye = product_camera(&document, 320.0 / 180.0).position();
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(&document, &product);
+    let (middle, radius) = (bounds.center(), (bounds.diagonal().length() * 0.5).max(1e-4));
+    let toward = vec3(eye.x - middle.x, 0.0, eye.z - middle.z).normalize();
+    let right = Vec3::Y.cross(toward).normalize();
+    let placed = |at: Vec3, facing: Vec3| {
+        let z = facing.normalize();
+        let x = Vec3::Y.cross(z).normalize();
+        let y = z.cross(x);
+        Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+    };
+    let slab_at = middle + toward * (0.7 * radius) - right * (0.3 * radius);
+    let sheet_at = middle + toward * (0.7 * radius) + right * (0.35 * radius);
+    let lamp_at = middle + toward * (0.45 * radius) + Vec3::Y * (0.05 * radius);
+    let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+    let settings = LightSettings {
+        shape: LightShape::Area { width: 0.9 * radius, height: 0.4 * radius, disc: false, two_sided: false },
+        intensity: Intensity::Nits(30.0),
+        ..LightSettings::default()
+    };
+    bus.apply(&mut document, Command::AddLight { parent: None, name: "Back".into(), settings: Box::new(settings) }).expect("a lamp");
+    let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+    bus.apply(&mut document, Command::set_transform(id, placed(lamp_at, eye - lamp_at))).expect("the lamp placed");
+    let slab = Material {
+        subsurface_color: Spectrum { r: 0.95, g: 0.7, b: 0.45 },
+        subsurface_radius: Spectrum { r: 0.03, g: 0.02, b: 0.012 },
+        ..MaterialType::Translucent.defaults()
+    };
+    let sheet = Material {
+        base_color: Spectrum { r: 0.8, g: 0.8, b: 0.75 },
+        subsurface_weight: 0.7,
+        subsurface_color: Spectrum { r: 0.9, g: 0.85, b: 0.6 },
+        specular_roughness: 0.5,
+        geometry_thin_walled: true,
+        ..Material::default()
+    };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Slab", crate::bench::rounded_box(vec3(0.4 * radius, 0.45 * radius, 0.012), 0.003, 8), MaterialType::Translucent, slab, placed(slab_at, eye - slab_at)),
+            ("Sheet", crate::bench::rounded_box(vec3(0.35 * radius, 0.5 * radius, 0.002), 0.0008, 8), MaterialType::Translucent, sheet, placed(sheet_at, eye - sheet_at)),
+        ],
+    );
     document
 }
