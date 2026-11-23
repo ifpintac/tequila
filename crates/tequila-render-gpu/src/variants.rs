@@ -37,6 +37,14 @@
 //! otherwise), which is left out behind a stand-in the driver cannot see
 //! through (`emitters.wgsl`). `tests/variants.rs` finds which part, and
 //! which place of it, moves a picture.
+//!
+//! Some parts are a frame's, not a scene's: the camera's lens, its blades
+//! and its projections, and the film's pixel filter.
+//! The records cannot say which camera will look at a scene, so
+//! [`KernelFeatures::of`] keeps none of them, and a renderer widens its
+//! kernel to the ones a frame reaches ([`KernelFeatures::of_frame`]) at the
+//! first frame that asks for one it left out, building the wider kernel
+//! once and keeping it for the frames after.
 
 use crate::material::GpuMaterial;
 use crate::program::ProgramTable;
@@ -85,9 +93,28 @@ impl KernelFeatures {
     pub const ATTRIBUTES: KernelFeatures = part(11);
     /// Rounded edges: the bevel's probes at the surface a path meets first.
     pub const BEVEL: KernelFeatures = part(12);
+    /// A background colour or backplate past the parts, along a specular
+    /// chain (`past_the_scene`).
+    pub const BACKGROUND: KernelFeatures = part(13);
+    /// The backplate's picture, read at the film point.
+    pub const BACKPLATE: KernelFeatures = part(14);
+    /// The thin lens (a frame's part: [`KernelFeatures::of_frame`]).
+    pub const THIN_LENS: KernelFeatures = part(15);
+    /// An opening of blades (a frame's part).
+    pub const BLADES: KernelFeatures = part(16);
+    /// A shifted lens's film (a frame's part).
+    pub const SHIFT: KernelFeatures = part(17);
+    /// Parallel rays from the film plane (a frame's part).
+    pub const ORTHOGRAPHIC: KernelFeatures = part(18);
+    /// Every direction round the camera (a frame's part).
+    pub const EQUIRECTANGULAR: KernelFeatures = part(19);
+    /// A pixel filter other than one pixel's box (a frame's part).
+    pub const FILTER: KernelFeatures = part(20);
+    /// A dome of a size: the sky from where a path is.
+    pub const DOME: KernelFeatures = part(21);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 13] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 22] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -101,6 +128,15 @@ impl KernelFeatures {
         (Self::TEXTURES, "FEATURE_TEXTURES"),
         (Self::ATTRIBUTES, "FEATURE_ATTRIBUTES"),
         (Self::BEVEL, "FEATURE_BEVEL"),
+        (Self::BACKGROUND, "FEATURE_BACKGROUND"),
+        (Self::BACKPLATE, "FEATURE_BACKPLATE"),
+        (Self::THIN_LENS, "FEATURE_THIN_LENS"),
+        (Self::BLADES, "FEATURE_BLADES"),
+        (Self::SHIFT, "FEATURE_SHIFT"),
+        (Self::ORTHOGRAPHIC, "FEATURE_ORTHOGRAPHIC"),
+        (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
+        (Self::FILTER, "FEATURE_FILTER"),
+        (Self::DOME, "FEATURE_DOME"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -148,7 +184,7 @@ impl KernelFeatures {
     pub fn of(r: &SceneRecords) -> KernelFeatures {
         use crate::material::{GLASS_BOUNDARY, GLASS_PANE};
         use crate::program::{PROGRAM_AT_HIT, PROGRAM_CUTS, PROGRAM_NORMAL_PROJECTED, PROGRAM_NORMAL_UV, PROGRAM_RUNS};
-        use crate::transport::{SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_PANES, SCENE_TRANSMITS};
+        use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_TRANSMITS};
         let mut f = KernelFeatures::NONE;
         let mut keep = |on: bool, part: KernelFeatures| {
             if on {
@@ -206,7 +242,46 @@ impl KernelFeatures {
         // bevel_normal (the frame's SCENE_BEVEL, which a material record's
         // edge radius sets).
         keep(any_material(&|m| m.edge_radius > 0.0), Self::BEVEL);
+        // past_the_scene (the frame's SCENE_BACKGROUND_COLOUR and
+        // SCENE_BACKPLATE, which the scene's background sets).
+        keep(r.glass_flags & (SCENE_BACKGROUND_COLOUR | SCENE_BACKPLATE) != 0, Self::BACKGROUND);
+        keep(r.glass_flags & SCENE_BACKPLATE != 0, Self::BACKPLATE);
+        // The dome's lookups (the frame's SCENE_FINITE_DOME).
+        keep(r.glass_flags & SCENE_FINITE_DOME != 0, Self::DOME);
+        // A floor under a dome of a size keeps the programs' interpreter
+        // too, whether a program runs or not: without it the floor's
+        // shadow under the dome came out otherwise (finite_dome: 7,269 of
+        // 57,600 pixels, a hundredth darker), whichever way the spread
+        // bound was written, where the whole kernel gives the processor's
+        // picture. The interpreter never runs there; the driver compiles
+        // the shadow's loop otherwise without it (tests/variants.rs's
+        // which_part_left_out_moves_a_picture).
+        if f.contains(Self::FLOOR | Self::DOME) {
+            f = f | Self::PROGRAMS;
+        }
         f
+    }
+
+    /// The parts a frame reaches through its camera and film, from the
+    /// frame's `camera_flags` as the kernel reads them: the thin lens, its
+    /// blades, a shifted film, the orthographic and 360-degree projections,
+    /// a pixel filter other than one pixel's box. A scene's records cannot say which camera will look at it,
+    /// so [`KernelFeatures::of`] keeps none of these, and a renderer widens
+    /// its kernel to them at the first frame that asks for one it left out
+    /// (`GpuRenderer::render_pass`).
+    pub fn of_frame(camera_flags: u32) -> KernelFeatures {
+        use crate::transport::{CAMERA_BLADED, CAMERA_EQUIRECTANGULAR, CAMERA_FILTER_BOX, CAMERA_FILTER_TABLE, CAMERA_ORTHOGRAPHIC, CAMERA_SHIFT, CAMERA_THIN_LENS};
+        [
+            (CAMERA_THIN_LENS, Self::THIN_LENS),
+            (CAMERA_BLADED, Self::BLADES),
+            (CAMERA_SHIFT, Self::SHIFT),
+            (CAMERA_ORTHOGRAPHIC, Self::ORTHOGRAPHIC),
+            (CAMERA_EQUIRECTANGULAR, Self::EQUIRECTANGULAR),
+            (CAMERA_FILTER_BOX | CAMERA_FILTER_TABLE, Self::FILTER),
+        ]
+        .into_iter()
+        .filter(|(flag, _)| camera_flags & flag != 0)
+        .fold(KernelFeatures::NONE, |f, (_, part)| f | part)
     }
 
     /// Each part's name, without its prefix, and the instructions:
@@ -254,7 +329,8 @@ pub struct SceneRecords<'a> {
     pub emitters: bool,
     /// `FrameParams::glass_flags` as the scene sets them, whatever the
     /// configuration: `SCENE_TRANSMITS`, `SCENE_PANES`, `SCENE_CUTOUTS`,
-    /// `SCENE_CUT_PROGRAMS`.
+    /// `SCENE_CUT_PROGRAMS`, `SCENE_BACKGROUND_COLOUR`, `SCENE_BACKPLATE`,
+    /// `SCENE_FINITE_DOME`.
     pub glass_flags: u32,
 }
 

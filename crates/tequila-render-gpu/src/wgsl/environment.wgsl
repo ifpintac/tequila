@@ -75,6 +75,36 @@ fn env_bilinear(camera: bool, uv: vec2<f32>) -> vec3<f32> {
     return lerp3(lerp3(c00, c10, tx), lerp3(c01, c11, tx), ty);
 }
 
+// Background::radiance's backplate: Image::sample_bilinear_wrap_u of the
+// plate at the film point, each coordinate clamped to [0, 1] first (so the
+// right edge, u = 1, wraps to the left's texels, as the processor's does).
+fn plate_bilinear(film: vec2<f32>) -> vec3<f32> {
+    let w = frame.plate_width;
+    let h = frame.plate_height;
+    if (w == 0u || h == 0u) {
+        return vec3<f32>(0.0);
+    }
+    let fx = rem_euclid1(clamp(film.x, 0.0, 1.0)) * f32(w) - 0.5;
+    let fy = clamp(film.y, 0.0, 1.0) * f32(h) - 0.5;
+    let x0 = floor(fx);
+    let y0 = floor(fy);
+    let tx = fx - x0;
+    let ty = fy - y0;
+    let xi = i32(x0);
+    let yi = i32(y0);
+    let wi = i32(w);
+    let x0i = u32(((xi % wi) + wi) % wi);
+    let x1i = u32((((xi + 1) % wi) + wi) % wi);
+    let y0i = u32(clamp(yi, 0, i32(h) - 1));
+    let y1i = u32(clamp(yi + 1, 0, i32(h) - 1));
+    let at = frame.plate_offset;
+    let c00 = env_camera_image[at + y0i * w + x0i].xyz;
+    let c10 = env_camera_image[at + y0i * w + x1i].xyz;
+    let c01 = env_camera_image[at + y1i * w + x0i].xyz;
+    let c11 = env_camera_image[at + y1i * w + x1i].xyz;
+    return lerp3(lerp3(c00, c10, tx), lerp3(c01, c11, tx), ty);
+}
+
 // Environment::radiance (the lit image), or ::background_radiance_from (what
 // the camera sees), the dome infinitely far.
 fn env_radiance(camera: bool, world_direction: vec3<f32>) -> vec3<f32> {

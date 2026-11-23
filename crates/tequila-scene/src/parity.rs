@@ -40,6 +40,8 @@ pub struct ParityScene {
     pub samples: u32,
     pub seed: u32,
     build: fn() -> SceneDocument,
+    /// What it does to the product's camera as framed: a lens, a projection.
+    lens: fn(Camera) -> Camera,
     /// The pictures its materials sample, made here (no image file is
     /// shipped), by the ids its document gives them.
     pictures: fn() -> Vec<(TextureId, Texture)>,
@@ -50,9 +52,9 @@ impl ParityScene {
         (self.build)()
     }
 
-    /// The camera it is seen from: framed on its product.
+    /// The camera it is seen from: framed on its product, through its lens.
     pub fn camera(&self, document: &SceneDocument) -> Camera {
-        product_camera(document, self.width as f32 / self.height as f32)
+        (self.lens)(product_camera(document, self.width as f32 / self.height as f32))
     }
 
     /// A cache to snapshot the scene through, holding its pictures: the
@@ -76,6 +78,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: grey_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_materials",
@@ -88,6 +91,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: simple_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor",
@@ -101,6 +105,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_glossy",
@@ -112,6 +117,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_glossy,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_studio",
@@ -123,6 +129,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_studio,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "product_floor_lit",
@@ -133,6 +140,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: product_floor_lit,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "lamp_lit",
@@ -142,6 +150,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamp_lit,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "studio_lamps",
@@ -151,6 +160,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: studio_lamps,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "lamps_in_view",
@@ -160,6 +170,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamps_in_view,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball",
@@ -169,6 +180,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "rough_glass_floor",
@@ -178,6 +190,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: rough_glass_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "pane_and_lamps",
@@ -187,6 +200,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: pane_and_lamps,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "liquid_in_glass",
@@ -196,6 +210,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: liquid_in_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glass_ball_floor",
@@ -205,6 +220,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glass_ball_floor,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "textured_product",
@@ -219,6 +235,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: textured_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "projected_product",
@@ -232,6 +249,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: projected_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "bumped_product",
@@ -246,6 +264,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: bumped_product,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "glowing_pattern",
@@ -258,6 +277,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_pattern,
+    lens: framed,
     pictures: parity_pictures,
 }, ParityScene {
     name: "glowing_screen",
@@ -271,6 +291,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_screen,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glow_under_glass",
@@ -283,6 +304,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glow_under_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "cutout_grille",
@@ -298,6 +320,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: cutout_grille,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "cut_glass",
@@ -310,6 +333,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: cut_glass,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "glowing_volume",
@@ -322,6 +346,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: glowing_volume,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "bevelled_product",
@@ -337,6 +362,7 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: bevelled_product,
+    lens: framed,
     pictures: no_pictures,
 }, ParityScene {
     name: "driven_film",
@@ -350,8 +376,232 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: driven_film,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "background_colour",
+    covers: "R3 tier A, a background colour: glass_ball_floor and a mirror-smooth chrome ball beside the glass, the              camera seeing a flat blue past the parts where its ray escapes, through the glass and in the chrome              (the specular chain), the floor standing in front of the colour with its shadow and its reflection on              it, the floor's reflection seeing the colour through the glass; every other path still lit by the              environment (past_the_scene)",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: background_colour,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "backplate",
+    covers: "R3 tier A, a backplate: background_colour's parts in front of a picture made here (a gradient under a              grid, 96 by 54 texels, stretched over the frame and read bilinearly at each sample's film point), seen              past the parts, through the glass and in the chrome at the film point the camera's sample set out from,              behind the floor, and through the glass in the floor's reflection at the film's corner, as the              processor's floor reflection traces it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: backplate,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shallow_focus",
+    covers: "R3, depth of field: product_floor through a thin lens at f/1.4, focused on the product's front - each \
+             camera ray from a point on the round opening drawn on the lens dimensions (the concentric disc) \
+             towards its pinhole ray's point on the focus plane, the floor's far edge and the horizon blurred, the \
+             floor's reflection and shadow through the lens",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: product_floor,
+    lens: shallow,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "bladed_bokeh",
+    covers: "R3, depth of field through a bladed opening: lamps_in_view at f/1.2 focused well in front of the \
+             product, through six blades turned a fifth of a radian - a wedge by the lens draw, a point in its \
+             triangle - the product, the lamps' stand-ins and their reflections out of focus through the six-sided opening",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: lamps_in_view,
+    lens: bladed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "orthographic",
+    covers: "R3, the orthographic camera: product_floor seen by parallel rays from the film plane, the frame as tall \
+             as the perspective one's at the product - each ray's start on the film plane in scene units, every \
+             ray the camera's forward",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: product_floor,
+    lens: orthographic,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "all_round",
+    covers: "R3, the 360-degree camera: glass_ball_floor seen every way round from the product's camera, the film's \
+             width round the horizon and its height from the zenith down - the sky above, the floor below, the \
+             product and the ball in front, the backdrop the camera sees behind",
+    width: 320,
+    height: 160,
+    samples: 256,
+    seed: 7,
+    build: glass_ball_floor,
+    lens: all_round,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shifted_lens",
+    covers: "R3, the shifted lens: lamp_lit through the product camera's lens with its film shifted an eighth across \
+             and a sixth down - the frame moved without turning the camera, verticals kept parallel",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: lamp_lit,
+    lens: shifted,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "soft_filter",
+    covers: "R3, the pixel filter: product_materials under Blender's own filter, Blackman-Harris 1.5 px - each \
+             sample's jitter placed through the inverse of the filter's distribution over one half, a table of \
+             1025 steps read between them, so samples land up to a pixel and a half from their pixel's centre",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: soft_filter,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "wide_box",
+    covers: "R3, the pixel filter: product_floor under a box two pixels wide - each sample's jitter spread about \
+             its pixel's centre by the width, over the floor's shadow and reflection",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: wide_box,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "finite_dome",
+    covers: "R3 tier A, a dome of a size: glass_ball_floor under the environment on a dome 8 m across, its centre \
+             a metre up, round below as above (the floor well inside it) - the sky looked up from where each path is (the camera's \
+             backdrop, the floor's, what escapes through the glass), its light samples drawn from the centre and \
+             seen from the point with their jacobian, their shadow rays stopping at the dome, the bounces weighed \
+             against them from where they left, and the floor's shadow drawn by the light onto it there",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: finite_dome,
+    lens: framed,
     pictures: no_pictures,
 }];
+
+/// glass_ball_floor on a dome 8 m across, a metre up, round below as
+/// above: the floor's 3 m well inside it.
+fn finite_dome() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    for parameter in [
+        EnvironmentParameter::scalar(EnvParam::Size, 8.0),
+        EnvironmentParameter::scalar(EnvParam::Height, 1.0),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the dome is set");
+    }
+    document
+}
+
+/// `simple_product` under Blackman-Harris 1.5 px, Blender's own filter.
+fn soft_filter() -> SceneDocument {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    let mut document = simple_product();
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 });
+    document
+}
+
+/// product_floor under a box two pixels wide.
+fn wide_box() -> SceneDocument {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    let mut document = product_floor();
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::Box, width: 2.0 });
+    document
+}
+
+/// What a render of `document` runs with, as the application's renders set
+/// it: the lighting's configuration and the render's pixel filter (one
+/// pixel's box where unset).
+pub fn config(document: &SceneDocument) -> IntegratorConfig {
+    let mut config = document.lighting.config();
+    config.pixel_filter = document.render.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    config
+}
+
+/// The product's camera as framed.
+fn framed(camera: Camera) -> Camera {
+    camera
+}
+
+/// A shallow focus: f/1.4, focused on the near side of the product.
+fn shallow(camera: Camera) -> Camera {
+    Camera { f_number: 1.4, focus_distance: camera.focus_distance * 0.85, ..camera }
+}
+
+/// A bladed opening wide open, focused in front of the product.
+fn bladed(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Aperture;
+    Camera { f_number: 1.2, focus_distance: camera.focus_distance * 0.6, aperture: Aperture::Bladed { blades: 6, rotation: 0.2 }, ..camera }
+}
+
+/// Parallel rays, the frame as tall as the lens's is at the product.
+fn orthographic(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Projection;
+    let scale = 2.0 * camera.focus_distance * (camera.vertical_fov(320.0 / 180.0) * 0.5).tan();
+    Camera { projection: Projection::Orthographic { scale }, ..camera }
+}
+
+/// Every way round from where the product's camera stands.
+fn all_round(camera: Camera) -> Camera {
+    Camera { projection: tequila_render_core::camera::Projection::Equirectangular, ..camera }
+}
+
+/// The product's lens with its film shifted across and down.
+fn shifted(camera: Camera) -> Camera {
+    use tequila_render_core::camera::Projection;
+    let Projection::Perspective { focal_length_mm } = camera.projection else { return camera };
+    Camera { projection: Projection::Shift { focal_length_mm, shift_x: 0.125, shift_y: -1.0 / 6.0 }, ..camera }
+}
+
+/// The path [`background`] takes for the set's own backplate
+/// ([`backplate_picture`]) rather than a file's.
+pub const BACKPLATE: &str = "parity:backplate";
+
+/// What a snapshot of `document` shows past its parts, as the command line
+/// sets it (`EnvironmentCache::background`), with [`BACKPLATE`] the set's
+/// own picture: the parity tests set it on their snapshots.
+pub fn background(document: &SceneDocument) -> tequila_render_core::environment::Background {
+    let settings = &document.environment;
+    if settings.background == crate::document::BackgroundMode::Backplate && settings.backplate.as_deref() == Some(BACKPLATE) {
+        return tequila_render_core::environment::Background::Backplate { image: Arc::new(backplate_picture()) };
+    }
+    crate::environment::EnvironmentCache::new().background(settings)
+}
+
+/// The set's backplate: a warm-to-cool gradient under a grid of lighter
+/// lines, linear values, 96 by 54 texels - coarser than the frame, so a
+/// sample reads between texels.
+pub fn backplate_picture() -> Image {
+    let (width, height) = (96usize, 54usize);
+    let mut data = Vec::with_capacity(width * height * 3);
+    for y in 0..height {
+        for x in 0..width {
+            let u = x as f32 / (width - 1) as f32;
+            let v = y as f32 / (height - 1) as f32;
+            let line = if x % 12 == 0 || y % 9 == 0 { 0.25 } else { 0.0 };
+            data.extend_from_slice(&[0.15 + 0.6 * u + line, 0.2 + 0.3 * v + line, 0.65 - 0.45 * u + line]);
+        }
+    }
+    Image { width, height, channels: 3, data, color_space: ColorSpace::LinearSrgb }
+}
 
 /// The scene of the set by `name`.
 pub fn scene(name: &str) -> Option<&'static ParityScene> {
@@ -602,6 +852,35 @@ fn glass_ball_floor() -> SceneDocument {
         ..MaterialType::GlassSolid.defaults()
     };
     add_parts(&mut document, &mut bus, vec![("Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// glass_ball_floor, a mirror-smooth chrome ball beside the glass, and a
+/// flat blue past the parts.
+fn background_colour() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    add_parts(&mut document, &mut bus, vec![("Chrome Ball", ball(0.1), MaterialType::Metal, chrome, Transform::translation(vec3(-0.35, 0.101, 0.8)))]);
+    for parameter in [
+        EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(crate::document::BackgroundMode::Color)),
+        EnvironmentParameter::color(EnvParam::BackgroundColor, Spectrum { r: 0.18, g: 0.32, b: 0.62 }),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the background is set");
+    }
+    document
+}
+
+/// background_colour's parts in front of the set's backplate.
+fn backplate() -> SceneDocument {
+    let mut document = background_colour();
+    let mut bus = crate::command::CommandBus::new();
+    for parameter in [
+        EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(crate::document::BackgroundMode::Backplate)),
+        EnvironmentParameter::new(EnvParam::Backplate, EnvValue::Path(Some(BACKPLATE.to_string()))),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the backplate is set");
+    }
     document
 }
 

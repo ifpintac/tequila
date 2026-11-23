@@ -18,7 +18,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
-use tequila_render_core::camera::Camera;
+use tequila_render_core::camera::{Camera, Projection};
+use tequila_render_core::environment::Background;
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::integrator::PathResult;
 use tequila_render_core::scene::SceneSnapshot;
@@ -65,7 +66,7 @@ pub fn pictures_on<'a>(pictures: &'a CardPictures, limits: &wgpu::Limits) -> Pic
 
 /// What a dispatch of `transport.wgsl` is told; `frame.wgsl` is its twin.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct FrameParams {
     pub camera_to_world: [[f32; 4]; 3],
     pub half_height: f32,
@@ -124,12 +125,56 @@ pub struct FrameParams {
     pub shadow_glass: u32,
     /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_CUTOUTS`],
     /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`],
-    /// [`SCENE_CUT_PROGRAMS`] and [`SCENE_BEVEL`].
+    /// [`SCENE_CUT_PROGRAMS`], [`SCENE_BEVEL`], [`SCENE_BACKGROUND_COLOUR`]
+    /// and [`SCENE_BACKPLATE`].
     pub glass_flags: u32,
     /// The rows a dispatch draws: `row_base` and every `row_stride`-th row
     /// after it (`render_pass`); 0 and 1 for the whole frame.
     pub row_base: u32,
     pub row_stride: u32,
+    /// `Background::Color`'s colour, under [`SCENE_BACKGROUND_COLOUR`].
+    pub background: [f32; 3],
+    /// A backplate's picture under [`SCENE_BACKPLATE`]: where it starts in
+    /// the camera's image buffer, and its size (`crate::environment`).
+    pub plate_offset: u32,
+    pub plate_width: u32,
+    pub plate_height: u32,
+    /// [`CAMERA_THIN_LENS`], [`CAMERA_BLADED`], [`CAMERA_SHIFT`],
+    /// [`CAMERA_ORTHOGRAPHIC`], [`CAMERA_EQUIRECTANGULAR`],
+    /// [`CAMERA_FILTER_BOX`] and [`CAMERA_FILTER_TABLE`].
+    pub camera_flags: u32,
+    /// The thin lens (`Camera::generate_ray`): the opening's radius in
+    /// scene units (`Camera::aperture_radius`), the focus distance, and a
+    /// bladed opening's blades (3 or more) and turn.
+    pub lens_radius: f32,
+    pub focus_distance: f32,
+    pub aperture_blades: u32,
+    pub aperture_rotation: f32,
+    /// A shifted lens's film offset, in fractions of the sensor
+    /// (`Projection::Shift`), under [`CAMERA_SHIFT`].
+    pub shift_x: f32,
+    pub shift_y: f32,
+    /// The pixel filter (`FilterSampler::place`): a box's width in pixels
+    /// under [`CAMERA_FILTER_BOX`]; under [`CAMERA_FILTER_TABLE`] the
+    /// inverse of its distribution over one half, `filter_table`'s 1024
+    /// values four to a vector and `filter_last` the 1025th.
+    pub filter_width: f32,
+    pub filter_last: f32,
+    pub _pad5: u32,
+    /// A dome of a size under [`SCENE_FINITE_DOME`] (`Dome`): its radius in
+    /// scene units, its centre's height above the floor, and 1 where its
+    /// lower cap is the ground plane.
+    pub dome_radius: f32,
+    pub dome_height: f32,
+    pub dome_flatten: u32,
+    pub _pad6: u32,
+    pub filter_table: [[f32; 4]; 256],
+}
+
+impl Default for FrameParams {
+    fn default() -> Self {
+        Zeroable::zeroed()
+    }
 }
 
 /// [`FrameParams::shadow_glass`]: no glass lets a shadow ray by.
@@ -160,6 +205,39 @@ pub const SCENE_CUT_PROGRAMS: u32 = 32;
 /// surface a path meets first has its normal rounded by probes
 /// (`transport.wgsl`'s `bevel_normal`, `bevel.rs`).
 pub const SCENE_BEVEL: u32 = 64;
+/// The camera, and the mirrors and glass it sees through, see a colour past
+/// the parts rather than the environment (`Background::Color`,
+/// `integrator.rs`'s `past_the_scene`).
+pub const SCENE_BACKGROUND_COLOUR: u32 = 128;
+/// They see a backplate's picture, at the film point the path set out from
+/// (`Background::Backplate`).
+pub const SCENE_BACKPLATE: u32 = 256;
+/// The environment is a dome of a size (`Dome::radius`): the sky is looked
+/// up, sampled and weighed from where a path is, and a shadow ray towards
+/// it stops at it.
+pub const SCENE_FINITE_DOME: u32 = 512;
+
+/// [`FrameParams::camera_flags`]: the camera is a thin lens with an opening
+/// (`Camera::aperture_radius` over nought): each ray starts on the opening,
+/// drawn on the lens dimensions, and passes through its pinhole ray's point
+/// on the focus plane.
+pub const CAMERA_THIN_LENS: u32 = 1;
+/// The opening has blades (`Aperture::Bladed`) rather than being round.
+pub const CAMERA_BLADED: u32 = 2;
+/// The film is offset (`Projection::Shift`): verticals kept parallel.
+pub const CAMERA_SHIFT: u32 = 4;
+/// Parallel rays from the film plane (`Projection::Orthographic`): the
+/// frame's half-height and half-width are in scene units.
+pub const CAMERA_ORTHOGRAPHIC: u32 = 8;
+/// Every direction, the film's width round the horizon and its height
+/// from the zenith down (`Projection::Equirectangular`).
+pub const CAMERA_EQUIRECTANGULAR: u32 = 16;
+/// The pixel filter is a box other than one pixel wide: a sample's jitter
+/// is spread about the pixel's centre by its width.
+pub const CAMERA_FILTER_BOX: u32 = 32;
+/// The pixel filter is a Gaussian or a Blackman-Harris: a sample is placed
+/// by the inverse of its distribution, read from a table.
+pub const CAMERA_FILTER_TABLE: u32 = 64;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -355,46 +433,17 @@ pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'s
     if scene.instances.iter().any(|i| scene.meshes.get(i.mesh.index()).is_some_and(|m| m.fibres.is_some())) {
         limits.push("fibres are left out: the parts that grow them are bare");
     }
-    // The environment as the card reads it is always infinitely far
-    // (environment.wgsl); a dome of a size looks its directions up from
-    // where a path is, for the light, its samples and the view.
-    if !scene.environment.dome().is_infinite() {
-        limits.push("the environment is an infinitely far dome rather than one of its size");
-    }
-    // A colour or a backplate replaces what the camera and its mirrors see
-    // past the parts (integrator.rs's past_the_scene).
-    if !scene.background.is_environment() {
-        limits.push("past the parts the camera sees the environment rather than the background colour or backplate");
-    }
     limits
 }
 
 /// What of `camera`, and of the film under `config`, the card renders
-/// otherwise than the processor does, one sentence each; empty where they
-/// are the processor's (`transport.wgsl`'s pinhole and one pixel's box).
-/// The renderer says each at its first pass, with the other `*_limits`.
-pub fn camera_limits(camera: &Camera, config: &IntegratorConfig) -> Vec<&'static str> {
-    use tequila_render_core::camera::Projection;
-    use tequila_render_core::settings::PixelFilterKind;
-    let mut limits = Vec::new();
-    match camera.projection {
-        Projection::Perspective { .. } => {}
-        Projection::Shift { shift_x, shift_y, .. } if shift_x == 0.0 && shift_y == 0.0 => {}
-        Projection::Shift { .. } => limits.push("a shifted lens is left unshifted"),
-        Projection::Orthographic { .. } => limits.push("an orthographic camera is not drawn: the card's camera is a perspective one"),
-        Projection::Equirectangular => limits.push("a 360-degree camera is not drawn: the card's camera is a perspective one"),
-    }
-    if camera.aperture_radius(1.0) > 0.0 {
-        limits.push("no depth of field: everything is in focus, as through a pinhole");
-    }
-    // A box of one pixel places a sample where its jitter falls
-    // (FilterSampler::place); any other filter spreads it.
-    let filter = config.pixel_filter;
-    let width = if filter.width.is_finite() && filter.width > 0.0 { filter.width } else { 1.0 };
-    if filter.kind != PixelFilterKind::Box || width != 1.0 {
-        limits.push("the pixel filter is one pixel's box");
-    }
-    limits
+/// otherwise than the processor does, one sentence each: nothing now - its
+/// projections, lens and pixel filter are the processor's
+/// (`transport.wgsl`'s `camera_ray` and `filter_place`). Kept for the
+/// renderer and the command line, which say each of the `*_limits` at the
+/// first pass.
+pub fn camera_limits(_camera: &Camera, _config: &IntegratorConfig) -> Vec<&'static str> {
+    Vec::new()
 }
 
 /// The most samples a dispatch draws: a bounded buffer.
@@ -464,6 +513,16 @@ pub struct GpuRenderer {
     bevels: bool,
     /// What [`part_limits`] says of the scene.
     part_limits: Vec<&'static str>,
+    /// What the camera sees past the parts: [`SCENE_BACKGROUND_COLOUR`] or
+    /// [`SCENE_BACKPLATE`] (none for the environment), with
+    /// [`SCENE_FINITE_DOME`] for a dome of a size; and the colour.
+    background_flags: u32,
+    background: [f32; 3],
+    /// The environment's dome.
+    dome: tequila_render_core::environment::Dome,
+    /// The kernel widened to the frame's parts a frame asked for that it
+    /// left out ([`KernelFeatures::of_frame`]), each built once.
+    widened: std::sync::Mutex<Vec<(KernelFeatures, wgpu::ComputePipeline)>>,
     /// The parts of the kernel the scene reaches ([`KernelFeatures::of`]),
     /// and the parts of the one `pipeline` was built with, which holds
     /// them all.
@@ -541,9 +600,7 @@ struct FloorScene {
     catcher: bool,
     catcher_shadows: bool,
     lamps: bool,
-    finite_dome: bool,
     shadowless_parts: bool,
-    background: bool,
 }
 
 impl FloorScene {
@@ -552,9 +609,7 @@ impl FloorScene {
             catcher: scene.instances.iter().any(|i| i.shadow_catcher.is_some()),
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
-            finite_dome: !scene.environment.dome().is_infinite(),
             shadowless_parts: scene.has_shadowless_parts(),
-            background: !scene.background.is_environment(),
         }
     }
 
@@ -567,17 +622,11 @@ impl FloorScene {
         if shadows && self.lamps {
             limits.push("the floor's shadows are the sky's alone: the lamps cast none on it");
         }
-        if self.finite_dome {
-            limits.push("the floor is lit and shadowed as under an infinitely far dome");
-        }
         if self.shadowless_parts {
             limits.push("a part that casts no shadow shadows the floor all the same");
         }
         if config.caustics && shadows {
             limits.push("no caustics on the floor");
-        }
-        if self.background {
-            limits.push("the floor stands in front of the environment rather than the background colour or backplate");
         }
         limits
     }
@@ -708,7 +757,7 @@ impl GpuRenderer {
         let device = &gpu.device;
         let tables = Tables::new(device);
         let uploaded = GpuScene::upload(device, &gpu.queue, scene);
-        let environment = GpuEnvironment::upload(device, &scene.environment);
+        let environment = GpuEnvironment::upload(device, &scene.environment, &scene.background);
         let shadow_far = scene.bounds().bounding_radius().max(1.0) * 1e4;
         // The materials as data: a material with a program has the constants
         // its graph folded to (`CompiledGraph::constants`), which the
@@ -831,6 +880,11 @@ impl GpuRenderer {
         });
         let glass_scene = GlassScene::of(scene);
         let cut_programs = programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0);
+        let background_flags = match &scene.background {
+            Background::Environment => 0,
+            Background::Color(_) => SCENE_BACKGROUND_COLOUR,
+            Background::Backplate { .. } => SCENE_BACKPLATE,
+        } | if scene.environment.dome().is_infinite() { 0 } else { SCENE_FINITE_DOME };
         let features = KernelFeatures::of(&SceneRecords {
             materials: &records,
             programs: &programs,
@@ -838,7 +892,7 @@ impl GpuRenderer {
             meshes: &uploaded.mesh_records,
             lamps: lights.count,
             emitters: has_emitters,
-            glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
+            glass_flags: glass_scene.flags() | if cut_programs { SCENE_CUT_PROGRAMS } else { 0 } | background_flags,
         });
         let started = std::time::Instant::now();
         let (kernel, pipeline, aside) = match choice {
@@ -918,6 +972,13 @@ impl GpuRenderer {
             kernel,
             kernel_seconds,
             aside,
+            background_flags,
+            dome: scene.environment.dome(),
+            widened: std::sync::Mutex::new(Vec::new()),
+            background: match &scene.background {
+                Background::Color(c) => [c.r, c.g, c.b],
+                _ => [0.0; 3],
+            },
         }
     }
 
@@ -938,6 +999,30 @@ impl GpuRenderer {
                 let _ = thread.join();
             }
         }
+    }
+
+    /// The parts of the kernel a frame of `settings` at `width` by `height`
+    /// reaches through its camera and film ([`KernelFeatures::of_frame`]).
+    pub fn frame_features(&self, settings: &FrameSettings, width: usize, height: usize) -> KernelFeatures {
+        KernelFeatures::of_frame(self.params(settings, width, height, 0, 1).camera_flags)
+    }
+
+    /// The pipeline a pass that reaches the frame's parts `frame` renders
+    /// with: the one it has, where that keeps them; else that kernel widened
+    /// to them, built the first time a frame asks and kept.
+    fn pipeline_for(&self, frame: KernelFeatures) -> wgpu::ComputePipeline {
+        let kernel = self.kernel_now();
+        if kernel.contains(frame) {
+            return self.pipeline_now().clone();
+        }
+        let wide = kernel | frame;
+        let mut widened = self.widened.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((_, pipeline)) = widened.iter().find(|(k, _)| *k == wide) {
+            return pipeline.clone();
+        }
+        let pipeline = transport_pipeline(&self.gpu.device, &self.layout, None, wide);
+        widened.push((wide, pipeline.clone()));
+        pipeline
     }
 
     /// The pipeline the next pass renders with.
@@ -998,10 +1083,46 @@ impl GpuRenderer {
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
         let aspect = width as f32 / height as f32;
-        let half_height = (settings.camera.vertical_fov(aspect) * 0.5).tan();
+        // The frame's half-height and half-width as Camera::generate_ray
+        // works them out: tan(fov / 2) for a lens, half the scale in scene
+        // units for a parallel projection, unread for a 360-degree one.
+        let (half_height, projection_flags, shift) = match settings.camera.projection {
+            Projection::Orthographic { scale } => (scale * 0.5, CAMERA_ORTHOGRAPHIC, (0.0, 0.0)),
+            Projection::Equirectangular => (0.0, CAMERA_EQUIRECTANGULAR, (0.0, 0.0)),
+            Projection::Shift { shift_x, shift_y, .. } if shift_x != 0.0 || shift_y != 0.0 => {
+                ((settings.camera.vertical_fov(aspect) * 0.5).tan(), CAMERA_SHIFT, (shift_x, shift_y))
+            }
+            Projection::Perspective { .. } | Projection::Shift { .. } => ((settings.camera.vertical_fov(aspect) * 0.5).tan(), 0, (0.0, 0.0)),
+        };
         let m = settings.camera.camera_to_world.m;
         let (direct, indirect) = settings.clamps();
         let e = &self.environment.layout;
+        // The thin lens, as Camera::generate_ray has it: an opening of this
+        // radius (none for a pinhole, or a projection with no lens), round
+        // or of `blades` (at least 3) turned by `rotation`.
+        let lens_radius = settings.camera.aperture_radius(aspect);
+        // Where in or around its pixel a sample goes (FilterSampler::place):
+        // one pixel's box where its jitter falls, another box spread by its
+        // width, a Gaussian or Blackman-Harris by its table.
+        let filter = settings.config.pixel_filter.sampler();
+        let mut filter_table = [[0.0f32; 4]; 256];
+        let mut filter_last = 0.0;
+        let filter_flags = match filter.table() {
+            Some(table) => {
+                assert_eq!(table.len(), 1025, "the filter's table has 1025 steps, as the card reads it");
+                for (i, v) in table[..1024].iter().enumerate() {
+                    filter_table[i / 4][i % 4] = *v;
+                }
+                filter_last = table[1024];
+                CAMERA_FILTER_TABLE
+            }
+            None if filter.width() == 1.0 => 0,
+            None => CAMERA_FILTER_BOX,
+        };
+        let (blades, rotation) = match settings.camera.aperture {
+            tequila_render_core::camera::Aperture::Bladed { blades, rotation } => (blades.max(3), rotation),
+            tequila_render_core::camera::Aperture::Circular => (0, 0.0),
+        };
         FrameParams {
             camera_to_world: [m[0], m[1], m[2]],
             half_height,
@@ -1062,9 +1183,29 @@ impl GpuRenderer {
                 | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
                 | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
                 | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 }
-                | if self.bevels { SCENE_BEVEL } else { 0 },
+                | if self.bevels { SCENE_BEVEL } else { 0 }
+                | self.background_flags,
             row_base: 0,
             row_stride: 1,
+            background: self.background,
+            plate_offset: e.plate_offset,
+            plate_width: e.plate_width,
+            plate_height: e.plate_height,
+            camera_flags: projection_flags | filter_flags | if lens_radius > 0.0 { CAMERA_THIN_LENS | if blades > 0 { CAMERA_BLADED } else { 0 } } else { 0 },
+            lens_radius,
+            focus_distance: settings.camera.focus_distance,
+            aperture_blades: blades,
+            aperture_rotation: rotation,
+            shift_x: shift.0,
+            shift_y: shift.1,
+            filter_width: filter.width(),
+            filter_last,
+            _pad5: 0,
+            filter_table,
+            dome_radius: self.dome.radius.unwrap_or(0.0),
+            dome_height: self.dome.height,
+            dome_flatten: self.dome.flatten as u32,
+            _pad6: 0,
         }
     }
 
@@ -1154,8 +1295,9 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 2, resource: pixel_buffer.as_entire_binding() },
             ],
         });
-        // Taken up at the pass's start, so one pass is one kernel's.
-        let pipeline = self.pipeline_now();
+        // Taken up at the pass's start, so one pass is one kernel's; widened
+        // to the parts this frame's camera reaches that it left out.
+        let pipeline = &self.pipeline_for(self.frame_features(settings, width, height));
         // The most a dispatch may do: every pixel, `batch` samples each.
         let most = pixels as u64 * batch as u64;
         let mut done = 0u32;
@@ -1297,6 +1439,12 @@ impl GpuRenderer {
     /// `entry` reaches is compiled: a module with two entry points is
     /// pared down to the one a pipeline takes.
     pub fn run_on_scene(&self, settings: &FrameSettings, kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
+        self.run_on_scene_at(settings, (1, 1), kernel, entry, words, groups)
+    }
+
+    /// [`GpuRenderer::run_on_scene`] with the frame `width` by `height`, for
+    /// what reads the frame's size: the camera's half-widths, its aspect.
+    pub fn run_on_scene_at(&self, settings: &FrameSettings, (width, height): (usize, usize), kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
         let device = &self.gpu.device;
         let source = format!("{}\n{kernel}\n", crate::shader::source("transport"));
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(source.into()) });
@@ -1314,7 +1462,7 @@ impl GpuRenderer {
         let init = |label: &str, contents: &[u8], usage| wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage });
         let io = init("scene test", bytemuck::cast_slice(&padded), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
         let pixel = init("scene test pixel", bytemuck::bytes_of(&PixelSums::default()), wgpu::BufferUsages::STORAGE);
-        let params = self.params(settings, 1, 1, 0, 1);
+        let params = self.params(settings, width, height, 0, 1);
         let uniform = init("scene test frame", bytemuck::bytes_of(&params), wgpu::BufferUsages::UNIFORM);
         let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene test back"), size: bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {

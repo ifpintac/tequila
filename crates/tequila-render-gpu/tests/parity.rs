@@ -35,7 +35,8 @@ static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// should be one picture to the bit. How many pixels are apart, and by how
 /// much; asserted at the end of the shot, once its parity is said.
 fn same_as_the_whole_kernel(name: &str, renderer: &mut GpuRenderer, card: &Framebuffer, settings: &FrameSettings, samples: u32) -> usize {
-    let variant = renderer.kernel;
+    // The scene's variant, widened to what the frame's camera reaches.
+    let variant = renderer.kernel | renderer.frame_features(settings, card.width, card.height);
     {
         let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         renderer.set_kernel(KernelFeatures::ALL);
@@ -235,6 +236,71 @@ fn the_bevelled_product_is_the_processors_picture() {
     same_picture("bevelled_product");
 }
 
+/// A background colour: seen past the parts, through glass and in chrome,
+/// behind the floor and in its reflection through the glass.
+#[test]
+fn a_background_colour_is_the_processors_picture() {
+    same_picture("background_colour");
+}
+
+/// A backplate: read at each sample's film point past the parts, through
+/// glass and in chrome, behind the floor; at the film's corner through the
+/// glass in the floor's reflection.
+#[test]
+fn a_backplate_is_the_processors_picture() {
+    same_picture("backplate");
+}
+
+/// Depth of field: a thin lens wide open, focused on the product's front,
+/// the floor's far edge and the horizon blurred.
+#[test]
+fn a_shallow_focus_is_the_processors_picture() {
+    same_picture("shallow_focus");
+}
+
+/// A bladed opening: the lamps and highlights out of focus spread into its
+/// shape.
+#[test]
+fn bladed_bokeh_is_the_processors_picture() {
+    same_picture("bladed_bokeh");
+}
+
+/// The orthographic camera: parallel rays from the film plane.
+#[test]
+fn an_orthographic_camera_is_the_processors_picture() {
+    same_picture("orthographic");
+}
+
+/// The 360-degree camera: every way round.
+#[test]
+fn a_360_degree_camera_is_the_processors_picture() {
+    same_picture("all_round");
+}
+
+/// The shifted lens: the frame moved without turning the camera.
+#[test]
+fn a_shifted_lens_is_the_processors_picture() {
+    same_picture("shifted_lens");
+}
+
+/// A soft pixel filter: Blackman-Harris 1.5 px, from its table.
+#[test]
+fn a_soft_pixel_filter_is_the_processors_picture() {
+    same_picture("soft_filter");
+}
+
+/// A box two pixels wide.
+#[test]
+fn a_wide_box_filter_is_the_processors_picture() {
+    same_picture("wide_box");
+}
+
+/// A dome of a size: the sky from where each path is.
+#[test]
+fn a_dome_of_a_size_is_the_processors_picture() {
+    same_picture("finite_dome");
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]
@@ -306,9 +372,12 @@ fn same_shot(mut scene: Shot) {
     let document = &scene.document;
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache);
+    let (mut snapshot, _) = snapshot(&document, environment, &mut scene.cache);
+    // What the camera sees past the parts, as the command line sets it.
+    snapshot.background = parity::background(document);
     let camera = scene.camera;
-    let config = document.lighting.config();
+    // As the application renders it: the render's pixel filter too.
+    let config = parity::config(document);
 
     // Nothing in the set is a case the card renders otherwise.
     let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);

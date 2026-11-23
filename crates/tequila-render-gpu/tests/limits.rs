@@ -8,7 +8,7 @@ use tequila_render_core::camera::{Camera, Projection};
 use tequila_render_core::cutaway::{Cutter, CutterShape};
 use tequila_render_core::scene::SceneSnapshot;
 use tequila_render_core::settings::{IntegratorConfig, PixelFilter, PixelFilterKind};
-use tequila_render_gpu::transport::{camera_limits, glass_limits, part_limits};
+use tequila_render_gpu::transport::{camera_limits, floor_limits, glass_limits, part_limits};
 use tequila_scene::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
 use tequila_scene::parity;
 use tequila_scene::snapshot::{snapshot, MeshCache};
@@ -70,22 +70,31 @@ fn fibres_are_said() {
     assert_eq!(part_limits(&scene, &document.lighting.config()), vec!["fibres are left out: the parts that grow them are bare"]);
 }
 
+/// A dome of a size is the card's as the processor's, under a floor too.
 #[test]
-fn a_dome_of_a_size_is_said() {
-    let document = with_environment(grey(), EnvironmentParameter::scalar(EnvParam::Size, 6.0));
+fn a_dome_of_a_size_is_not_said() {
+    let document = with_environment(parity::scene("finite_dome").expect("the parity set has it").document(), EnvironmentParameter::scalar(EnvParam::Size, 6.0));
     let scene = snapped(&document);
     assert!(!scene.environment.dome().is_infinite(), "the dome has a size");
-    assert_eq!(part_limits(&scene, &document.lighting.config()), vec!["the environment is an infinitely far dome rather than one of its size"]);
+    assert!(part_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &document.lighting.config()));
+    assert!(floor_limits(&scene, &document.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &document.lighting.config()));
 }
 
+/// A background colour, and a backplate, are the card's as the processor's
+/// (`past_the_scene`): neither is a limit any more, with or without a floor.
 #[test]
-fn a_background_colour_is_said() {
-    let document = with_environment(grey(), EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(tequila_scene::document::BackgroundMode::Color)));
-    let scene = snapped(&document);
-    assert_eq!(
-        part_limits(&scene, &document.lighting.config()),
-        vec!["past the parts the camera sees the environment rather than the background colour or backplate"]
-    );
+fn a_background_colour_or_backplate_is_not_said() {
+    use tequila_scene::document::BackgroundMode;
+    let colour = with_environment(grey(), EnvironmentParameter::new(EnvParam::Background, EnvValue::Mode(BackgroundMode::Color)));
+    let scene = snapped(&colour);
+    assert!(matches!(scene.background, tequila_render_core::environment::Background::Color(_)));
+    assert!(part_limits(&scene, &colour.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &colour.lighting.config()));
+    let plate = parity::scene("backplate").expect("the parity set has it").document();
+    let mut scene = snapped(&plate);
+    scene.background = parity::background(&plate);
+    assert!(matches!(scene.background, tequila_render_core::environment::Background::Backplate { .. }));
+    assert!(part_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", part_limits(&scene, &plate.lighting.config()));
+    assert!(floor_limits(&scene, &plate.lighting.config()).is_empty(), "{:?}", floor_limits(&scene, &plate.lighting.config()));
 }
 
 #[test]
@@ -101,19 +110,17 @@ fn the_camera_and_the_film_are_said() {
     let config = document.lighting.config();
     let pinhole = parity::scene("grey_product").unwrap().camera(&document);
     let said = |camera: Camera, config: &IntegratorConfig| camera_limits(&camera, config);
-    assert_eq!(said(Camera { f_number: 2.8, ..pinhole }, &config), vec!["no depth of field: everything is in focus, as through a pinhole"]);
-    assert_eq!(
-        said(Camera { projection: Projection::Orthographic { scale: 1.0 }, ..pinhole }, &config),
-        vec!["an orthographic camera is not drawn: the card's camera is a perspective one"]
-    );
-    assert_eq!(
-        said(Camera { projection: Projection::Equirectangular, ..pinhole }, &config),
-        vec!["a 360-degree camera is not drawn: the card's camera is a perspective one"]
-    );
-    assert_eq!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.1, shift_y: 0.0 }, ..pinhole }, &config), vec!["a shifted lens is left unshifted"]);
+    // Depth of field is the card's, round or bladed.
+    assert!(said(Camera { f_number: 2.8, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { f_number: 2.8, aperture: tequila_render_core::camera::Aperture::Bladed { blades: 5, rotation: 0.3 }, ..pinhole }, &config).is_empty());
+    // And every projection.
+    assert!(said(Camera { projection: Projection::Orthographic { scale: 1.0 }, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { projection: Projection::Equirectangular, ..pinhole }, &config).is_empty());
+    assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.1, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
     assert!(said(Camera { projection: Projection::Shift { focal_length_mm: 50.0, shift_x: 0.0, shift_y: 0.0 }, ..pinhole }, &config).is_empty());
+    // And every pixel filter.
     let soft = IntegratorConfig { pixel_filter: PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }, ..config.clone() };
-    assert_eq!(said(pinhole, &soft), vec!["the pixel filter is one pixel's box"]);
+    assert!(said(pinhole, &soft).is_empty());
     let wide = IntegratorConfig { pixel_filter: PixelFilter { kind: PixelFilterKind::Box, width: 2.0 }, ..config.clone() };
-    assert_eq!(said(pinhole, &wide), vec!["the pixel filter is one pixel's box"]);
+    assert!(said(pinhole, &wide).is_empty());
 }
