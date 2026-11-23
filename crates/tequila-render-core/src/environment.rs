@@ -342,6 +342,32 @@ pub struct Environment {
     facing: Facing,
 }
 
+/// [`Environment::tables`]: the images and the sampling tables, borrowed.
+#[derive(Debug)]
+pub struct EnvironmentTables<'a> {
+    pub image: &'a Image,
+    /// What the camera sees; `image` itself when the two are the same.
+    pub camera_image: &'a Image,
+    pub intensity: f32,
+    pub rotation: Mat4,
+    pub inverse_rotation: Mat4,
+    pub width: usize,
+    pub height: usize,
+    pub luminance: &'a [f32],
+    pub conditional_cdf: &'a [f32],
+    pub weighted_sum: f32,
+    /// The dome is infinitely far, which is all `sample_facing` handles.
+    pub infinite: bool,
+    pub tiles_x: usize,
+    pub tiles_y: usize,
+    pub tile_of_column: &'a [u16],
+    pub tile_of_row: &'a [u16],
+    pub power: &'a [f32],
+    pub rows: &'a [f32],
+    pub row_start: &'a [usize],
+    pub choice: &'a [f32],
+}
+
 /// The environment cut into tiles, each a cone of directions, and for each
 /// of a few hundred ways a surface can face, the chance of drawing from each
 /// tile: in proportion to its light and to the most that light can lean onto
@@ -707,6 +733,35 @@ impl Environment {
     /// The image the camera sees, when it differs from the one that lights.
     pub fn camera_image(&self) -> Option<&Arc<Image>> {
         self.camera_image.as_ref()
+    }
+
+    /// Everything [`Self::radiance`], [`Self::background_radiance_from`],
+    /// [`Self::sample_facing`] and [`Self::pdf_facing`] read, for a renderer
+    /// that keeps its own copy: the graphics card's (`tequila-render-gpu`),
+    /// which uploads these as they are so it samples the very same light.
+    pub fn tables(&self) -> EnvironmentTables<'_> {
+        let f = &self.facing;
+        EnvironmentTables {
+            image: &self.image,
+            camera_image: self.camera_image.as_deref().unwrap_or(&self.image),
+            intensity: self.intensity,
+            rotation: self.rotation,
+            inverse_rotation: self.inverse_rotation,
+            width: self.width,
+            height: self.height,
+            luminance: &self.luminance,
+            conditional_cdf: &self.conditional_cdf,
+            weighted_sum: self.weighted_sum,
+            infinite: self.dome.is_infinite(),
+            tiles_x: f.tiles_x,
+            tiles_y: f.tiles_y,
+            tile_of_column: &f.tile_of_column,
+            tile_of_row: &f.tile_of_row,
+            power: &f.power,
+            rows: &f.rows,
+            row_start: &f.row_start,
+            choice: &f.choice,
+        }
     }
 
     /// Radiance arriving at `origin` from a world-space direction.

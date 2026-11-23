@@ -16,6 +16,10 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "park
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 tequila-core = { path = "../tequila-core" }
+tequila-render-core = { path = "../tequila-render-core" }
+tequila-texture = { path = "../tequila-texture" }
 
 [dev-dependencies]
 naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out", "msl-out"] }
+tequila-scene = { path = "../tequila-scene" }
+tequila-render-cpu = { path = "../tequila-render-cpu" }

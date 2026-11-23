@@ -286,6 +286,18 @@ Camera (perspective, thin lens), instanced triangles, one grey diffuse surface f
 
 *Exit:* R2.6 passes on both machines; `tequila -i Headphones.tequila --engine tequila --device GPU` writes the picture (`--device` is read only for Cycles today); R0.1 has a first graphics-card row.
 
+*As built, November 20, on the RTX 2060* (#191 for R2.1, R2.3 and R2.4; the pull request after it for R2.2, R2.5 and R2.6):
+- **R2.1, R2.3, R2.4.** `tequila-render-gpu` on wgpu 30.0.1, Vulkan and Metal. The WGSL modules are joined by `//#include` lines (`shader.rs`). The Sobol′ byte tables are `tequila_core`'s own, uploaded (`tables.rs`, `@group(1)`). PCG32's 64-bit state is two 32-bit words. A million random draws and 20,000 ten-bounce paths of draws are the processor's bit for bit. `Harness::run_wgsl` is the differential harness. CI job `gpu-differential` runs on Mesa's lavapipe with `TEQUILA_REQUIRE_GPU_TESTS=1`; ray-query tests skip there (`TEQUILA_REQUIRE_RAY_QUERIES=1` makes them required on a machine with a card). Invariant 3 is amended.
+- **R2.2.** `GpuMesh`, `GpuInstance` and `FrameParams` are held to their WGSL twins member by member through naga (`tests/layouts.rs`).
+- **R2.5.** `transport.wgsl` is the processor's path for grey diffuse surfaces under the environment, draw for draw:
+  - the hit rebuilt from the triangle's corners as Embree's `resolve` does, with its magnitude and both offsets;
+  - `valid_for_reflection`, the Duff frame and the concentric cosine draw;
+  - the environment's facing tables, uploaded through `Environment::tables` and sampled by `sample_facing` and `pdf_facing` ported line for line, the lit image for bounces and the camera image for the camera ray;
+  - power-heuristic MIS, Russian roulette from bounce 3, the bounce limit, and firefly rejection's indirect clamp at 10.
+  The card hands back each sample's radiance and background, and the processor's `Framebuffer` accumulates them (D8).
+- **R2.6.** `grey_product` at 320×180, 256 samples, seed 7: mean absolute difference **0.000007** (the bar is 0.002), no pixel more than 0.02 apart, worst 0.004; mean 0.62551 on both. 0.58 s on the card, upload and readback included, against 3.1 s on the processor.
+- Still to do for the exit: the Mac half, `--device GPU` in the command line, R0.1's row.
+
 ### R3 — Everything the processor renderer does (L)
 
 Each item is: port to WGSL, differential tests for its functions (R2.4), its scene added to the parity set (R0.3) and passing R2.6's tolerance. Tiers are by how many pictures need the thing.
