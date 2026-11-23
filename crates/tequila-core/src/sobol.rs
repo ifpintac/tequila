@@ -95,11 +95,53 @@ fn matrices() -> &'static [[u32; MATRIX_BITS]] {
     })
 }
 
+/// The direction numbers a byte at a time: for each dimension and each of
+/// an index's four bytes, the XOR of the direction numbers that byte's set
+/// bits select. 16 KB, built once from [`matrices`].
+static BYTE_TABLES: std::sync::OnceLock<Vec<[[u32; 256]; 4]>> = std::sync::OnceLock::new();
+
+fn byte_tables() -> &'static [[[u32; 256]; 4]] {
+    BYTE_TABLES.get_or_init(|| {
+        matrices()
+            .iter()
+            .map(|v| {
+                let mut table = [[0u32; 256]; 4];
+                for (byte, row) in table.iter_mut().enumerate() {
+                    for (value, entry) in row.iter_mut().enumerate() {
+                        for bit in 0..8 {
+                            if (value >> bit) & 1 == 1 {
+                                *entry ^= v[byte * 8 + bit];
+                            }
+                        }
+                    }
+                }
+                table
+            })
+            .collect()
+    })
+}
+
 /// Raw Sobol′ value for `(index, dimension)` as a 32-bit fixed-point fraction.
 /// `dimension` must be below [`NUM_BASE_DIMENSIONS`]; padding is handled by
 /// [`sample_u32`].
+///
+/// Four table reads, one per byte of the index. The index arrives shuffled
+/// ([`sample_u32`]), so its high bits are set as often as its low ones and a
+/// loop over its bits ran all 32 times: a tenth of a render's time on a
+/// lamp-lit scene (`docs/07` R1). The same value as [`sobol_u32_by_bits`].
 #[inline]
 pub fn sobol_u32(index: u32, dimension: u32) -> u32 {
+    debug_assert!(dimension < NUM_BASE_DIMENSIONS);
+    let t = &byte_tables()[dimension as usize];
+    t[0][(index & 0xff) as usize]
+        ^ t[1][((index >> 8) & 0xff) as usize]
+        ^ t[2][((index >> 16) & 0xff) as usize]
+        ^ t[3][(index >> 24) as usize]
+}
+
+/// [`sobol_u32`] the way it is defined: the XOR of the direction numbers the
+/// index's set bits select.
+pub fn sobol_u32_by_bits(index: u32, dimension: u32) -> u32 {
     debug_assert!(dimension < NUM_BASE_DIMENSIONS);
     let v = &matrices()[dimension as usize];
     let mut x = 0u32;
@@ -277,6 +319,21 @@ mod tests {
                 seen.insert(s & (n - 1)),
                 "index {i} collided within the block"
             );
+        }
+    }
+
+    /// The tables give exactly what the direction numbers do.
+    #[test]
+    fn the_byte_tables_are_the_direction_numbers() {
+        let mut index = 0x9e37_79b9u32;
+        for dim in 0..NUM_BASE_DIMENSIONS {
+            for i in (0..4096u32).chain([u32::MAX, 1 << 31, 0x00ff_ff00]) {
+                assert_eq!(sobol_u32(i, dim), sobol_u32_by_bits(i, dim), "index {i}, dimension {dim}");
+            }
+            for _ in 0..100_000 {
+                index = index.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+                assert_eq!(sobol_u32(index, dim), sobol_u32_by_bits(index, dim), "index {index}, dimension {dim}");
+            }
         }
     }
 

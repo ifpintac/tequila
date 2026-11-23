@@ -600,6 +600,11 @@ impl Environment {
     /// Radiance arriving from a world-space direction, with the dome
     /// infinitely far away.
     pub fn radiance(&self, world_direction: Vec3) -> Spectrum {
+        // Turned down to nothing, it is black everywhere, without the
+        // texture read (`docs/07` R1).
+        if self.intensity == 0.0 {
+            return Spectrum::ZERO;
+        }
         let local = self.inverse_rotation.transform_vector(world_direction);
         let uv = direction_to_equirect(local);
         let rgb = self.image.sample_bilinear_wrap_u(uv.x, uv.y);

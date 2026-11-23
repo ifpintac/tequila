@@ -818,7 +818,33 @@ impl OpenPbrBsdf {
     /// they stay each other's density. Call it once, before either, with the
     /// `wo` they will be given.
     pub fn aim(&mut self, wo: Vec3) {
-        if self.count < 2 || wo.z <= 0.0 {
+        if wo.z <= 0.0 {
+            return;
+        }
+        // The interfaces read their tables for `wo` once, for every
+        // evaluation here and for the layers they cover (`attenuation`).
+        if let Some(coat) = &mut self.coat {
+            coat.aim(wo);
+        }
+        if let Some(specular) = &mut self.specular {
+            specular.aim(wo);
+        }
+        for slot in self.lobes.iter_mut().take(self.count) {
+            // The flake frame tilts what a flake's lobe sees; only those in
+            // the shading frame are seen from `wo` as it is.
+            match slot {
+                Some((Lobe::Coat(l), depth, _, _)) if !matches!(depth, Depth::Flake) => match &self.coat {
+                    Some(coat) => l.aim_as(coat, wo),
+                    None => l.aim(wo),
+                },
+                Some((Lobe::Specular(l), depth, _, _)) if !matches!(depth, Depth::Flake) => match &self.specular {
+                    Some(specular) => l.aim_as(specular, wo),
+                    None => l.aim(wo),
+                },
+                _ => {}
+            }
+        }
+        if self.count < 2 {
             return;
         }
         let mut probabilities = [0.0f32; MAX_LOBES];

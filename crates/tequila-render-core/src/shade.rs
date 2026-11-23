@@ -112,10 +112,11 @@ pub struct Registers {
 }
 
 impl Registers {
+    /// Empty: the first graph evaluated sizes it. A path makes two and most
+    /// paths meet no graph at all, and allocating sixteen slots for each
+    /// regardless was a thirtieth of a lamp-lit render's time (`docs/07` R1).
     pub fn new() -> Registers {
-        Registers {
-            slots: Vec::with_capacity(16),
-        }
+        Registers { slots: Vec::new() }
     }
 
     /// What a register held after the last evaluation.

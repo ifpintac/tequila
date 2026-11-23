@@ -155,6 +155,12 @@ pub fn perlin_4d(x: f32, y: f32, z: f32, w: f32) -> f32 {
 /// as Cycles keeps far coordinates precise.
 #[inline]
 fn wrap(p: f32) -> f32 {
+    // Nearer than one repeat, the remainder is `p` itself: the same number
+    // without the library call, which was a sixteenth of a textured render
+    // (`docs/07` R1). `+ 0.0` as below, so -0.0 comes out as +0.0 as it did.
+    if p.abs() < 100_000.0 {
+        return p + 0.0;
+    }
     let correction = if p.abs() >= 1_000_000.0 { 0.5 } else { 0.0 };
     p % 100_000.0 + correction
 }
