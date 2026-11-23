@@ -176,7 +176,10 @@ fn scene(parts: Vec<(Mesh, Material)>, lights: Vec<Light>, sky: Spectrum) -> Sce
 fn floor_at(intersector: &EmbreeIntersector, config: &IntegratorConfig, x: f32, z: f32, height: f32, samples: u32) -> f32 {
     let mut sum = 0.0f64;
     for i in 0..samples {
-        let mut sampler = Sampler::new(7, 11, i, 3);
+        // Each point its own sequence, as each pixel has: with one for all,
+        // every point drew the same samples and a test summing many points
+        // measured one sequence's luck many times over.
+        let mut sampler = Sampler::new(x.to_bits(), z.to_bits(), i, 3);
         let ray = Ray::new(vec3(x, height, z), -Vec3::Y);
         sum += f64::from(trace_path(intersector, config, ray, vec2(0.5, 0.5), &mut sampler).radiance.luminance());
     }
@@ -342,8 +345,11 @@ fn arc(centre: (f32, f32), radius: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
 /// light path tracing finds there, bouncing off the floor and through the
 /// flacon into a glowing ball where the lamp is; never more. Not all of
 /// it: the flacon is a cylinder lens, and where two paths through it join
-/// the same two points the walk finds the one its seed leads to, 45% of the
-/// light here (measured). Four crossings, two of them between glass and
+/// the same two points the walk finds the one its seed leads to, about 18%
+/// of the light here (measured, 17.5% and 18.3% with two samplers; it read
+/// 45% while every point drew the same samples, `floor_at`). Path tracing's
+/// own answer is slow to settle, a ball this small being hard to hit, so it
+/// takes many samples. Four crossings, two of them between glass and
 /// liquid, where landing each a few hundredths of a millimetre off moves the
 /// answer a long way: aimed from beside where it started, near the origin,
 /// every projection did, the walk stalled, and it found 0.6%.
@@ -386,14 +392,14 @@ fn a_lamp_shines_through_a_perfume_flacon() {
                 continue;
             }
             points += 1;
-            by_manifold += f64::from(floor_at(&solved, &manifold(), x, z, 0.002, 64));
-            by_paths += f64::from(floor_at(&traced, &plain(), x, z, 0.002, 4096));
+            by_manifold += f64::from(floor_at(&solved, &manifold(), x, z, 0.002, 256));
+            by_paths += f64::from(floor_at(&traced, &plain(), x, z, 0.002, 16384));
         }
     }
     println!("behind the flacon ({points} points): {by_manifold:.4} by the manifold sample, {by_paths:.4} by path tracing");
     assert!(points > 20, "no shadow to look in: {points} points");
     let share = by_manifold / by_paths;
-    assert!(share > 0.35 && share < 1.05, "behind the flacon the manifold sample found {share:.3} of the light path tracing does");
+    assert!(share > 0.12 && share < 1.05, "behind the flacon the manifold sample found {share:.3} of the light path tracing does");
 }
 
 #[test]
@@ -411,7 +417,7 @@ fn the_sun_through_a_slab_of_glass_brings_what_it_should() {
     let intersector = EmbreeIntersector::build(&device, scene(vec![(slab, glass())], vec![sun], Spectrum::ZERO)).expect("builds");
     let expected = ALBEDO / std::f32::consts::PI * 5.0 * angle.cos() * two_faces(angle.cos());
     for x in [-0.5f32, 0.0, 0.7] {
-        let seen = floor_at(&intersector, &single(manifold(), 2), x, 0.2, 0.25, 8);
+        let seen = floor_at(&intersector, &single(manifold(), 2), x, 0.2, 0.25, 64);
         println!("x {x}: {seen:.5} against {expected:.5}");
         assert!((seen / expected - 1.0).abs() < 0.01, "the sun through the slab gave the floor {seen:.5}, not {expected:.5}");
     }

@@ -17,9 +17,17 @@
 //! Owen seed perturbed by the group index `d / N`. Within a group of `N`
 //! dimensions the samples are jointly stratified; across groups they are
 //! decorrelated. This is the strategy Burley's paper describes, and it is why
-//! [`crate::sampler`] allocates exactly `NUM_BASE_DIMENSIONS` dimensions per
-//! bounce — so that each bounce's samples land inside one stratified group
-//! rather than straddling two.
+//! [`crate::sampler`] lays each bounce's dimensions out in whole groups, so
+//! no draw straddles two.
+//!
+//! Four, as Burley recommends, and not more. Sobol′'s first dimension pair
+//! is a perfect (0,2)-net, but pairs further in are not: at 256 points,
+//! dimensions 4 and 5 integrate a disc only about twice as well as random
+//! points do, where dimensions 0 and 1 do it fourteen times as well
+//! (`docs/07` R1). With groups of eight a bounce's direction was drawn from
+//! that pair, which is why a glossy floor reflecting a softbox was seven
+//! times noisier than Cycles'. With groups of four every two-dimensional
+//! draw is a group's leading pair.
 //!
 //! Owen scrambling makes every returned point uniformly distributed in
 //! `[0,1)` regardless of the underlying direction numbers, so the estimator is
@@ -29,7 +37,7 @@
 use crate::rng::{hash_combine, hash_u32};
 
 /// Number of genuine Sobol′ dimensions before padding kicks in.
-pub const NUM_BASE_DIMENSIONS: u32 = 8;
+pub const NUM_BASE_DIMENSIONS: u32 = 4;
 
 const MATRIX_BITS: usize = 32;
 
@@ -41,10 +49,6 @@ const POLYNOMIALS: [(u32, u32, &[u32]); NUM_BASE_DIMENSIONS as usize - 1] = [
     (1, 0, &[1]),
     (2, 1, &[1, 3]),
     (3, 1, &[1, 3, 1]),
-    (3, 2, &[1, 1, 1]),
-    (4, 1, &[1, 1, 3, 3]),
-    (4, 4, &[1, 3, 5, 13]),
-    (5, 2, &[1, 1, 5, 5, 17]),
 ];
 
 /// Direction numbers, `[dimension][bit]`. Generated once on first use rather
@@ -328,7 +332,7 @@ mod tests {
     /// that is the whole justification for the sampler's dimension allocation.
     #[test]
     fn padding_preserves_within_group_stratification() {
-        // Dimensions 8 and 9 are group 1, base dims 0 and 1.
+        // Dimensions 8 and 9 are group 2, base dims 0 and 1.
         let k = 5u32;
         let n = 1u32 << (2 * k);
         let side = 1usize << k;

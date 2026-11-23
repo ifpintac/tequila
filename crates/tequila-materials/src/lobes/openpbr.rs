@@ -799,6 +799,59 @@ impl OpenPbrBsdf {
         Some((BsdfSample { f, pdf, ..sample }, roughness))
     }
 
+    /// Choose lobes by what each sends back towards `wo`, the direction the
+    /// surface is seen from, rather than face-on (`docs/07` R1).
+    ///
+    /// The probabilities `build` sets are each lobe's albedo seen straight
+    /// on, because nothing there knows where the surface is seen from. Face
+    /// on, a clear specular interface returns 4% and is sampled at its 5%
+    /// floor; seen across a floor at 75° it returns a fifth or more of the
+    /// light, and the highlight it makes there was drawn from one sample in
+    /// twenty, which made a glossy floor reflecting a softbox about four
+    /// times noisier than Cycles', whose closures are weighed by their
+    /// albedo in the direction seen from. Here each lobe's estimate is its
+    /// albedo towards `wo`, through the layers over it, as [`Bsdf::albedo`]
+    /// sums them, with the same floors.
+    ///
+    /// Any positive probabilities are unbiased, so this changes only the
+    /// noise; `pdf` and `sample_reflection` read the same probabilities, so
+    /// they stay each other's density. Call it once, before either, with the
+    /// `wo` they will be given.
+    pub fn aim(&mut self, wo: Vec3) {
+        if self.count < 2 || wo.z <= 0.0 {
+            return;
+        }
+        let mut probabilities = [0.0f32; MAX_LOBES];
+        let mut total = 0.0;
+        for (index, (lobe, depth, scale, weight)) in self.active() {
+            let through = self.attenuation(*depth, wo, wo);
+            let seen = match (depth, &self.flake_frame) {
+                (Depth::Flake, Some(frame)) => {
+                    let local = frame.to_local(wo);
+                    if local.z > 0.0 {
+                        lobe.as_bsdf().albedo(local).luminance()
+                    } else {
+                        0.0
+                    }
+                }
+                _ => lobe.as_bsdf().albedo(wo).luminance(),
+            };
+            let floor = match lobe {
+                Lobe::Coat(_) | Lobe::Specular(_) | Lobe::Subsurface(_) => 0.05,
+                _ => 0.0,
+            };
+            let p = (seen.max(floor) * through * scale.luminance() * weight).max(1e-4);
+            probabilities[index] = p;
+            total += p;
+        }
+        if total > 0.0 && total.is_finite() {
+            for p in probabilities.iter_mut().take(self.count) {
+                *p /= total;
+            }
+            self.probabilities = probabilities;
+        }
+    }
+
     /// The density [`Bsdf::pdf`] gives `wi` from the reflections
     /// [`Self::sample_reflection`] names a roughness for, each weighed by
     /// `share` of its roughness: the density of [`Self::sample_reflection`]
@@ -1428,6 +1481,42 @@ mod tests {
 
     /// Every lobe must get chosen sometimes, or its contribution is noise that
     /// never converges.
+    /// Seen across a floor, a plastic's specular interface returns far more
+    /// than it does face on, so an aimed stack chooses it more, and what it
+    /// estimates is unchanged: the mean of `f cos / pdf` over its own
+    /// samples is the same albedo, aimed or not, and every sample's density
+    /// is the one `pdf` gives.
+    #[test]
+    fn aiming_at_a_grazing_view_samples_the_highlight_more_and_estimates_the_same() {
+        let material = Material::plastic(Spectrum::splat(0.3), 0.35);
+        let wo = direction(75f32.to_radians());
+        let face_on = OpenPbrBsdf::new(&material, 0.0);
+        let mut aimed = OpenPbrBsdf::new(&material, 0.0);
+        aimed.aim(wo);
+        let specular = (0..aimed.count).find(|&i| matches!(aimed.lobes[i], Some((Lobe::Specular(_), ..)))).expect("a specular lobe");
+        assert!(
+            aimed.probabilities[specular] > 2.0 * face_on.probabilities[specular],
+            "specular chosen {} aimed against {} face on",
+            aimed.probabilities[specular],
+            face_on.probabilities[specular]
+        );
+        let estimate = |bsdf: &OpenPbrBsdf| {
+            let n = 1 << 16;
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                let u = Vec2 { x: sobol::sample(i, 0, 5), y: sobol::sample(i, 1, 5) };
+                if let Some(s) = bsdf.sample(wo, u, sobol::sample(i, 2, 5)) {
+                    let pdf = bsdf.pdf(wo, s.wi);
+                    assert!((pdf - s.pdf).abs() <= 1e-3 * pdf.max(1.0), "sampled pdf {} against pdf {pdf}", s.pdf);
+                    sum += (s.f.luminance() * s.wi.z.abs() / s.pdf) as f64;
+                }
+            }
+            sum / n as f64
+        };
+        let (before, after) = (estimate(&face_on), estimate(&aimed));
+        assert!((before - after).abs() < 0.01 * before.max(0.05), "face on {before}, aimed {after}");
+    }
+
     #[test]
     fn every_lobe_is_reachable_by_the_selector() {
         let material = Material {
