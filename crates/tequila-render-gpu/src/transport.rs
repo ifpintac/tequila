@@ -29,17 +29,37 @@ use crate::environment::GpuEnvironment;
 use crate::lights::{GpuLights, LampScene, LightRecords};
 use crate::scene::GpuScene;
 use crate::tables::Tables;
+use crate::textures::{CardPictures, Pictures};
 
 /// Every material's program lowered for the card (`crate::program::lower`),
 /// by material: `Ok(None)` for a material that is its constants, `Err` with
-/// the reason for one the card cannot run.
+/// the reason for one the card cannot run. Its pictures as the scene's
+/// (`CardPictures::of`), on a card that binds them all.
 pub fn lower_programs(scene: &SceneSnapshot) -> Vec<Result<Option<crate::program::CardProgram>, crate::program::Refusal>> {
+    let pictures = CardPictures::of(scene);
+    lower_programs_with(scene, Pictures::On(&pictures))
+}
+
+/// [`lower_programs`] with the scene's pictures as `pictures`.
+pub fn lower_programs_with(scene: &SceneSnapshot, pictures: Pictures) -> Vec<Result<Option<crate::program::CardProgram>, crate::program::Refusal>> {
     (0..scene.materials.len())
         .map(|i| match scene.program(tequila_core::ids::MaterialId(i as u32)) {
-            Some(program) => crate::program::lower(program),
+            Some(program) => crate::program::lower_with(program, pictures),
             None => Ok(None),
         })
         .collect()
+}
+
+/// Whether `pictures` fit the buffers `device` binds: `Pictures::On`, or
+/// how far over they are.
+pub fn pictures_on<'a>(pictures: &'a CardPictures, limits: &wgpu::Limits) -> Pictures<'a> {
+    let limit = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+    let bytes = pictures.texel_bytes().max(pictures.header_bytes());
+    if bytes > limit {
+        Pictures::TooLarge { bytes, limit }
+    } else {
+        Pictures::On(pictures)
+    }
 }
 
 /// What a dispatch of `transport.wgsl` is told; `frame.wgsl` is its twin.
@@ -321,6 +341,9 @@ pub struct GpuRenderer {
     /// The materials' programs: their words, their constants and where
     /// each material's are (`crate::program`).
     pub programs: [wgpu::Buffer; 3],
+    /// The pictures they sample: the texels and the header
+    /// (`crate::textures`).
+    pub pictures: [wgpu::Buffer; 2],
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::PipelineLayout,
     scene_group: wgpu::BindGroup,
@@ -336,6 +359,8 @@ pub struct GpuRenderer {
     lamp_scene: LampScene,
     /// What [`glass_limits`] and the glass flags read of the scene.
     glass_scene: GlassScene,
+    /// What [`crate::textures::texture_limits`] says of the scene.
+    texture_limits: Vec<&'static str>,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -465,7 +490,16 @@ impl GpuRenderer {
         // the card's stack cannot render yet (glass, skin, film, flakes)
         // renders as its opaque part, and says so; one whose program the
         // card cannot run renders as its constants, and says why.
-        let lowered = lower_programs(scene);
+        let mut pictures = CardPictures::of(scene);
+        let on_card = pictures_on(&pictures, &device.limits());
+        let too_large = matches!(on_card, Pictures::TooLarge { .. });
+        let lowered = lower_programs_with(scene, on_card);
+        if too_large {
+            // Nothing of them is uploaded: every material reading one is
+            // refused, and says so.
+            pictures = CardPictures::default();
+            pictures.finish();
+        }
         for (index, refusal) in lowered.iter().enumerate().filter_map(|(i, l)| l.as_ref().err().map(|r| (i, r))) {
             eprintln!("  material {index} renders as its constants on the graphics card for now: {refusal} (docs/07 R3)");
         }
@@ -506,6 +540,8 @@ impl GpuRenderer {
         let program_words = init("program words", bytemuck::cast_slice(&programs.words));
         let program_constants = init("program constants", bytemuck::cast_slice(&programs.constants));
         let program_headers = init("programs", bytemuck::cast_slice(&programs.headers));
+        let texture_texels = init("texture texels", bytemuck::cast_slice(&pictures.texels));
+        let texture_header = init("texture header", bytemuck::cast_slice(&pictures.header));
 
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene"),
@@ -526,6 +562,8 @@ impl GpuRenderer {
                 entry(13, storage(true)),
                 entry(14, storage(true)),
                 entry(15, storage(true)),
+                entry(16, storage(true)),
+                entry(17, storage(true)),
             ],
         });
         let environment_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -569,6 +607,8 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 13, resource: program_headers.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 14, resource: uploaded.uvs.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 15, resource: uploaded.tangents.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 16, resource: texture_texels.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 17, resource: texture_header.as_entire_binding() },
             ],
         });
         let environment_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -590,6 +630,7 @@ impl GpuRenderer {
             shadow_far,
             materials,
             programs: [program_words, program_constants, program_headers],
+            pictures: [texture_texels, texture_header],
             pipeline,
             layout,
             scene_group,
@@ -600,6 +641,7 @@ impl GpuRenderer {
             lights,
             lamp_scene: LampScene::of(scene),
             glass_scene: GlassScene::of(scene),
+            texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
         }
     }
 
@@ -616,6 +658,11 @@ impl GpuRenderer {
     /// [`glass_limits`] of the scene this renders, under `config`.
     pub fn glass_limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
         self.glass_scene.limits(config)
+    }
+
+    /// [`crate::textures::texture_limits`] of the scene this renders.
+    pub fn texture_limits(&self, _config: &IntegratorConfig) -> Vec<&'static str> {
+        self.texture_limits.clone()
     }
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
@@ -695,7 +742,13 @@ impl GpuRenderer {
             "the floor's reflection alone is the processor's (tequila-render-cpu's floor.rs); the card renders the whole picture"
         );
         if !self.said_floor_limits.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            for limit in self.floor_limits(&settings.config).iter().chain(&self.lamp_limits(&settings.config)).chain(&self.glass_limits(&settings.config)) {
+            for limit in self
+                .floor_limits(&settings.config)
+                .iter()
+                .chain(&self.lamp_limits(&settings.config))
+                .chain(&self.glass_limits(&settings.config))
+                .chain(&self.texture_limits(&settings.config))
+            {
                 eprintln!("  on the graphics card for now, {limit} (docs/07 R3)");
             }
         }

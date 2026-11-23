@@ -8,7 +8,7 @@ use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::scheduler::ProgressiveSchedule;
 use tequila_render_cpu::{render_pass, Device, EmbreeIntersector, RenderContext};
 use tequila_scene::parity::SET;
-use tequila_scene::snapshot::{snapshot, MeshCache};
+use tequila_scene::snapshot::snapshot;
 
 /// A few of each scene's samples: enough to tell two renders apart.
 const SAMPLES: u32 = 16;
@@ -17,7 +17,7 @@ fn render(scene: &tequila_scene::parity::ParityScene) -> Vec<[f32; 3]> {
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
-    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let (snapshot, _) = snapshot(&document, environment, &mut scene.cache());
     let intersector = EmbreeIntersector::build(&Device::shared().expect("an Embree device"), snapshot).expect("builds");
     let context = RenderContext {
         camera: scene.camera(&document),
