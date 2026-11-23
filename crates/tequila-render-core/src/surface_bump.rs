@@ -10,7 +10,8 @@
 //! - **A height**, in scene units — anything else. Typically a pattern or a
 //!   height map through a Bump node, which gives the 0-to-1 value its depth.
 //!   The slope is measured by evaluating just the bump's part of the graph a
-//!   little either side of the point, along the surface, in world space.
+//!   little way from the point, along the surface two ways, in world space,
+//!   against the height the material's own program found at the point.
 //!
 //! Measuring in world space is what makes a bump mean the same thing on every
 //! part: half a millimetre deep is half a millimetre on a watch and on a car,
@@ -204,9 +205,16 @@ pub fn bumped_normal(
                 shade(program, &scene.textures, &moved, registers, scratch);
                 registers.value(*register).as_float()
             };
-            // Central differences, for the slope *at* the point.
-            let along_t = (height(tangent * step) - height(tangent * -step)) / (2.0 * step);
-            let along_b = (height(bitangent * step) - height(bitangent * -step)) / (2.0 * step);
+            // Forward differences from the height at the point, which the
+            // material's own program has already worked out, as Cycles' bump
+            // takes them (`svm_node_set_bump`): the height evaluated twice
+            // more, where central differences either side took four times -
+            // half of all the time on a product grained by a pattern
+            // (`docs/07` R1). Measured a tenth of a footprint along, the
+            // slope is the one half a step over, which no pixel can show.
+            let here = main.value(*register).as_float();
+            let along_t = (height(tangent * step) - here) / step;
+            let along_b = (height(bitangent * step) - here) / step;
             // Tilted away from uphill.
             (n - tangent * along_t - bitangent * along_b)
                 .try_normalize()
