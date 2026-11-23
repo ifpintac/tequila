@@ -38,18 +38,22 @@ Two gates, in order:
 
 ### 2.1 Measured, 2026-11-17
 
-Ryzen 7 2700X (8 cores, 16 threads), RTX 2060, Windows 11, main plus nothing. 960×540, no denoiser, wall time from queueing the job to the file being written, so it includes scene build and kernel load. Script: R0.1 replaces the one-off used here.
+**Time to a clean picture** (R0.1's bench, `scripts/bench/run.py`): Ryzen 7 2700X (8 cores, 16 threads), RTX 2060 (driver 610.88), Windows 11, `r0-bench` at its first push. 960×540, no denoiser, adaptive sampling off; seconds of rendering until the noise is 1% of full scale in display values; scene setup and the first render's kernel loading not counted.
 
-| Scene | Samples | Cycles, card (OptiX) | Cycles, processor | Tequila (processor) |
+| Scene | Cycles, card (OptiX) | Cycles, processor | Tequila, processor | Tequila ÷ Cycles processor |
 |---|---|---|---|---|
-| Headphones | 64 | 3.6 s | 16.6 s | 28.2 s |
-| | 1,024 | 25.1 s | 122.1 s | 267.7 s |
-| Perfume bottle | 64 | 5.4 s | 17.8 s | 13.4 s |
-| | 1,024 | 20.0 s | 116.1 s | 130.2 s |
-| palma P8 | 64 | 4.0 s | 25.6 s | 13.0 s |
-| | 1,024 | 33.7 s | 301.7 s | 142.4 s |
+| simple_product | 1.1 s | 12.4 s | 33.4 s | 2.7 |
+| cad_assembly | 1.2 s | 10.9 s | 7.2 s | 0.66 |
+| fibre_product | 1.7 s | 19.2 s | 45.2 s | 2.4 |
+| subsurface_product | 2.5 s | 24.9 s | 125.6 s | 5.0 |
+| lamp_lit | 0.7 s | 8.1 s | 26.6 s | 3.3 |
+| Headphones | 0.6 s | 7.4 s | 16.4 s | 2.2 |
+| Perfume bottle | 3.0 s | 22.6 s | 35.5 s | 1.6 |
+| palma P8 | 8.0 s | 74.2 s | 15.3 s | not comparable: a different picture, below |
 
-Read with care: equal samples are not equal noise, and the two renderers stop sampling converged pixels by different rules. R0.1 measures time to equal noise, which is the number the gates use. Against the card, Tequila's renderer is 2.5 to 11 times slower at equal samples. Against Cycles on the same processor it is twice as slow on the Headphones, level on the perfume bottle, and its palma P8 time does not count, for the reason below.
+Against the card, Tequila's renderer is 6 to 50 times slower. Against Cycles on the same processor it is slower on all but one scene, by 1.6 to 5 times, and **mostly not because a sample costs more**: samples per second are about level (2.9 against 3.0 million on `simple_product`, 2.5 against 2.5 on `fibre_product`), but Tequila's renderer needs one and a half to two times the samples for the same noise. So R1 starts with where its noise per sample comes from, not with making samples cheaper. Its peak memory is a quarter of Cycles' (0.14 GB against 0.52 GB on most scenes). Cycles makes the same noise on the processor as on the card, sample for sample, as the same algorithm should.
+
+Before the bench, equal-sample times measured the one-off way, at 1,024 samples: Headphones 25 s on the card, 122 s for Cycles on the processor and 268 s for Tequila's renderer; the perfume bottle 20, 116 and 130 s; palma P8 34, 302 and 142 s.
 
 **The pictures are not all the same picture.** At 1,024 samples, Tequila's renderer against Cycles on the card, in display-linear values from the 8-bit files: Headphones, mean absolute difference 0.0004, correlation 0.997; perfume bottle, 0.0066 and 0.957; **palma P8, 0.0109 and 0.34**. Cycles shows the palma's clear green shell with the screen lit and the boards behind it; Tequila's renderer shows the shell near black, the screen and everything inside it all but gone. That is one of the three samples the application ships, it is not among the differences `docs/05` M9 lists as by design, and nothing in the test suite caught it. It is why R0.4 exists and why G1.4 is the owner's eyes and not a number.
 
@@ -121,13 +125,14 @@ Sizes are relative: S is a pull request or two, M a handful, L a dozen or more.
 ### R0 — Baseline, guardrails, and the look on the processor (M). R0.1 to R0.3 change no behaviour.
 
 **R0.1 The bench measures both engines and equal noise.**
-Extend `tequila --bench` (`crates/tequila-cli/src/main.rs` `benchmark`, `tequila-scene/src/bench.rs`):
-- `--engine tequila|cycles`, `--device cpu|gpu`, `--json FILE`.
-- Scenes: the existing `simple_product` and `cad_assembly`; the three in `assets/samples`; one fibre scene and one subsurface scene (the slow cases of `docs/05` M6); one enclosed scene lit by lamps.
-- For each: seconds to N samples, samples per second, **seconds to equal noise**, peak memory, peak card memory. Equal noise is defined once: relative RMSE against that engine's own 16,384-sample render falls to 0.02; the reference renders are made once and cached beside the bench output.
-- `scripts/bench/run.py` runs every engine and device on a machine and writes one JSON and one chart.
+`tequila --bench NAME` with `--engine tequila|cycles`, `--device CPU|GPU` or `--json FILE`, or with a project file for NAME, measures how long an engine takes to a clean picture (`crates/tequila-cli/src/noise_bench.rs`); without them it is the targets report it always was.
+- *Built (`r0-bench`):* the generated `simple_product` and `cad_assembly`; `fibre_product` (its body velvet with about 1.4 million real fibres), `subsurface_product` (its body translucent) and `lamp_lit` (three lamps, the environment dark), all in `tequila-scene/src/bench.rs`; and any project file, so the three in `assets/samples`. The enclosed room first planned became `lamp_lit`: what it was to measure is light sampling without the environment's help, and a room needs portals, which neither engine has (§8).
+- *Found on the way:* the generated scenes had two floors in one plane, their own ground and the environment's, which a new document has on. They fought, differently in each engine (streaks and black patches in Cycles, rings in Tequila's renderer), and the targets report has measured that since it was written; the environment's ground is now off in them. The targets report also framed its camera on the 80 m ground, so the product was a speck; the engine comparison frames on the product.
+- For each: setup time, samples per second, **seconds to equal noise**, peak memory; `scripts/bench/run.py` adds the card's peak memory where `nvidia-smi` can read it.
+- **Equal noise, as built.** Two renders at the same sample count with seeds 1 and 2, adaptive sampling and the denoiser off, developed as the application develops them; the noise is the RMS difference of the two in display values over √2. Clean is 0.01 of full scale. A short trial render at 16 samples finds the sample count that reaches it, and the measurement is made there, because both renderers' noise falls 5-12% faster than the square-root rule for each fourfold of samples and a time scaled from far off overstates. This replaces the 16,384-sample references first planned here: no references to make or keep, and each engine is measured against itself, so a wrong picture (R0.4's business) does not count for or against its speed.
+- What a Cycles measurement leaves out: the floor reflection the application lays over a Cycles render. It is Tequila's renderer's work and takes no seed, so its noise could not be measured; the row says when a scene had one. Tequila's renderer traces its own floor reflection inside the path, so on such scenes its rows carry work that Cycles' do not.
 
-*Test:* the script runs on both reference machines; its table replaces §2.1 here and joins `docs/05` §4.
+*Test:* `scripts/bench/run.py` runs on both reference machines; its table replaces §2.1 here and joins `docs/05` §4.
 
 **R0.2 Keep the look Cycles makes, before it goes.**
 `scripts/look-refs/make.py` renders, with Cycles on the processor at 1,024 samples: the three samples, the demo scene in plastic, metal and diffuse, every Studio once, and all library presets as 256×256 swatches. The set is zipped, attached to a GitHub release named `look-refs-1`, and its SHA-256 is committed. It is not committed to the repository (size). After R7 this archive is the only record of the look existing projects were made in.
@@ -138,7 +143,7 @@ Extend `tequila --bench` (`crates/tequila-cli/src/main.rs` `benchmark`, `tequila
 One list, in `tequila-render-core/tests/parity_set.rs` or beside it, of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
 
 **R0.4 The look audit, and its repairs, on the processor.**
-Run R0.2's comparison with Tequila's renderer against the Cycles archive over the whole set, and put every picture whose correlation is under 0.98 or whose mean differs by more than 5% on one sheet, worst first, for the owner. For each: find the cause, decide with the owner which engine is right, and fix Tequila's renderer where it is the one that is wrong, each fix with a test that holds it (`docs/05` §2). Start with the palma P8 (§2.1): establish whether its dark shell is light not reaching the inside (shadow rays and the lights behind clear plastic), the shell's medium being applied to everything it encloses, or a bounce limit, by rendering it with each of the three changed in turn. The card is ported from the processor renderer, so a look that is wrong here would be copied faithfully in R3; this step comes first for that reason.
+Run R0.2's comparison with Tequila's renderer against the Cycles archive over the whole set, and put every picture whose correlation is under 0.98 or whose mean differs by more than 5% on one sheet, worst first, for the owner. For each: find the cause, decide with the owner which engine is right, and fix Tequila's renderer where it is the one that is wrong, each fix with a test that holds it (`docs/05` §2). Start with the palma P8 (§2.1): establish whether its dark shell is light not reaching the inside (shadow rays and the lights behind clear plastic), the shell's medium being applied to everything it encloses, or a bounce limit, by rendering it with each of the three changed in turn. Second on the list, found by R0.1's `subsurface_product`: the Translucent type at its defaults (subsurface colour 0.9, 0.75, 0.7; radius 5 cm) comes out pink in Tequila's renderer and mid grey in Cycles, on the same scene and settings; which is right is for the owner to judge against what the type is meant to be. The card is ported from the processor renderer, so a look that is wrong here would be copied faithfully in R3; this step comes first for that reason.
 
 *Exit:* R0.1 numbers recorded for both machines; R0.2 archive published; R0.4's sheet has no picture left that the owner has not either seen fixed or accepted as it is.
 

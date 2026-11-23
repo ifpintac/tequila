@@ -37,6 +37,10 @@ use tequila_render_core::material::Material;
 /// `animation` — measures features that do not exist yet. Adding empty
 /// placeholders for them would produce numbers that look like measurements and
 /// are not.
+///
+/// The last three are `simple_product` made slow in the ways `docs/07` R0.1
+/// asks the engines to be compared on: fibres, light scattering under the
+/// surface, and lamps alone with no environment to light the scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchScene {
     /// §4.1: 200k triangles, 8 materials, 1 HDRI. "The interactivity
@@ -45,15 +49,33 @@ pub enum BenchScene {
     /// §4.1: 5M triangles, 400 parts, heavy instancing. Built to exercise
     /// import, BVH construction and memory rather than shading.
     CadAssembly,
+    /// `simple_product` with its body in velvet grown with real fibres: the
+    /// curves and the fibre BSDF, the slowest case `docs/05` M6 measured.
+    FibreProduct,
+    /// `simple_product` with its body translucent: the random walk under
+    /// the surface.
+    SubsurfaceProduct,
+    /// `simple_product` lit by three lamps alone, the environment dark:
+    /// light sampling, and none of the environment's.
+    LampLit,
 }
 
 impl BenchScene {
-    pub const ALL: [BenchScene; 2] = [BenchScene::SimpleProduct, BenchScene::CadAssembly];
+    pub const ALL: [BenchScene; 5] = [
+        BenchScene::SimpleProduct,
+        BenchScene::CadAssembly,
+        BenchScene::FibreProduct,
+        BenchScene::SubsurfaceProduct,
+        BenchScene::LampLit,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             BenchScene::SimpleProduct => "simple_product",
             BenchScene::CadAssembly => "cad_assembly",
+            BenchScene::FibreProduct => "fibre_product",
+            BenchScene::SubsurfaceProduct => "subsurface_product",
+            BenchScene::LampLit => "lamp_lit",
         }
     }
 
@@ -65,6 +87,9 @@ impl BenchScene {
         match self {
             BenchScene::SimpleProduct => simple_product(),
             BenchScene::CadAssembly => cad_assembly(),
+            BenchScene::FibreProduct => fibre_product(),
+            BenchScene::SubsurfaceProduct => subsurface_product(),
+            BenchScene::LampLit => lamp_lit(),
         }
     }
 }
@@ -199,6 +224,12 @@ pub fn cylinder(radius: f32, height: f32, segments: usize) -> Mesh {
 /// the integrator switches between them, and the object sits on a ground plane
 /// that catches its shadow and bounces light back into it.
 pub fn simple_product() -> SceneDocument {
+    simple_product_with(None).0
+}
+
+/// `simple_product`, with its body in `body_material` when given, and the bus that
+/// built it for whatever is added after.
+fn simple_product_with(body_material: Option<(&'static str, MaterialType, Material)>) -> (SceneDocument, CommandBus) {
     let mut document = SceneDocument::new();
     let mut bus = CommandBus::new();
 
@@ -215,11 +246,11 @@ pub fn simple_product() -> SceneDocument {
     let meshes = vec![body, bezel, screen, lens, button, foot, ground];
     // Eight, as §4.1 specifies: one per visible part plus the ground.
     let materials = vec![
-        (
+        body_material.unwrap_or((
             "Body",
             MaterialType::Plastic,
             Material::plastic(Spectrum::from_srgb_encoded(vec3(0.16, 0.17, 0.19)), 0.28),
-        ),
+        )),
         ("Bezel", MaterialType::Metal, Material::metal(metals::ALUMINIUM, 0.14)),
         (
             "Screen",
@@ -313,6 +344,72 @@ pub fn simple_product() -> SceneDocument {
         },
     )
     .expect("the benchmark scene is well formed");
+    // The ground above is the scene's floor, so the environment's own is
+    // turned off. Left on, as a new document has it, the two lay in the
+    // same plane and fought: streaks in Cycles, rings in Tequila's
+    // renderer, different in each, which the engine comparison counted as
+    // noise.
+    bus.apply(
+        &mut document,
+        Command::SetEnvironmentParameter {
+            parameter: crate::command::EnvironmentParameter::flag(crate::command::EnvParam::GroundEnabled, false),
+        },
+    )
+    .expect("the environment's ground turns off");
+    (document, bus)
+}
+
+/// `simple_product` in velvet with real fibres on its body: twenty to the
+/// square centimetre, 6 mm long, about 1.4 million over the body's 6.8 m².
+pub fn fibre_product() -> SceneDocument {
+    let mut velvet = MaterialType::Velvet.defaults();
+    velvet.fuzz_density = 20.0;
+    velvet.fuzz_length = 0.006;
+    simple_product_with(Some(("Body", MaterialType::Velvet, velvet))).0
+}
+
+/// `simple_product` with a translucent body: light enters it, wanders
+/// about 5 cm, and leaves elsewhere.
+pub fn subsurface_product() -> SceneDocument {
+    let translucent = MaterialType::Translucent.defaults();
+    simple_product_with(Some(("Body", MaterialType::Translucent, translucent))).0
+}
+
+/// `simple_product` with the environment turned down to nothing and three
+/// lamps in its place: a key and a fill panel above, a spot from behind.
+pub fn lamp_lit() -> SceneDocument {
+    use crate::command::{EnvParam, EnvironmentParameter};
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    let (mut document, mut bus) = simple_product_with(None);
+    bus.apply(
+        &mut document,
+        Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 0.0) },
+    )
+    .expect("the environment turns down");
+    // A panel shines along its own +Z and a spot along its -Z
+    // (`LightSettings::to_render_light`): a quarter turn about X one way or
+    // the other points each straight down.
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let lamps = [
+        ("Key", LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, 400.0, vec3(0.9, 2.2, 1.1), panel_down),
+        ("Fill", LightShape::Area { width: 1.0, height: 1.0, disc: true, two_sided: false }, 130.0, vec3(-1.6, 1.6, 0.6), panel_down),
+        ("Rim", LightShape::Spot { inner_degrees: 20.0, outer_degrees: 35.0, falloff: 1.0 }, 100.0, vec3(0.0, 2.4, -1.4), spot_down),
+    ];
+    for (name, shape, lumens, at, down) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(
+            &mut document,
+            Command::AddLight {
+                parent: None,
+                name: name.into(),
+                settings: Box::new(LightSettings { shape, intensity: Intensity::Lumens(lumens), ..LightSettings::default() }),
+            },
+        )
+        .expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
+    }
     document
 }
 
@@ -490,6 +587,25 @@ mod tests {
                 scene.name(),
                 a.difference_from(&b)
             );
+        }
+    }
+
+    #[test]
+    fn the_slow_variants_are_slow_in_the_way_they_say() {
+        let body = |d: &SceneDocument| d.materials.iter().find(|(_, m)| m.name == "Body").map(|(_, m)| m.material().clone()).unwrap();
+        let fibres = fibre_product();
+        let velvet = body(&fibres);
+        let request = tequila_materials::graph::FuzzRequest::of_material(&velvet).expect("fibres");
+        let wanted = crate::fuzz::wanted(6.8, &request);
+        assert!((1.0e6..2.0e6).contains(&wanted), "about 1.4 million fibres, not {wanted}");
+        assert!(body(&subsurface_product()).subsurface_weight > 0.9);
+        let lit = lamp_lit();
+        assert_eq!(lit.tree.iter().filter(|n| n.kind.light().is_some()).count(), 3);
+        assert_eq!(lit.environment.brightness, 0.0);
+        // One floor, the scene's own.
+        assert!(!simple_product().environment.ground.enabled);
+        for document in [fibres, lit] {
+            document.validate().unwrap();
         }
     }
 

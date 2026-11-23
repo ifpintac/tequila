@@ -40,6 +40,7 @@ use std::time::Instant;
 
 mod farm;
 mod mcp;
+mod noise_bench;
 mod self_test;
 mod serve;
 
@@ -53,8 +54,12 @@ struct Options {
     /// A `.tequila` project or a model to import. `None` renders the demo
     /// scene.
     input: Option<String>,
-    /// Measure a reference benchmark scene rather than rendering an image.
-    bench: Option<BenchScene>,
+    /// Measure a reference benchmark scene, or a file, rather than
+    /// rendering an image: a generated scene's name or a path.
+    bench: Option<String>,
+    /// Where `--bench` with an engine appends its measurement, one JSON
+    /// object a line.
+    json: Option<String>,
     material: DemoMaterial,
     roughness: f32,
     preset: Option<LightingPreset>,
@@ -167,6 +172,7 @@ impl Default for Options {
             output: "tequila.png".into(),
             input: None,
             bench: None,
+            json: None,
             material: DemoMaterial::Plastic,
             pins: None,
             sky: None,
@@ -239,7 +245,12 @@ tequila - headless renderer
 usage: tequila [options]
 
       --bench NAME      measure a reference scene instead of rendering:
-                        simple_product | cad_assembly
+                        simple_product | cad_assembly, against the targets.
+                        With --engine, --device or --json, or a project
+                        file for NAME: the time each engine takes to a
+                        clean picture (-w -h -s set the size and samples,
+                        -o keeps the first picture)
+      --json FILE       with --bench: append the measurement to FILE
   -i, --input PATH      a .tequila project, a KeyShot scene (.ksp .bip,
                         rendered with its own camera, lighting and look),
                         or a model to import (.obj .stl .ply .3mf .fbx
@@ -470,13 +481,8 @@ fn parse_args() -> Result<Options, String> {
             "--rows" => options.rows = value()?.parse().map_err(|_| "rows must be a number")?,
             "--tilt" => options.tilt = value()?.parse().map_err(|_| "tilt must be a number")?,
             "-i" | "--input" => options.input = Some(value()?),
-            "--bench" => {
-                let name = value()?;
-                options.bench = Some(
-                    BenchScene::from_name(&name)
-                        .ok_or_else(|| format!("unknown benchmark scene {name:?}"))?,
-                );
-            }
+            "--bench" => options.bench = Some(value()?),
+            "--json" => options.json = Some(value()?),
             "-w" | "--width" => {
                 options.width = Some(value()?.parse().map_err(|_| "width must be a number")?)
             }
@@ -583,8 +589,13 @@ fn main() {
         }
     };
 
-    let outcome = match options.bench {
-        Some(scene) => benchmark(scene),
+    let outcome = match options.bench.as_deref() {
+        // The targets report, as before, unless an engine, a file or
+        // `--json` asks for the comparison of engines.
+        Some(name) => match BenchScene::from_name(name) {
+            Some(scene) if options.cycles.is_none() && options.json.is_none() && options.device.is_none() => benchmark(scene),
+            _ => noise_bench::run(&options, name),
+        },
         None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
         None if options.self_test => test_this_computer(&options),
         None if options.substance_info.is_some() => substance_info(options.substance_info.as_deref().unwrap_or_default()),
