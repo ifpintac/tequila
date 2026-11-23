@@ -4006,6 +4006,14 @@ impl Builder<'_> {
         let diffuse_base = if sheet {
             let rest = self.float_op(shader, "subtract", num(1.0), subsurface)?;
             self.apply(shader, &NodeKind::Multiply, &[base, rest], 0)?
+        } else if !transmissive && (m.subsurface_weight > 0.0 || driven.contains_key(&Param::SubsurfaceWeight)) {
+            // A solid's walk scatters with the principled shader's base
+            // colour: Blender 4's has no colour of its own for it. Tequila's
+            // has, its subsurface colour, so the base Cycles is given is
+            // that, as far as the part scatters. Given the base colour alone,
+            // the Translucent preset's pink body rendered grey.
+            let colour = value(Param::SubsurfaceColor, Value::Color(m.subsurface_color));
+            self.apply(shader, &NodeKind::Mix, &[base, colour, subsurface], 0)?
         } else {
             base
         };
