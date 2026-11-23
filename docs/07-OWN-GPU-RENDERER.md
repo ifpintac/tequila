@@ -1,8 +1,10 @@
-# 07 — Tequila's renderer on the graphics card, and retiring Cycles
+# 07 — Tequila's renderer on the graphics card, and the default engine
 
-The plan for making Tequila's own renderer the only renderer: what has to be true before Cycles can go, the decisions already taken, and the work in order, each step with its test.
+The plan for making Tequila's own renderer the default renderer: what has to be true before it replaces Cycles as the default, the decisions already taken, and the work in order, each step with its test.
 
-Written 2026-11-17 against main at `356836f0`. It supersedes the "Decided 2026-10-11: the graphics card is Cycles'" note in `docs/05` M9 as the direction of travel; that note stays true as a description of the build until stage R7 lands.
+**Cycles stays** (owner, 2026-11-17). It remains in Tequila as an engine anyone can choose; it stops being the default. Nothing in this plan removes it.
+
+Written 2026-11-17 against main at `356836f0`. It supersedes the "Decided 2026-10-11: the graphics card is Cycles'" note in `docs/05` M9 as the direction of travel; that note stays true as a description of the build until stage R6 lands.
 
 ---
 
@@ -16,7 +18,7 @@ Written 2026-11-17 against main at `356836f0`. It supersedes the "Decided 2026-1
 
 ---
 
-## 1. The goal, and what "Cycles is not needed" means
+## 1. The goal, and what "Cycles is not needed by default" means
 
 Cycles does one job nothing else in Tequila does: it renders on the graphics card. Everything else it does, Tequila's renderer does already, and several things only Tequila's renderer does (§2.2). So the goal is one sentence: **Tequila's renderer runs on the graphics card, makes the same picture as it does on the processor, and is at least as fast as Cycles on every machine Cycles serves today.**
 
@@ -30,7 +32,7 @@ Two gates, in order:
 5. Reach: every class of card in the device matrix (R5.3) has a self-test report that passes, or is listed as an accepted loss.
 6. Stability: no picture ever waits silently. Opening the Rendered view on a machine that has never run it shows a picture within 1 s (from the processor) and the graphics card's within 5 s.
 
-**G2 — Cycles is removed.** G1 has shipped in one feature update with Cycles still selectable, no open report says "only Cycles can do this", and the owner says go.
+There is no second gate. Cycles is not removed: after G1 it is the second engine, chosen in the engine menu, as Tequila's renderer is today.
 
 ---
 
@@ -134,10 +136,13 @@ Sizes are relative: S is a pull request or two, M a handful, L a dozen or more.
 
 *Test:* `scripts/bench/run.py` runs on both reference machines; its table replaces §2.1 here and joins `docs/05` §4.
 
-**R0.2 Keep the look Cycles makes, before it goes.**
-`scripts/look-refs/make.py` renders, with Cycles on the processor at 1,024 samples: the three samples, the demo scene in plastic, metal and diffuse, every Studio once, and all library presets as 256×256 swatches. The set is zipped, attached to a GitHub release named `look-refs-1`, and its SHA-256 is committed. It is not committed to the repository (size). After R7 this archive is the only record of the look existing projects were made in.
+**R0.2 Keep the look Cycles makes.**
+The pictures Cycles makes of what Tequila ships, rendered once and kept: the record of the look existing projects were made in, which does not move when Cycles is upgraded. A difference from it is flagged, not failed: the owner decides whether Tequila or Cycles is right (R0.4).
+- *As built:* `scripts/look-refs/looks.py make` renders, with Cycles, through the command line's render (the render queue's own, with each project's look and denoising), at 1,024 samples: the three samples and the demo scene in plastic, metal and diffuse at 960×540, every Studio applied to the Headphones, and every library preset on a ball 5 cm across seen as the library's previews see theirs, at 256×256.
+- *Made 2026-11-17:* 623 pictures (610 presets, 7 Studios, 3 samples, 3 demo), by Cycles on the RTX 2060 (OptiX; it renders the same pictures as on the processor, sample for sample, R0.1), from main's renderer, in 49 minutes. `look-refs-1.zip`, 39 MB, is on a **draft** release of the repository, which only its writers can see and which starts no release build and no Discord announcement; it must never be published. Its SHA-256 is in `scripts/look-refs/look-refs-1.sha256`, and `compare` refuses a zip that does not match.
+- The first plan put it on a published release named `look-refs-1`; the repository is public, and publishing any release builds the Mac and Linux packages and announces them on Discord.
 
-*Test:* `scripts/look-refs/compare.py` fetches the archive and reports, per picture, the mean absolute difference and correlation against any engine; run against Cycles itself it reports zero.
+*Test:* `scripts/look-refs/looks.py compare --refs look-refs-1.zip --engine cycles` reports correlation 1.000 and no difference against Cycles itself; with `--engine tequila`, the default, it reports Tequila's renderer against the look, worst first, with sheets of the pictures that differ (R0.4's input).
 
 **R0.3 Name the parity set.**
 One list of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
@@ -249,20 +254,19 @@ Each item is: port to WGSL, differential tests for its functions (R2.4), its sce
 
 - **R6.1 Settings keep their meaning.** In both of Tequila's backends: bounce limits per kind (diffuse, glossy, transmission, volume) beside the existing total and transmission limits; Filter Glossy mapped onto the existing roughness regularisation; direct and indirect clamps apart (`RenderSettings::clamp_direct` is passed to Cycles only today); the two caustics switches mapped onto Tequila's caustics settings. The "Advanced (Cycles)" fold in `app/src/lighting_tab.rs` and `render_window.rs` loses the word Cycles.
 - **R6.2 The look sheet.** For the R0.2 set plus twenty library materials on the owner's own models: Cycles (from the archive), Tequila on the card, and their difference, side by side on one page. The owner decides (G1.4).
-- **R6.3 The switch.** `RenderEngine`'s default becomes `TequilaGpu`. A project saved with `cycles-gpu` or `cycles-cpu` opens with Tequila unless Preferences says "Use Cycles (legacy)". The CLI, farm and network keep accepting `cycles` and say what they used instead.
+- **R6.3 The switch.** `RenderEngine`'s default becomes `TequilaGpu`: new projects, and the CLI, farm and network when no engine is given. A project saved with `cycles-gpu` or `cycles-cpu` opens with Cycles, as saved, so no existing project changes its look on opening; switching is one choice in the engine menu. Cycles stays in the menu, not labelled "legacy".
 
 *Exit:* G1, and the owner's word.
 
-### R7 — Cycles is removed (M)
+### R7 — Cycles stays as the second engine (S)
 
-After G2. In one pull request per bullet:
-- The engine: `native/cycles`, `crates/tequila-render-cycles`, `app/src/cycles_view.rs`, the Cycles arms in `orchestrator.rs`, `batch.rs`, `render_window.rs`, `lighting_tab.rs`, `main.rs`, `tequila-cli` and `self_test.rs`.
-- The build: the Cycles steps and kernel downloads in `.github/workflows/release-*.yml`, `scripts/package-*`, `native/cycles/build-cycles.*`.
-- The tests: each of the dual-engine tests in `batch.rs` either becomes a comparison against the R0.2 archive, where it guards a look, or goes.
-- The documents: `docs/01` §10's and `docs/05` M9's notes rewritten as built; `docs/MACOS_PORT.md`; `THIRD_PARTY_LICENSES.md` loses the Cycles library but **keeps "Ported code and data"**, since the algorithms ported from Cycles remain.
-- Project files and the command line go on reading the `cycles` keys.
+Not a removal (owner, 2026-11-17). After R6, Cycles is kept working as a choice:
+- Its build, kernels and packaging stay in the release workflows, and each Cycles upgrade stays its own pull request.
+- The dual-engine tests in `batch.rs` stay.
+- A Cycles upgrade renders a new look archive (`look-refs-N`) and compares it with the last: a change in Cycles' look is a finding for the owner, like one in Tequila's.
+- `docs/01` §10 and `docs/05` M9 say Tequila is the default and Cycles the second engine.
 
-*Test:* installer size and release build time before and after, stated in the release notes.
+*Test:* both engines render the R0.2 set from the release build on both reference machines.
 
 ---
 
@@ -277,7 +281,7 @@ After G2. In one pull request per bullet:
 | χ² on the card | the existing sampling tests against the WGSL lobes | CI, software Vulkan |
 | Parity set | card against processor, 0.002 mean, 0.1% of pixels over 0.02 | both machines, each pull request |
 | Library | all presets correlate 0.99, card against processor | both machines, R3 exit and after |
-| Look archive | any engine against Cycles' recorded look | on request, R6.2 and after R7 |
+| Look archive | any engine against Cycles' recorded look | on request, R6.2, and on each Cycles upgrade |
 | Bench | the gates' numbers | both machines, each stage exit |
 | Never a silent wait | first picture within 1 s; fallback on a lost device | CI |
 | Self-test | the card's picture is the processor's | users' machines |
