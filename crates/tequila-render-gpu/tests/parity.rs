@@ -17,6 +17,15 @@ use tequila_render_gpu::transport::{FrameSettings, GpuRenderer};
 use tequila_scene::parity;
 use tequila_scene::snapshot::{snapshot, MeshCache};
 
+/// The card's renderer for a scene, one built at a time. Each build compiles
+/// the transport kernel; when it has changed, that compile is cold and takes
+/// gigabytes, and the suite has died with a dozen of them at once.
+fn renderer(gpu: tequila_render_gpu::GpuDevice, snapshot: &tequila_render_core::scene::SceneSnapshot) -> GpuRenderer {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    GpuRenderer::new(gpu, snapshot)
+}
+
 #[test]
 fn the_grey_product_is_the_processors_picture() {
     same_picture("grey_product");
@@ -78,14 +87,33 @@ fn lamps_in_view_are_the_processors_picture() {
     same_picture("lamps_in_view");
 }
 
+/// A picture to render on both: a scene, the camera it is seen from, and
+/// how it is rendered.
+struct Shot {
+    name: String,
+    document: tequila_scene::SceneDocument,
+    camera: tequila_render_core::camera::Camera,
+    width: usize,
+    height: usize,
+    samples: u32,
+    seed: u32,
+}
+
 fn same_picture(name: &str) {
-    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
     let scene = parity::scene(name).expect("the parity set has it");
     let document = scene.document();
+    let camera = scene.camera(&document);
+    same_shot(Shot { name: scene.name.to_string(), document, camera, width: scene.width, height: scene.height, samples: scene.samples, seed: scene.seed });
+}
+
+fn same_shot(scene: Shot) {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let name = scene.name.as_str();
+    let document = &scene.document;
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
     let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
-    let camera = scene.camera(&document);
+    let camera = scene.camera;
     let config = document.lighting.config();
 
     // Nothing in the set is a case the card renders otherwise.
@@ -94,7 +122,7 @@ fn same_picture(name: &str) {
     assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
 
     let started = std::time::Instant::now();
-    let mut renderer = GpuRenderer::new(gpu, &snapshot);
+    let mut renderer = renderer(gpu, &snapshot);
     // The processor adds the card's samples up, as it adds up its own: the
     // comparison is of the paths alone.
     renderer.accumulate_on_card = false;
@@ -166,6 +194,34 @@ fn same_picture(name: &str) {
             std::fs::write(std::path::Path::new(&folder).join(format!("{}-{name}-alpha.f32", scene.name)), alpha).expect("writes");
         }
     }
+    // TEQUILA_PARITY_PNG=folder: both pictures to look at, exposed alike
+    // (the brightest hundredth of the processor's at white), and their
+    // difference ten times over.
+    if let Ok(folder) = std::env::var("TEQUILA_PARITY_PNG") {
+        let mut levels: Vec<f32> = processor.pixels().iter().map(|p| p.mean().max_component()).collect();
+        levels.sort_by(f32::total_cmp);
+        let white = levels[levels.len() * 99 / 100].max(1e-6);
+        let byte = |v: f32| ((v / white).clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0 + 0.5) as u8;
+        let save = |file: &str, rgb: &dyn Fn(usize) -> [u8; 3]| {
+            let rgba: Vec<u8> = (0..card.pixels().len()).flat_map(|i| {
+                let [r, g, b] = rgb(i);
+                [r, g, b, 255]
+            }).collect();
+            let frame = tequila_texture::video::Frame { width: scene.width, height: scene.height, rgba, seconds: 0.0 };
+            tequila_texture::video::save_png(&frame, &std::path::Path::new(&folder).join(file)).expect("writes");
+        };
+        for (which, buffer) in [("card", &card), ("processor", &processor)] {
+            save(&format!("{}-{which}.png", scene.name), &|i| {
+                let c = buffer.pixels()[i].mean();
+                [byte(c.r), byte(c.g), byte(c.b)]
+            });
+        }
+        save(&format!("{}-difference.png", scene.name), &|i| {
+            let (a, b) = (card.pixels()[i].mean(), processor.pixels()[i].mean());
+            let d = |x: f32, y: f32| byte((x - y).abs() * 10.0);
+            [d(a.r, b.r), d(a.g, b.g), d(a.b, b.b)]
+        });
+    }
     let pixels = card.pixels().len();
     let mean = sum / (pixels * 3) as f64;
     let share = far as f64 / pixels as f64;
@@ -186,6 +242,9 @@ fn same_picture(name: &str) {
         worst.0,
         worst.1
     );
+    if std::env::var("TEQUILA_PARITY_REPORT_ONLY").is_ok() {
+        return;
+    }
     assert!(mean < 0.002, "{name}: the mean absolute difference is {mean:.6}, not under 0.002");
     assert!(share <= 0.001, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
     // A sample's coverage is all or nothing where a shadow catcher's shadow
@@ -216,7 +275,7 @@ fn adding_up_on_the_card_is_adding_up_on_the_processor() {
         clamp_direct: None,
         clamp_indirect: None,
     };
-    let mut renderer = GpuRenderer::new(gpu, &snapshot);
+    let mut renderer = renderer(gpu, &snapshot);
     let mut on_card = Framebuffer::new(scene.width, scene.height);
     // In two passes, so the sums go to the card and come back between them.
     renderer.render_pass(&mut on_card, &settings, scene.samples / 2);
@@ -236,4 +295,140 @@ fn adding_up_on_the_card_is_adding_up_on_the_processor() {
     let mean = sum / on_card.pixels().len() as f64;
     eprintln!("on the card against on the processor: mean |difference| {mean:.2e}, worst {worst:.2e}");
     assert!(mean < 1e-5 && worst < 0.01, "adding up on the card differs: mean {mean:.2e}, worst {worst:.2e}");
+}
+
+/// The Headphones sample (`assets/samples/Headphones.tequila`): its five
+/// graph materials - leather, the brushed stainless hairline that draws the
+/// anisotropy's tangent, the rest grained by noise into their bump - run as
+/// programs on the card (`docs/07` R3, stage 1), from its own camera, at the
+/// parity set's size, samples and seed.
+#[test]
+fn the_headphones_are_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let loaded = tequila_format::load(&path).expect("the Headphones sample loads");
+    let document = loaded.document;
+    let camera = document.cameras.active().camera;
+    // Every one of its graphs is one the card runs.
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snap, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let lowered = tequila_render_gpu::transport::lower_programs(&snap);
+    let refused: Vec<String> = lowered.iter().enumerate().filter_map(|(i, l)| l.as_ref().err().map(|why| format!("material {i}: {why}"))).collect();
+    let runs = lowered.iter().filter(|l| matches!(l, Ok(Some(_)))).count();
+    eprintln!("Headphones: {runs} materials run as programs on the card");
+    assert!(refused.is_empty(), "the card refuses: {refused:?}");
+    same_shot(Shot { name: "headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7 });
+}
+
+/// A preset wall: the Headphones' parts and camera, every material of it
+/// swapped for a preset of the standard library that the card runs as a
+/// program - one opaque on the card's stack, glowing nowhere, with no
+/// cutout and no fibres - spread over the library by `variant`. Their
+/// rounded edges are taken off, as the card has no Bevel yet.
+fn preset_wall(variant: usize) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let runnable: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            matches!(tequila_render_gpu::program::lower(&program), Ok(Some(_)))
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.emission_luminance <= 0.0
+                && m.geometry_opacity >= 0.999
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    let stride = (runnable.len() / (2 * keys.len()).max(1)).max(1);
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &runnable[((2 * j + variant) * stride) % runnable.len()];
+        let mut definition = entry.definition();
+        definition.graph.material_mut().edge_radius = 0.0;
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, definition);
+    }
+    eprintln!("preset wall {variant}: {}", names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: format!("preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7 });
+}
+
+#[test]
+fn a_preset_wall_is_the_processors_picture() {
+    preset_wall(0);
+}
+
+#[test]
+fn another_preset_wall_is_the_processors_picture() {
+    preset_wall(1);
+}
+
+/// Which presets of the walls the card renders otherwise: each swapped in
+/// alone. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity
+/// -- --ignored --nocapture one_by_one`.
+#[test]
+#[ignore]
+fn the_preset_walls_one_by_one() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let original = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let runnable: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            matches!(tequila_render_gpu::program::lower(&program), Ok(Some(_)))
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.emission_luminance <= 0.0
+                && m.geometry_opacity >= 0.999
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = original.materials.keys().collect();
+    let stride = (runnable.len() / (2 * keys.len()).max(1)).max(1);
+    for variant in 0..2 {
+        for (j, key) in keys.iter().enumerate() {
+            let entry = &runnable[((2 * j + variant) * stride) % runnable.len()];
+            let mut document = original.clone();
+            let mut definition = entry.definition();
+            definition.graph.material_mut().edge_radius = 0.0;
+            document.materials.insert_with_key(*key, definition);
+            let camera = document.cameras.active().camera;
+            eprint!("{} on {key:?}: ", entry.name);
+            same_shot(Shot { name: format!("one_{variant}_{j}"), document, camera, width: 160, height: 90, samples: 128, seed: 7 });
+        }
+    }
+}
+
+/// A preset on the Headphones' cups as its program and as its constants
+/// alone: whether what the card renders otherwise is the program's or the
+/// surface's. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 TEQUILA_PRESETS=..
+/// cargo test --test parity -- --ignored --nocapture program_or_surface`.
+#[test]
+#[ignore]
+fn a_preset_as_program_or_surface() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let original = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let key = original.materials.keys().nth(12).expect("the cups' material");
+    for name in std::env::var("TEQUILA_PRESETS").unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let Some(entry) = entries.iter().find(|e| e.name == name) else { continue };
+        let program = entry.graph.compile().expect("compiles");
+        eprintln!("{name}: driven {:?}; fuzz {} coat {} metal {} aniso {}", program.driven.iter().map(|(p, _)| p.label()).collect::<Vec<_>>(), program.constants.fuzz_weight, program.constants.coat_weight, program.constants.base_metalness, program.constants.specular_roughness_anisotropy);
+        for constant in [false, true] {
+            let mut document = original.clone();
+            let mut definition = entry.definition();
+            if constant {
+                definition.graph = tequila_materials::graph::MaterialGraph::from_material(program.constants.clone());
+            }
+            definition.graph.material_mut().edge_radius = 0.0;
+            document.materials.insert_with_key(key, definition);
+            let camera = document.cameras.active().camera;
+            eprint!("  {}: ", if constant { "constants" } else { "program" });
+            same_shot(Shot { name: format!("pos_{constant}"), document, camera, width: 160, height: 90, samples: 128, seed: 7 });
+        }
+    }
 }

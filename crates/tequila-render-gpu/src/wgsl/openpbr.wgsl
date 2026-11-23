@@ -73,7 +73,10 @@ struct GpuMaterial {
     fuzz_weight: f32,
     fuzz_roughness: f32,
     geometry_occlusion: f32,
-    _pad: vec2<f32>,
+    // The anisotropic frame's turn, which the integrator reads, not the
+    // stack.
+    specular_rotation: f32,
+    _pad: f32,
     // Material::emission, in nits; w 1 where the material is_emissive. Not
     // the stack's: the integrator reads it.
     emission: vec4<f32>,
@@ -576,6 +579,9 @@ struct ReflectionSample {
     // and the part of its value the lobes other than the diffuse give.
     seen: f32,
     glossy: vec3<f32>,
+    // The lobe it took (LOBE_*): a bounce off the diffuse one is a diffuse
+    // ray, any other a glossy one (the integrator's Seen).
+    slot: u32,
 };
 
 // sample_reflection: a lobe chosen by `uc` against the probabilities, `uc`
@@ -625,7 +631,7 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
     if (s.is_delta) {
         let through = openpbr_attenuation(b, openpbr_depth(chosen), wo, s.wi);
         let f = s.f * (b.scales[chosen] * (b.weights[chosen] * through / probability));
-        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true), roughness, 0.0, f);
+        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true), roughness, 0.0, f, chosen);
     }
     let densities = openpbr_densities(b, wo, s.wi, up_to, passed_from);
     if (densities.x <= 0.0) {
@@ -635,7 +641,7 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
     if (all(value.total == vec3<f32>(0.0))) {
         return none;
     }
-    return ReflectionSample(LobeSample(true, s.wi, value.total, densities.x, false), roughness, densities.y, value.glossy);
+    return ReflectionSample(LobeSample(true, s.wi, value.total, densities.x, false), roughness, densities.y, value.glossy, chosen);
 }
 
 fn openpbr_sample(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {

@@ -7,6 +7,7 @@
 use std::mem::{offset_of, size_of};
 use tequila_render_gpu::lights::{GpuLight, GpuLightNode};
 use tequila_render_gpu::material::GpuMaterial;
+use tequila_render_gpu::program::GpuProgram;
 use tequila_render_gpu::scene::{GpuCatcher, GpuInstance, GpuMesh};
 use tequila_render_gpu::transport::{FrameParams, PixelSums};
 use tequila_render_gpu::shader;
@@ -41,8 +42,14 @@ macro_rules! layout {
 fn records_have_one_layout_on_both_sides() {
     let source = shader::source("scene");
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
-    layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count });
-    layout!(&module, GpuInstance { object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, _pad });
+    layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count, uv_base, tangent_base, _pad, bounds_min, bounds_max });
+    layout!(
+        &module,
+        GpuInstance {
+            object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, _pad, object_color, inv_length_scale,
+            scale, object_random, object_number,
+        }
+    );
     layout!(
         &module,
         GpuCatcher {
@@ -60,7 +67,7 @@ fn records_have_one_layout_on_both_sides() {
             env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, mode,
             off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
             regularization_start, regularization_roughness, off_marginal, off_upward, env_upward_sum, shadows,
-            ground_illumination, light_count, light_hierarchy, lamp_flags, _pad1, _pad2,
+            ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, _pad2,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });
@@ -71,7 +78,7 @@ fn records_have_one_layout_on_both_sides() {
         GpuMaterial {
             base_color, metal_n, metal_k, specular_color, coat_color, fuzz_color, base_weight, base_metalness,
             base_diffuse_roughness, specular_weight, specular_roughness, specular_roughness_anisotropy, specular_ior,
-            coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, _pad,
+            coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, specular_rotation, _pad,
             emission,
         }
     );
@@ -86,4 +93,10 @@ fn records_have_one_layout_on_both_sides() {
         }
     );
     layout!(&module, GpuLightNode { centre, axis, cos_o, sin_o, cos_e, distant, left, right, parent, light });
+    let source = shader::source("program");
+    let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+    layout!(
+        &module,
+        GpuProgram { main_start, main_end, bump_start, bump_end, constants, writes_start, writes_count, bump_here, bump_height, tangent, flags, _pad }
+    );
 }

@@ -21,6 +21,7 @@ tequila-render-core = { path = "../tequila-render-core" }
 tequila-texture = { path = "../tequila-texture" }
 
 [dev-dependencies]
+tequila-format = { path = "../tequila-format" }
 naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out", "msl-out"] }
 tequila-scene = { path = "../tequila-scene" }
 tequila-render-cpu = { path = "../tequila-render-cpu" }

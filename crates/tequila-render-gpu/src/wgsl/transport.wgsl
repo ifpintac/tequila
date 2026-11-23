@@ -15,16 +15,22 @@
 //#include environment
 //#include openpbr
 //#include lamps
+//#include program
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 // The shadow catchers (scene.rs's GpuCatcher), by an instance's `catcher`.
 @group(0) @binding(7) var<storage, read> scene_catchers: array<GpuCatcher>;
+// Where each material's program is (program.rs's GpuProgram), by material.
+@group(0) @binding(13) var<storage, read> scene_programs: array<GpuProgram>;
 
 struct Surface {
     position: vec3<f32>,
     magnitude: f32,
     geometric: vec3<f32>,
     shading: vec3<f32>,
+    // Whether the ray met the back of the triangle (Hit::is_backface): set
+    // by facing, which turns both normals to it.
+    backfacing: bool,
 };
 
 // The hit as Embree's resolve builds it (embree.rs): the point from the
@@ -203,13 +209,10 @@ fn is_finite(x: f32) -> bool {
 }
 
 fn sanitized(c: vec3<f32>) -> vec3<f32> {
-    var out = c;
-    for (var i = 0u; i < 3u; i++) {
-        let v = c[i];
-        // Not finite, or not above zero: nothing.
-        out[i] = select(0.0, v, v > 0.0 && v < 3.4e38);
-    }
-    return out;
+    // Not finite, or not above zero: nothing. Lane by lane without a
+    // run-time index into the vector, which this driver has written to the
+    // wrong lane inside a loop (program.wgsl).
+    return select(vec3<f32>(0.0), c, (c > vec3<f32>(0.0)) & (c < vec3<f32>(3.4e38)));
 }
 
 // ic:215: a bound on the crossings of a path, rather than a budget spent
@@ -260,12 +263,16 @@ struct PathState {
     // processor's infinity.
     least_pdf: f32,
     seen: SeenFrom,
+    // What kind of ray the segment is (RAY_*), for the Light Path node: the
+    // camera's, the floor's reflection's first (a glossy one), or after a
+    // diffuse or a glossy bounce.
+    ray: u32,
 };
 
 fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, catcher_view: bool) -> PathState {
     var seen: SeenFrom;
     seen.valid = false;
-    return PathState(origin, direction, vec3<f32>(0.0), vec3<f32>(1.0), vec3<f32>(0.0, 1.0, 0.0), 0.0, false, true, catcher_view, 0u, 0u, max_bounces, 3.0e38, seen);
+    return PathState(origin, direction, vec3<f32>(0.0), vec3<f32>(1.0), vec3<f32>(0.0, 1.0, 0.0), 0.0, false, true, catcher_view, 0u, 0u, max_bounces, 3.0e38, seen, select(RAY_GLOSSY, RAY_CAMERA, catcher_view));
 }
 
 // ic:1259-1324: the sky, weighed against having been sampled. What it adds
@@ -288,6 +295,7 @@ fn facing(raw: Surface, direction: vec3<f32>) -> Surface {
     if (dot(direction, surf.geometric) > 0.0) {
         surf.geometric = -surf.geometric;
         surf.shading = -surf.shading;
+        surf.backfacing = true;
     }
     if (dot(surf.shading, surf.geometric) <= 0.0) {
         surf.shading = surf.geometric;
@@ -433,6 +441,197 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
     return direct;
 }
 
+// ---- The material at a point -------------------------------------------
+
+// Vec3 / f32 as tequila-core has it: times the reciprocal.
+fn vec_over(v: vec3<f32>, s: f32) -> vec3<f32> {
+    return v * (1.0 / s);
+}
+
+// A hit triangle's corners, as indices into its mesh.
+fn corners_of(mesh: GpuMesh, primitive: u32) -> vec3<u32> {
+    let first = mesh.first_index + 3u * primitive;
+    return vec3<u32>(scene_indices[first], scene_indices[first + 1u], scene_indices[first + 2u]);
+}
+
+fn mesh_uv(mesh: GpuMesh, i: u32) -> vec2<f32> {
+    let k = 2u * (mesh.uv_base + i);
+    return vec2<f32>(scene_uvs[k], scene_uvs[k + 1u]);
+}
+
+// How the surface moves per unit of u and of v, in world space
+// (SceneSnapshot::uv_derivatives): per triangle, from its corners and UVs.
+struct Derivatives {
+    ok: bool,
+    dpdu: vec3<f32>,
+    dpdv: vec3<f32>,
+};
+
+fn uv_derivatives(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>) -> Derivatives {
+    var d: Derivatives;
+    d.ok = false;
+    if (mesh.uv_base == NO_DATA) {
+        return d;
+    }
+    let p0 = scene_position(mesh.base_vertex + c.x);
+    let e1 = scene_position(mesh.base_vertex + c.y) - p0;
+    let e2 = scene_position(mesh.base_vertex + c.z) - p0;
+    let t0 = mesh_uv(mesh, c.x);
+    let d1 = mesh_uv(mesh, c.y) - t0;
+    let d2 = mesh_uv(mesh, c.z) - t0;
+    let det = d1.x * d2.y - d1.y * d2.x;
+    if (abs(det) < 1e-20 || !(abs(det) <= 3.4e38)) {
+        return d;
+    }
+    d.dpdu = rows_vector(inst.object_to_world, vec_over(e1 * d2.y - e2 * d1.y, det));
+    d.dpdv = rows_vector(inst.object_to_world, vec_over(e2 * d1.x - e1 * d2.x, det));
+    d.ok = true;
+    return d;
+}
+
+// The mesh's own tangent at a point of the part's space, in world space
+// (SceneSnapshot::tangent_frame, its barycentrics worked out again from
+// the point); w 0 where the mesh has none.
+fn mesh_tangent(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>, object: vec3<f32>) -> vec4<f32> {
+    if (mesh.tangent_base == NO_DATA) {
+        return vec4<f32>(0.0);
+    }
+    let p0 = scene_position(mesh.base_vertex + c.x);
+    let e1 = scene_position(mesh.base_vertex + c.y) - p0;
+    let e2 = scene_position(mesh.base_vertex + c.z) - p0;
+    let d = object - p0;
+    let d11 = cy_dot3(e1, e1);
+    let d12 = cy_dot3(e1, e2);
+    let d22 = cy_dot3(e2, e2);
+    let d31 = cy_dot3(d, e1);
+    let d32 = cy_dot3(d, e2);
+    let det = d11 * d22 - d12 * d12;
+    if (abs(det) < 1e-30) {
+        return vec4<f32>(0.0);
+    }
+    let v = (d22 * d31 - d12 * d32) / det;
+    let w = (d11 * d32 - d12 * d31) / det;
+    let u = 1.0 - v - w;
+    let t0 = scene_tangents[mesh.tangent_base + c.x];
+    let t1 = scene_tangents[mesh.tangent_base + c.y];
+    let t2 = scene_tangents[mesh.tangent_base + c.z];
+    let t = vec3<f32>(u * t0.x + v * t1.x + w * t2.x, u * t0.y + v * t1.y + w * t2.y, u * t0.z + v * t1.z + w * t2.z);
+    return vec4<f32>(rows_vector(inst.object_to_world, t), 1.0);
+}
+
+// Onb::from_normal_tangent: the tangent made square to the normal, or the
+// normal's own frame where it is along it.
+fn frame_along(n: vec3<f32>, tangent: vec3<f32>) -> Frame {
+    let t = tangent - n * cy_dot3(n, tangent);
+    let l2 = cy_dot3(t, t);
+    if (l2 > 0.0 && l2 <= 3.4e38) {
+        let along = vec_over(t, sqrt(l2));
+        return Frame(along, cross(n, along), n);
+    }
+    return frame_of(n);
+}
+
+// integrator.rs anisotropic_frame: along the graph's Tangent where it draws
+// one, else the mesh's tangent, else the UVs' u, else the normal's frame;
+// turned by the rotation, in half turns.
+fn anisotropic_frame(hit: RayIntersection, surf: Surface, n: vec3<f32>, drawn: vec3<f32>, rotation: f32) -> Frame {
+    let inst = scene_instances[hit.instance_custom_data];
+    let mesh = scene_meshes[inst.mesh];
+    let c = corners_of(mesh, hit.primitive_index);
+    var along = drawn;
+    var have = cy_dot3(drawn, drawn) > 1e-12;
+    if (!have) {
+        let t = mesh_tangent(inst, mesh, c, rows_point(inst.world_to_object, surf.position));
+        if (t.w != 0.0) {
+            along = t.xyz;
+            have = true;
+        }
+    }
+    if (!have) {
+        let d = uv_derivatives(inst, mesh, c);
+        if (d.ok) {
+            along = d.dpdu;
+            have = true;
+        }
+    }
+    var f = frame_of(n);
+    if (have) {
+        f = frame_along(n, along);
+    }
+    if (rotation != 0.0) {
+        let sc = cy_sincos(rotation * CY_PI);
+        f = frame_along(n, f.t * sc.y + f.b * sc.x);
+    }
+    return f;
+}
+
+// Where Generated puts a point of the part's space: normalized to the
+// mesh's bounds, 0 to 1, a flat axis at 0.5 (SceneSnapshot::generated_at).
+fn generated_size(h: f32) -> f32 {
+    return select(max(h, 1e-5), 1.0, h == 0.0);
+}
+
+fn generated_at(mesh: GpuMesh, object: vec3<f32>) -> vec3<f32> {
+    let lo = mesh.bounds_min.xyz;
+    let hi = mesh.bounds_max.xyz;
+    let center = (lo + hi) * 0.5;
+    let h = (hi - lo) * 0.5;
+    let half = vec3<f32>(generated_size(h.x), generated_size(h.y), generated_size(h.z));
+    return (object - center) / half * 0.5 + vec3<f32>(0.5);
+}
+
+// The material at `hit`, seen along `direction` by a ray of kind `ray`
+// (ic:1626-1710): the shading point its program reads
+// (SceneSnapshot::shading_point_along), and prog_shade's program, write-back
+// and bump at it.
+fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32) -> ProgShaded {
+    let inst = scene_instances[hit.instance_custom_data];
+    let p = scene_programs[inst.material];
+    let base = scene_materials[inst.material];
+    var s: ProgSurface;
+    s.normal = surf.shading;
+    s.geometric = surf.geometric;
+    var pt: ProgPoint;
+    if ((p.flags & PROGRAM_RUNS) == 0u) {
+        return prog_shade(p, pt, base, s);
+    }
+    let mesh = scene_meshes[inst.mesh];
+    let c = corners_of(mesh, hit.primitive_index);
+    let u = hit.barycentrics.x;
+    let v = hit.barycentrics.y;
+    let w = 1.0 - u - v;
+    pt.object = rows_point(inst.world_to_object, surf.position);
+    pt.scale = inst.scale;
+    let on = rows_normal(inst.object_to_world, surf.shading);
+    pt.object_normal = vec_over(on, sqrt(cy_dot3(on, on)));
+    pt.backfacing = select(0.0, 1.0, surf.backfacing);
+    // Embree's resolve: the corners' UVs, or the barycentrics without.
+    if (mesh.uv_base == NO_DATA) {
+        pt.uv = vec2<f32>(u, v);
+    } else {
+        pt.uv = mesh_uv(mesh, c.x) * w + mesh_uv(mesh, c.y) * u + mesh_uv(mesh, c.z) * v;
+    }
+    pt.object_random = inst.object_random;
+    pt.object_number = inst.object_number;
+    pt.position = surf.position;
+    pt.ray = ray;
+    pt.normal = surf.shading;
+    pt.true_normal = surf.geometric;
+    pt.incoming = -vec_over(direction, sqrt(cy_dot3(direction, direction)));
+    pt.generated = generated_at(mesh, pt.object);
+    pt.object_location = vec3<f32>(inst.object_to_world[0].w, inst.object_to_world[1].w, inst.object_to_world[2].w);
+    pt.object_color = inst.object_color.xyz;
+    // No ray differentials: the footprint widens with the distance alone.
+    s.footprint = (hit.t * frame.pixel_spread) * inst.inv_length_scale;
+    let derivatives = uv_derivatives(inst, mesh, c);
+    s.has_derivatives = derivatives.ok;
+    s.dpdu = derivatives.dpdu;
+    s.dpdv = derivatives.dpdv;
+    s.object_to_world = inst.object_to_world;
+    s.world_to_object = inst.world_to_object;
+    return prog_shade(p, pt, base, s);
+}
+
 // One vertex of a path off an opaque OpenPBR surface: the bounce limit,
 // Filter Glossy, next-event estimation of the sky and the lamps and the
 // bounce, whether it sees, the catcher's view and Russian roulette
@@ -442,7 +641,17 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     if (bounce >= (*st).max_bounces) {
         return false;
     }
-    let f = frame_of(surf.shading);
+    // The material at this point: its program run and its bump applied
+    // (ic:1626-1710), then the frame - along the anisotropy's tangent where
+    // the material is anisotropic (ic:1866-1885).
+    let shaded = material_at(hit, surf, (*st).direction, (*st).ray);
+    let material = shaded.material;
+    var f: Frame;
+    if (material.specular_roughness_anisotropy > 0.0) {
+        f = anisotropic_frame(hit, surf, shaded.normal, shaded.drawn, material.specular_rotation);
+    } else {
+        f = frame_of(shaded.normal);
+    }
     let wo = to_local(f, -(*st).direction);
     if (wo.z <= 0.0) {
         return false;
@@ -454,7 +663,6 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // bounce as Cycles' Filter Glossy blurs it - built again, all its
     // reflections at least that rough (one call site, for the code's size).
     let inst = scene_instances[hit.instance_custom_data];
-    let material = scene_materials[inst.material];
     let floor = select(0.0, frame.regularization_roughness, bounce >= frame.regularization_start);
     var blur = 0.0;
     if ((frame.lamp_flags & LAMPS_IN_MIRRORS) != 0u && frame.regularization_roughness > 0.0) {
@@ -522,9 +730,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         if (!sample.is_delta) {
             density = chosen.seen;
             if ((frame.lamp_flags & LAMPS_FOR_REFLECTIONS) != 0u) {
-                for (var c = 0u; c < 3u; c++) {
-                    glossy[c] = select(0.0, clamp(chosen.glossy[c] / sample.f[c], 0.0, 1.0), sample.f[c] > 0.0);
-                }
+                // Whole vectors, not a lane by a run-time index in a loop:
+                // this driver has written such a lane into the wrong one.
+                glossy = select(vec3<f32>(0.0), clamp(chosen.glossy / sample.f, vec3<f32>(0.0), vec3<f32>(1.0)), sample.f > vec3<f32>(0.0));
             }
         }
         (*st).seen = SeenFrom(true, sample.is_delta, surf.position, surf.geometric, wi_world, density, glossy, inst.instance);
@@ -532,6 +740,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         (*st).seen.valid = false;
     }
     (*st).specular_chain = (*st).specular_chain && sample.is_delta;
+    // What the next vertex is seen by: a diffuse ray off the diffuse lobe,
+    // a glossy one off any other (ic:2323).
+    (*st).ray = select(RAY_GLOSSY, RAY_DIFFUSE, chosen.slot == LOBE_DIFFUSE);
     // ic:2510-2511: through a mirror the catcher is still seen as the camera
     // sees it; off a reflection that is not one, by a draw of the open
     // stream against how near a mirror it is.

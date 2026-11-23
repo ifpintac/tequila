@@ -294,8 +294,8 @@ const MATERIAL_WORDS: usize = std::mem::size_of::<GpuMaterial>() / 4;
 fn material_from_words() -> String {
     let at = |k: usize| format!("inf({k}u)");
     let mut parts: Vec<String> = (0..6).map(|c| format!("vec4<f32>({}, {}, {}, {})", at(4 * c), at(4 * c + 1), at(4 * c + 2), at(4 * c + 3))).collect();
-    parts.extend((24..38).map(at));
-    parts.push(format!("vec2<f32>({}, {})", at(38), at(39)));
+    // The scalars, the anisotropy's rotation and the padding, the emission.
+    parts.extend((24..40).map(at));
     parts.push(format!("vec4<f32>({}, {}, {}, {})", at(40), at(41), at(42), at(43)));
     format!("GpuMaterial({})", parts.join(", "))
 }
