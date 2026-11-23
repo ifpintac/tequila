@@ -122,3 +122,52 @@ fn what_glass_costs_to_compile() {
         eprintln!("{name}: {:.2} s", t.as_secs_f64());
     }
 }
+
+/// What each node family ported after stage 1 costs the kernel's cold
+/// compile, each measured by leaving its arm of the interpreter out. Run by
+/// hand: `cargo test --test compile_time -- --ignored --nocapture nodes`.
+#[test]
+#[ignore]
+fn what_the_new_nodes_cost_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let drop = |arm: &'static str| {
+        move |s: String| {
+            assert!(s.contains(arm), "no {arm:?}");
+            s.replace(arm, "")
+        }
+    };
+    let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
+        ("everything", Box::new(|s| s)),
+        ("no Tequila procedurals", Box::new(drop("            case 25u: { out = tq_instruction(settings, a); }\n"))),
+        ("no Wave", Box::new(drop("            case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }\n"))),
+        ("no measures", Box::new(drop("            case 27u: { out = prog_attribute(settings, a[0], pt); }\n"))),
+        ("no Gabor", Box::new(drop("            case 28u: { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); }\n"))),
+        (
+            "none of them",
+            Box::new(|s: String| {
+                let mut s = s;
+                for arm in [
+                    "            case 25u: { out = tq_instruction(settings, a); }\n",
+                    "            case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }\n",
+                    "            case 27u: { out = prog_attribute(settings, a[0], pt); }\n",
+                    "            case 28u: { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); }\n",
+                ] {
+                    assert!(s.contains(arm), "no {arm:?}");
+                    s = s.replace(arm, "");
+                }
+                s
+            }),
+        ),
+    ];
+    for (i, (name, edit)) in cases.iter().enumerate() {
+        let t = cold_compile_time_edited(&renderer, salt.wrapping_add(i as u32 * 7919), edit.as_ref());
+        eprintln!("{name}: {:.2} s", t.as_secs_f64());
+    }
+}
