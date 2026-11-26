@@ -51,6 +51,7 @@ mod material_tab;
 mod measure_tool;
 mod navigation;
 mod improve_model;
+mod import_dialog;
 mod import_settings;
 mod lighting_offer;
 mod model_units;
@@ -397,6 +398,8 @@ struct TequilaApp {
     /// STEP assembly takes seconds to mesh, and the window stayed frozen
     /// for all of them while it was read here.
     imports: Vec<PendingImport>,
+    /// The import dialog, and the model files waiting their turn at it.
+    import_dialogs: import_dialog::Dialogs,
     /// Imports a script or an AI app asked for over the scripting channel,
     /// read on other threads as `imports` are (`channel::begin_import`).
     script_imports: Vec<channel::PendingImport>,
@@ -1117,6 +1120,7 @@ impl TequilaApp {
             project_tab: ProjectTab::Scene,
             pending_unit: None,
             imports: Vec::new(),
+            import_dialogs: Default::default(),
             script_imports: Vec::new(),
             view_left: None,
             view_moves_by_hand: 0,
@@ -1494,6 +1498,9 @@ struct PendingImport {
     receiver: std::sync::mpsc::Receiver<Result<Arrived, tequila_import::ImportError>>,
     /// When it started, for the status line's running time.
     started: std::time::Instant,
+    /// What the import dialog asked for once it is in; `None` frames the
+    /// camera on the scene, as an import always did.
+    plan: Option<import_dialog::Plan>,
 }
 
 /// What Presentation mode put aside, to put back.
@@ -1934,6 +1941,7 @@ impl eframe::App for TequilaApp {
             self.crash_window.ui(ctx);
         }
         self.self_test.ui(ctx);
+        self.import_dialog_window(ctx);
         self.update_report_window(ctx);
         self.model_units_window(ctx);
         self.lighting_offer_window(ctx);
@@ -3473,6 +3481,9 @@ impl TequilaApp {
                     if ui.add(egui::Button::new("Import model...").shortcut_text(self.key_text(shortcuts::Action::Import))).clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
+                    }
+                    if let Some(said) = import_settings::ask_menu(ui) {
+                        self.project.status = said;
                     }
                     ui.menu_button("Up axis of imports", |ui| {
                         ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
@@ -5550,25 +5561,9 @@ impl TequilaApp {
     /// differ between the two.
     fn handle_file(&mut self, action: Action, path: std::path::PathBuf) {
         match action {
-            Action::Import => {
-                // Read on another thread; `poll_imports` applies it.
-                let (sender, receiver) = std::sync::mpsc::channel();
-                let reading = path.clone();
-                std::thread::spawn(move || {
-                    let prepared = tequila_import::read_file(&reading).and_then(project::PreparedImport::prepare);
-                    let _ = sender.send(prepared.map(Arrived::Prepared));
-                });
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                self.project.status = format!("Importing {name}\u{2026}");
-                self.imports.push(PendingImport {
-                    name,
-                    path,
-                    receiver,
-                    document_epoch: self.project.document_epoch(),
-                    update: None,
-                    started: std::time::Instant::now(),
-                });
-            }
+            // The import dialog, then the import on another thread, which
+            // lands through `poll_imports`.
+            Action::Import => self.begin_import(path),
             // A KeyShot scene opens as a new project: read and divided on
             // another thread, as an import is; `poll_imports` puts it up.
             Action::Open if tequila_import::is_scene_file(&path) => {
@@ -5590,6 +5585,7 @@ impl TequilaApp {
                     document_epoch: self.project.document_epoch(),
                     update: None,
                     started: std::time::Instant::now(),
+                    plan: None,
                 });
             }
             Action::Open => {
@@ -5744,7 +5740,7 @@ impl TequilaApp {
                         self.model_units = units;
                     }
                     self.file_lighting(&pending.name, &report, None);
-                    self.frame_selection();
+                    self.after_import(pending.plan, &before);
                 }
                 Err(error) => self.project.status = format!("{}: {error}", pending.name),
             }
@@ -5888,6 +5884,7 @@ impl TequilaApp {
             document_epoch: self.project.document_epoch(),
             update: Some(roots),
             started: std::time::Instant::now(),
+            plan: None,
         });
     }
 
@@ -5934,6 +5931,7 @@ impl TequilaApp {
             document_epoch: self.project.document_epoch(),
             update: Some(roots),
             started: std::time::Instant::now(),
+            plan: None,
         });
     }
 
@@ -8034,6 +8032,7 @@ mod undo_tests {
             document_epoch: app.project.document_epoch(),
             update: None,
             started: std::time::Instant::now(),
+            plan: None,
         });
         app.poll_imports();
     }

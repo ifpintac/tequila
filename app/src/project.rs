@@ -34,15 +34,24 @@ const HEAVY_TRIANGLES: usize = 250_000;
 pub struct PreparedImport {
     prepared: tequila_import::Prepared,
     converted: Vec<Arc<tequila_render_core::scene::Mesh>>,
+    /// The import dialog's options, which it was prepared with and is
+    /// finished with; `None` for the settings' (`Project::import_options`).
+    options: Option<tequila_import::ImportOptions>,
 }
 
 impl PreparedImport {
     /// Everything of an import that needs no document. Slow on a big model,
     /// so for the import's own thread.
     pub fn prepare(model: tequila_import::ReadModel) -> Result<PreparedImport, tequila_import::ImportError> {
-        let prepared = model.prepare(&tequila_import::ImportOptions::default())?;
+        Self::prepare_with(model, None)
+    }
+
+    /// The same with the import dialog's options: its unit applied here,
+    /// its up axis and floor when it is finished.
+    pub fn prepare_with(model: tequila_import::ReadModel, options: Option<tequila_import::ImportOptions>) -> Result<PreparedImport, tequila_import::ImportError> {
+        let prepared = model.prepare(&options.unwrap_or_default())?;
         let converted = prepared.meshes().iter().map(|mesh| Arc::new(tequila_scene::snapshot::render_mesh_of(mesh))).collect();
-        Ok(PreparedImport { prepared, converted })
+        Ok(PreparedImport { prepared, converted, options })
     }
 }
 
@@ -1021,6 +1030,13 @@ impl Project {
         self.bus.has_unsaved_changes()
     }
 
+    /// A count of the edits, done and undone, that tells one history from
+    /// another ([`CommandBus::changes`]): whether anything was done since a
+    /// moment, as the import dialog asks before a new scene replaces this one.
+    pub fn changes(&self) -> u64 {
+        self.bus.changes()
+    }
+
     /// See [`CommandBus::mark_unsaved`].
     pub fn mark_unsaved(&mut self) {
         self.bus.mark_unsaved();
@@ -1123,12 +1139,12 @@ impl Project {
         ready: PreparedImport,
         parent: Option<tequila_scene::tree::NodeId>,
     ) -> Result<(tequila_import::ImportReport, Option<crate::model_units::ModelUnits>), String> {
-        let PreparedImport { prepared, converted } = ready;
+        let PreparedImport { prepared, converted, options } = ready;
         if let Some((id, bytes)) = &prepared.brep {
             self.document.sources.insert(id.clone(), bytes.clone());
         }
         let name = prepared.name().to_string();
-        let options = self.import_options(true);
+        let options = options.unwrap_or_else(|| self.import_options(true));
         let (command, report) = prepared.finish(&self.document, parent, &options).map_err(|e| e.to_string())?;
         if let Command::Import { payload } = &command {
             for ((key, _), converted) in payload.meshes.iter().zip(converted) {

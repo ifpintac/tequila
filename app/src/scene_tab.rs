@@ -830,6 +830,7 @@ impl SceneTab {
                                 tequila_import::step::Tessellation::Medium => "The default: smooth at a normal distance",
                                 tequila_import::step::Tessellation::High => "For close-ups of curved edges",
                                 tequila_import::step::Tessellation::Ultra => "For extreme close-ups; many triangles",
+                                tequila_import::step::Tessellation::Custom { .. } => "Tolerances of your own",
                             })
                             .clicked()
                         {
