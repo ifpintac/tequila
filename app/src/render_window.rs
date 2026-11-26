@@ -1542,6 +1542,8 @@ fn engine_picker(ui: &mut egui::Ui, settings: &mut RenderSettings) {
         }
         ui.label(egui::RichText::new(format!("{why}.")).small().color(crate::theme::dim()));
     }
+    // Which devices it renders on (Preferences › Rendering).
+    crate::render_devices::render_window_line(ui, settings);
 }
 
 fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {

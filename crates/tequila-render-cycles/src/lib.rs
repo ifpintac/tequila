@@ -12,6 +12,7 @@
 //! nodes) and what the result looks like (the pixels come back scene-linear
 //! and go through Tequila's own develop step, as its renderer's do).
 
+pub mod devices;
 pub mod ffi;
 pub mod media;
 pub mod translate;
@@ -69,13 +70,17 @@ pub fn devices() -> Result<Vec<(String, String, String)>, String> {
     let text = unsafe { std::ffi::CStr::from_ptr((api.fsc_devices)()) }
         .to_string_lossy()
         .into_owned();
-    Ok(text
-        .lines()
+    Ok(parse_devices(&text))
+}
+
+/// The library's list of devices, a line each: "TYPE\tdescription\tid".
+fn parse_devices(text: &str) -> Vec<(String, String, String)> {
+    text.lines()
         .filter_map(|line| {
             let mut parts = line.split('\t');
             Some((parts.next()?.to_string(), parts.next()?.to_string(), parts.next()?.to_string()))
         })
-        .collect())
+        .collect()
 }
 
 /// The kind of graphics card Cycles renders on here, best first: OptiX on an
@@ -197,9 +202,11 @@ pub struct Shader(pub(crate) Node);
 
 impl Session {
     /// A session on `device`: "CPU", "OPTIX", "CUDA", or an id from
-    /// [`devices`]. `kernels` is the folder holding Cycles' `lib/` of GPU
-    /// kernels: by default `TEQUILA_CYCLES_KERNELS`, else the library's own
-    /// folder, which is where a packaged build keeps them.
+    /// [`devices()`] - or several, a line each, from a library that takes
+    /// them ([`devices::has_device_lists`]; [`devices::plan`] makes them).
+    /// `kernels` is the folder holding Cycles' `lib/` of GPU kernels: by
+    /// default `TEQUILA_CYCLES_KERNELS`, else the library's own folder,
+    /// which is where a packaged build keeps them.
     pub fn new(device: &str, threads: usize, kernels: Option<&std::path::Path>) -> Result<Session, String> {
         Session::create(device, threads, kernels, Kind::Final)
     }
@@ -217,6 +224,17 @@ impl Session {
         self.watched
     }
 
+    /// The devices it renders on, as [`devices()`] lists them: (type,
+    /// description, id), one each of several rendering together. `None`
+    /// from a library that cannot say.
+    pub fn devices(&self) -> Option<Vec<(String, String, String)>> {
+        let listed = self.api.fsc_session_devices?;
+        // SAFETY: a live session, and a string the library keeps until the
+        // next call, copied at once.
+        let text = unsafe { std::ffi::CStr::from_ptr(listed(self.raw)) }.to_string_lossy().into_owned();
+        Some(parse_devices(&text))
+    }
+
     /// A live session, for a viewport: it renders continuously, refining one
     /// image, and restarts it at every [`Session::end_edit`].
     pub fn live(device: &str, threads: usize, kernels: Option<&std::path::Path>) -> Result<Session, String> {
@@ -230,11 +248,12 @@ impl Session {
         } else {
             device
         };
-        match Session::create_on(device, threads, kernels, kind) {
+        match (Session::create_on(device, threads, kernels, kind), devices::without_optix(device)) {
             // OptiX needs RTX hardware and a recent driver; CUDA runs on any
-            // NVIDIA card Cycles supports, a little slower.
-            Err(_) if device.eq_ignore_ascii_case("OPTIX") => Session::create_on("CUDA", threads, kernels, kind),
-            result => result,
+            // NVIDIA card Cycles supports, a little slower: the same cards
+            // through CUDA, where OptiX would not start.
+            (Err(_), Some(cuda)) => Session::create_on(&cuda, threads, kernels, kind),
+            (result, _) => result,
         }
     }
 

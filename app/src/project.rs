@@ -308,6 +308,9 @@ impl Project {
                 settings: tequila_scene::render::RenderSettings { output_directory, ..settings },
                 config: self.integrator_config(), style: self.developed_style(&saved.camera), display: self.display_pipeline(),
                 object_names, material_names, layers,
+                // The person's, for this computer, given as it starts
+                // (`TequilaApp::build_job`).
+                devices: Default::default(),
                 fields: self.name_fields(saved.name, configuration, frame),
             };
             self.queued_snapshots.insert(id, job);

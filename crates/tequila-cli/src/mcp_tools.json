@@ -913,7 +913,7 @@
  },
  {
   "name": "tequila_preferences",
-  "description": "Tequila's own settings, as Edit > Preferences shows them, a page at a time. With no arguments, the pages there are. page is one of general, interface, viewport, navigation, keyboard (the shortcuts), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. set and reset answer with what changed. They are the person's own and kept between sessions: change one only when asked to.",
+  "description": "Tequila's own settings, as Edit > Preferences shows them, a page at a time. With no arguments, the pages there are. page is one of general, interface, viewport, navigation, keyboard (the shortcuts), rendering (which processor and graphics cards render: rendering.view_devices and rendering.final_devices, \"auto\" or devices between semicolons, from the setting's options), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. set and reset answer with what changed. They are the person's own and kept between sessions: change one only when asked to.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -925,6 +925,7 @@
       "viewport",
       "navigation",
       "keyboard",
+      "rendering",
       "import",
       "folders",
       "updates"
@@ -946,7 +947,7 @@
      "items": {
       "type": "string"
      },
-     "description": "\"all\", a page (general, interface, viewport, navigation, keyboard, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults."
+     "description": "\"all\", a page (general, interface, viewport, navigation, keyboard, rendering, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults."
     }
    },
    "required": [],

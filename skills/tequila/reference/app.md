@@ -64,13 +64,14 @@ A change answers with what changed, as it now is. The settings come a page at a 
 | `navigation.orbit_speed`, `navigation.pan_speed`, `navigation.zoom_speed` | A number, 1 as it is |
 | `navigation.invert_zoom` | true or false |
 | `navigation.trackpad` | Two fingers: `pan` or `orbit` |
+| `rendering.view_devices`, `rendering.final_devices` | The processor and graphics cards the Rendered view and final renders render on: `auto` (Tequila chooses), or devices between semicolons - `cpu`, `gpu:` and a card's name - as the setting's `options` list the ones in this computer |
 | `import.up_axis` | `file`, `y`, `z`, `x`, `-y`, `-z`, `-x` |
 | `import.blender_lights` | `ask`, `blender`, `tequila` |
 | `folders.screenshots` | A folder's path |
 | `updates.automatic` | true or false |
 
 - All of a `set` are checked before any is taken; a wrong name or value is refused, naming it.
-- `reset` takes `"all"`, a page (`general`, `interface`, `viewport`, `navigation`, `keyboard`, `import`, `folders`, `updates`), one setting, or a list of settings.
+- `reset` takes `"all"`, a page (`general`, `interface`, `viewport`, `navigation`, `keyboard`, `rendering`, `import`, `folders`, `updates`), one setting, or a list of settings.
 - **"The mouse works like in Blender / KeyShot / SolidWorks":** `navigation.preset`.
 - **"Models always come in lying down":** `import.up_axis` `z`.
 

@@ -70,6 +70,7 @@ mod profile;
 mod project;
 mod readout;
 mod recent;
+mod render_devices;
 mod render_frame;
 mod render_window;
 mod scene_tab;
@@ -1381,6 +1382,7 @@ impl TequilaApp {
             gpu_solid: self.gpu_solid(),
             shading: self.shading,
             engine: settings.engine,
+            devices: self.prefs.view_devices.clone(),
             pixels_per_point,
             checker,
             submitted: now,
@@ -3356,10 +3358,14 @@ impl TequilaApp {
             lines.push(resolution);
             lines.push(format!("{} tris   {} instances", image.triangles, image.instances));
             lines.push(format!("first pixels {:.0} ms", image.milliseconds_to_first_pixel));
+            // The cards Cycles renders on, as the view chose them
+            // (`render_devices`), or the processor by its name.
+            let on = self.orchestrator.view_devices();
             let device = match engine {
-                RenderEngine::CyclesGpu if cfg!(target_os = "macos") => "graphics card (Metal)".to_string(),
-                RenderEngine::CyclesGpu => "graphics card".to_string(),
-                RenderEngine::Tequila | RenderEngine::CyclesCpu => self.readout.processor().to_string(),
+                RenderEngine::CyclesGpu if !on.is_empty() && on != "processor" => on,
+                RenderEngine::CyclesGpu if on.is_empty() && cfg!(target_os = "macos") => "graphics card (Metal)".to_string(),
+                RenderEngine::CyclesGpu if on.is_empty() => "graphics card".to_string(),
+                _ => self.readout.processor().to_string(),
             };
             let name = if engine.is_cycles() { "Cycles" } else { "Tequila" };
             lines.push(format!("{name} · {device}{}", if denoised { " · denoised" } else { "" }));
@@ -4544,11 +4550,11 @@ impl TequilaApp {
             ui.spacing_mut().item_spacing.x = 10.0;
             let image = &self.image;
             let engine = if image.shading != orchestrator::Shading::Fast {
-                "Path traced"
+                render_devices::path_traced(image.engine, &self.orchestrator.view_devices())
             } else if self.gpu_solid() {
-                "Graphics card"
+                "Graphics card".to_string()
             } else {
-                "CPU preview"
+                "CPU preview".to_string()
             };
             // The graphics card draws straight to the viewport, leaving no
             // image behind to measure: its size is the viewport's, in pixels.
@@ -7148,7 +7154,8 @@ impl TequilaApp {
 
     /// Turn a queued job into something the batch thread can render.
     fn build_job(&mut self, id: u64) -> Option<batch::BatchJob> {
-        if let Some(job) = self.project.take_queued_snapshot(id) { return Some(job); }
+        // On the devices chosen for final renders as it starts.
+        if let Some(job) = self.project.take_queued_snapshot(id) { return Some(batch::BatchJob { devices: self.prefs.final_devices.clone(), ..job }); }
         if let Some(job) = self.project.queue_mut().get_mut(id) {
             job.state = tequila_scene::render::JobState::Failed;
             job.message = "Scene snapshot unavailable (for example after restarting). Open the source project and queue this render again.".into();
