@@ -267,7 +267,8 @@ mod tests {
         assert_eq!(both.device, "CUDA");
         list.cards[1].cycles = vec![tequila_render_core::devices::CyclesDevice { kind: "HIP".into(), id: "HIP_x".into() }];
         let apart = plan(&list, &keys(&[BIG, SMALL]), Use::Final, true);
-        assert_eq!(apart.device, "CUDA_NVIDIA GeForce RTX 3060_0000:01:00_OptiX");
+        // The only OptiX card left is every OptiX card: by the kind.
+        assert_eq!(apart.device, "OPTIX");
         assert_eq!(apart.keys, keys(&[BIG]));
         assert_eq!(apart.notes.len(), 1);
     }
