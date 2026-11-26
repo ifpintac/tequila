@@ -208,6 +208,11 @@ pub enum Icon {
     Symmetrize,
     OneSide,
     MirrorPick,
+    /// The Render window's zoom, closer and further; and Stop, ending a
+    /// render with the picture it has.
+    ZoomIn,
+    ZoomOut,
+    Stop,
 }
 
 impl Icon {
@@ -357,6 +362,10 @@ impl Icon {
             Icon::Symmetrize => 0xe3b9,
             Icon::OneSide => 0xe12d,
             Icon::MirrorPick => 0xe249,
+            Icon::ZoomIn => 0xe1b5,
+            Icon::ZoomOut => 0xe1b6,
+            // Lucide's square: the stop of every player.
+            Icon::Stop => 0xe16a,
         };
         char::from_u32(code)
     }
@@ -1154,6 +1163,15 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             poly(&[(5.0, 5.5), (2.5, 8.0), (5.0, 10.5)]);
             poly(&[(11.0, 5.5), (13.5, 8.0), (11.0, 10.5)]);
         }
+        Icon::ZoomIn | Icon::ZoomOut => {
+            circle(7.0, 7.0, 5.0);
+            line((10.6, 10.6), (14.0, 14.0));
+            line((4.8, 7.0), (9.2, 7.0));
+            if icon == Icon::ZoomIn {
+                line((7.0, 4.8), (7.0, 9.2));
+            }
+        }
+        Icon::Stop => rounded_fill(3.5, 3.5, 12.5, 12.5, 1.5),
     }
 }
 
@@ -1727,7 +1745,7 @@ mod tests {
             Icon::SelectMenu, Icon::Pipette, Icon::Checker,
             Icon::StraightLine, Icon::QuadGrid, Icon::Rectangle, Icon::ProjectFaces,
             Icon::Relax, Icon::Circle, Icon::Grow, Icon::Shrink, Icon::Weld, Icon::MatchSeams, Icon::CutAngle,
-            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick,
+            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick, Icon::ZoomIn, Icon::ZoomOut, Icon::Stop,
         ]
     }
 
