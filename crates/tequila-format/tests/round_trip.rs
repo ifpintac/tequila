@@ -1491,9 +1491,13 @@ fn a_project_named_in_any_language_saves_and_opens_from_a_folder_named_so() {
 
     let mut document = imported_and_reorganized();
     document.meta.name = "眼镜 メガネ 안경 चश्मा Gafas".into();
-    let names = ["左镜片", "フレーム 枠", "왼쪽 다리", "दाहिनी डंडी", "Patilla de cañón"];
+    let names = ["左镜片", "フレーム 枠", "왼쪽 다리", "दाहिनी डंडी · Patilla de cañón"];
     let mut bus = CommandBus::new();
-    let nodes: Vec<NodeId> = document.tree.iter().map(|n| n.id).collect();
+    // Not Screw A: the fixture locks it, and a locked part keeps its name.
+    let nodes: Vec<NodeId> = ["Assembly", "Housing, upper", "Fasteners", "Screw B"]
+        .iter()
+        .map(|name| document.tree.iter().find(|n| n.name == *name).unwrap_or_else(|| panic!("no node `{name}`")).id)
+        .collect();
     for (node, name) in nodes.iter().zip(names) {
         bus.apply(&mut document, Command::Rename { node: *node, name: name.into() }).unwrap();
     }

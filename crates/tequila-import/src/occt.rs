@@ -397,10 +397,15 @@ mod tests {
         ));
         let quality = crate::step::Tessellation::default();
         let bytes = include_bytes!("../tests/data/two_bodies.step");
-        let read = read_in(&temporary, &helper, bytes, Format::Step, quality.chord(), quality.angle(), &|_| {});
+        let read = |folder: &Path| read_in(folder, &helper, bytes, Format::Step, quality.chord(), quality.angle(), &|_| {});
+        let named = read(&temporary);
         let _ = std::fs::remove_dir_all(&temporary);
-        let read = read.expect("OpenCASCADE reads the file");
-        assert_eq!(read.bodies.len(), 2);
+        let named = named.expect("OpenCASCADE reads the file");
+        // The same answer as through a folder with a plain name.
+        let plain = read(&std::env::temp_dir()).expect("OpenCASCADE reads the file");
+        let shape = |read: &Read| read.bodies.iter().map(|b| (b.name.clone(), b.faces, b.groups.iter().map(|(_, m)| m.indices.len()).sum::<usize>())).collect::<Vec<_>>();
+        assert!(!named.bodies.is_empty());
+        assert_eq!(shape(&named), shape(&plain));
     }
 
     #[test]
