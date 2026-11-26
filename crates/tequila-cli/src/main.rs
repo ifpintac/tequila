@@ -1719,7 +1719,11 @@ fn render_with_cycles(
 
     println!(
         "rendering {}x{} at {} spp with Cycles on {}",
-        width, height, samples, device
+        width,
+        height,
+        samples,
+        // Several devices are a line each.
+        device.replace('\n', " + ")
     );
     let start = Instant::now();
     let rgba = session.render(width, height, samples, |fraction, _| {

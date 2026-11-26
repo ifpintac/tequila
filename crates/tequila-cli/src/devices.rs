@@ -96,7 +96,9 @@ impl Asked {
         // A Cycles id is its kind, an underscore and the card's name and bus.
         let id = |kind: &str| text.get(..kind.len() + 1).is_some_and(|head| head.eq_ignore_ascii_case(&format!("{kind}_")));
         if kinds.iter().any(|k| k.eq_ignore_ascii_case(text) || id(k)) {
-            return Ok((Asked::Named(text.to_string()), None));
+            // Cycles knows its kinds in capitals: `cpu` is CPU.
+            let named = if kinds.iter().any(|k| k.eq_ignore_ascii_case(text)) { text.to_ascii_uppercase() } else { text.to_string() };
+            return Ok((Asked::Named(named), None));
         }
         let catalogue = catalogue();
         let mut keys = Vec::new();
@@ -198,7 +200,9 @@ mod tests {
     fn the_device_flag_takes_what_it_took_and_the_lists_names() {
         let named = |text: &str| Asked::parse(text, mixed).unwrap().0;
         assert_eq!(named("CPU"), Asked::Named("CPU".into()));
-        assert_eq!(named("gpu"), Asked::Named("gpu".into()));
+        assert_eq!(named("cpu"), Asked::Named("CPU".into()), "Cycles knows its kinds in capitals");
+        assert_eq!(named("gpu"), Asked::Named("GPU".into()));
+        assert_eq!(named("optix"), Asked::Named("OPTIX".into()));
         assert_eq!(named("OPTIX"), Asked::Named("OPTIX".into()));
         assert_eq!(named("CUDA_NVIDIA GeForce RTX 3060_0000:01:00"), Asked::Named("CUDA_NVIDIA GeForce RTX 3060_0000:01:00".into()));
         let chosen = |list: &[&str]| Asked::Chosen(Choice::Chosen(list.iter().map(|k| k.to_string()).collect()));
