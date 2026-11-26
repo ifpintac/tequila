@@ -174,6 +174,9 @@ pub fn render_window_line(ui: &mut egui::Ui, settings: &tequila_scene::render::R
     }
 }
 
+/// The width the grid's device names are given.
+const DEVICE_COLUMN: f32 = 300.0;
+
 /// A change made in the Preferences grid.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
@@ -228,8 +231,10 @@ pub fn preferences_grid(ui: &mut egui::Ui, view: &Choice, finals: &Choice) -> Ve
                         None => catalogue.processor.name.clone(),
                     };
                     let ink = if renders { crate::theme::p().text } else { crate::theme::dim() };
-                    ui.label(egui::RichText::new(name).color(ink));
-                    ui.label(egui::RichText::new(detail(catalogue, &key)).small().color(crate::theme::dim()));
+                    // A line each, never wrapped into a column of syllables.
+                    ui.set_min_width(DEVICE_COLUMN);
+                    ui.add(egui::Label::new(egui::RichText::new(name).color(ink)).extend());
+                    ui.add(egui::Label::new(egui::RichText::new(detail(catalogue, &key)).small().color(crate::theme::dim())).extend());
                 });
                 for (i, (purpose, choice, _)) in uses.iter().enumerate() {
                     let chosen = resolved[i].keys.contains(&key);
