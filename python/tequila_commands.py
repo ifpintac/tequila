@@ -54,6 +54,7 @@ CATALOG = (
     'scene.set_units',
     'material.assign',
     'material.unlink',
+    'material.paste',
     'material.set_parameter',
     'material.rename',
     'material.set_graph',
@@ -134,6 +135,13 @@ class MaterialCommands(_Commands):
         { "command": "material.unlink", "node": 2 }
         """
         return self._apply('material.unlink', {'node': node})
+
+    def paste(self, *, material=_UNSET, nodes=_UNSET):
+        r"""`material.paste`: A copy of `material` put on these nodes as a material of their own, in one step: Paste material. The copy is named as an unlinked one is (`Paint 2`) and shared by the parts it was pasted on together, so editing it changes none of the parts the original is on. A group stands for every part in it.
+
+        { "command": "material.paste", "material": 1, "nodes": [3] }
+        """
+        return self._apply('material.paste', {'material': material, 'nodes': nodes})
 
     def set_parameter(self, *, material=_UNSET, parameter=_UNSET, value=_UNSET):
         r"""`material.set_parameter`: One parameter of a material, by its key (`base_color`, `specular_roughness`, ...).
