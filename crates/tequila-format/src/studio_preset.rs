@@ -196,11 +196,14 @@ pub fn material_of(entry: &LibraryEntry) -> PresetMaterial {
 }
 
 /// A file name made of `name`: what a preset's id is when none is given.
+/// Letters in any script: a studio called 白色工作室 is `白色工作室`, where it
+/// was `studio` - as was every other studio named without Latin letters,
+/// and saving one replaced the last.
 pub fn slug(name: &str) -> String {
     let mut out = String::new();
     for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
+        if c.is_alphanumeric() || (!out.is_empty() && !out.ends_with('-') && crate::library::joins_letters(c)) {
+            out.extend(c.to_lowercase());
         } else if !out.ends_with('-') && !out.is_empty() {
             out.push('-');
         }
@@ -747,6 +750,29 @@ mod tests {
         std::fs::write(&file, crate::json_write::to_string(&value)).unwrap();
         let kept = read(&file, PresetSource::User).unwrap();
         assert_eq!(kept.unknown.get("future").and_then(|v| v.as_str()), Some("kept"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A studio named in Chinese, Japanese, Korean or Hindi has an id of its
+    /// own, not the `studio` every such name shared (saving one replaced
+    /// the last), and writes and reads back in a folder named that way.
+    #[test]
+    fn a_studio_named_in_any_language_keeps_its_name_as_its_id() {
+        assert_eq!(slug("白色 工作室"), "白色-工作室");
+        assert_eq!(slug("白いスタジオ"), "白いスタジオ");
+        assert_eq!(slug("하얀 스튜디오"), "하얀-스튜디오");
+        assert_eq!(slug("सफ़ेद स्टूडियो"), "सफ़ेद-स्टूडियो");
+        assert_eq!(slug("Estudio Pequeño"), "estudio-pequeño");
+        assert_ne!(slug("白色工作室"), slug("黑色工作室"));
+        assert_eq!(slug("Soft Studio"), "soft-studio", "as before");
+        assert_eq!(slug("!!"), "studio");
+
+        let folder = scratch("测试 日本語 한국어 हिन्दी Español");
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let preset = capture(&document, &slug("白色 工作室"), "白色 工作室", "产品", "小");
+        let file = write_folder(&preset, &folder.join(&preset.id), None).unwrap();
+        assert!(file.ends_with("白色-工作室/白色-工作室.studio.json"), "{}", file.display());
+        assert_eq!(read(&file, PresetSource::User).unwrap().preset, preset);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

@@ -1474,6 +1474,53 @@ fn uv_pins_survive_a_round_trip_and_follow_their_sets() {
     assert_eq!(pins(&document), pinned);
 }
 
+/// A project named in Chinese, Japanese, Korean, Hindi and Spanish, in a
+/// folder named so, saves and opens with everything as it was: its name,
+/// its parts' and materials' names in all five, a picture beside it found by
+/// its relative path and one elsewhere by its absolute path.
+#[test]
+fn a_project_named_in_any_language_saves_and_opens_from_a_folder_named_so() {
+    let folder = std::env::temp_dir().join(format!("tequila-测试 日本語 한국어 हिन्दी Español-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    let pictures = folder.join("眼镜 メガネ.textures");
+    let elsewhere = folder.join("가죽 चमड़ा").join("cuero marrón.png");
+    std::fs::create_dir_all(&pictures).unwrap();
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    std::fs::write(pictures.join("皮革 レザー.png"), b"png").unwrap();
+    std::fs::write(&elsewhere, b"png").unwrap();
+
+    let mut document = imported_and_reorganized();
+    document.meta.name = "眼镜 メガネ 안경 चश्मा Gafas".into();
+    let names = ["左镜片", "フレーム 枠", "왼쪽 다리", "दाहिनी डंडी", "Patilla de cañón"];
+    let mut bus = CommandBus::new();
+    let nodes: Vec<NodeId> = document.tree.iter().map(|n| n.id).collect();
+    for (node, name) in nodes.iter().zip(names) {
+        bus.apply(&mut document, Command::Rename { node: *node, name: name.into() }).unwrap();
+    }
+    let material = document.materials.iter().next().map(|(key, _)| key).unwrap();
+    bus.apply(&mut document, Command::RenameMaterial { material, name: "フレーム素材 皮革 가죽".into() }).unwrap();
+    let beside = document.textures.intern(tequila_scene::textures::TextureSource::new(
+        "眼镜 メガネ.textures/皮革 レザー.png",
+        tequila_texture::texture::MapRole::Color,
+    ));
+    let away = document.textures.intern(tequila_scene::textures::TextureSource::new(elsewhere.clone(), tequila_texture::texture::MapRole::Data));
+
+    let project = folder.join("眼镜 メガネ 안경 चश्मा Gafas.tequila");
+    tequila_format::save(&project, &document, &Preserved::default()).unwrap();
+    let opened = tequila_format::load(&project).unwrap().document;
+    assert_eq!(opened.meta.name, document.meta.name);
+    for (node, name) in nodes.iter().zip(names) {
+        assert_eq!(opened.tree.get(*node).unwrap().name, name);
+    }
+    assert_eq!(opened.materials.get(material).unwrap().name, "フレーム素材 皮革 가죽");
+    assert_eq!(opened.textures.get(beside).unwrap().path, pictures.join("皮革 レザー.png"));
+    assert!(opened.textures.get(beside).unwrap().path.is_file());
+    assert_eq!(opened.textures.get(away).unwrap().path, elsewhere);
+    // And again, byte for byte.
+    assert!(write(&opened, &Preserved::default()) == write(&tequila_format::load(&project).unwrap().document, &Preserved::default()));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// A texture saved with a path relative to the project is found beside the
 /// project when it is opened, wherever that is: a shipped sample keeps its
 /// pictures in a folder beside it.
