@@ -291,6 +291,44 @@ impl RawSetup {
 }
 
 impl RawScene {
+    /// The bounds of what it shows, each part where its nodes place it, in
+    /// the file's own numbers: what the import dialog sizes the model by.
+    /// A part switched off in the file is left out, as the floor leaves it
+    /// out, unless nothing is shown at all.
+    pub fn bounds(&self) -> tequila_core::math::Aabb {
+        use tequila_core::math::Aabb;
+        let mut world: Vec<Transform> = Vec::with_capacity(self.nodes.len());
+        let mut shown: Vec<bool> = Vec::with_capacity(self.nodes.len());
+        // Parents come before their children (`validate`), so one pass.
+        for node in &self.nodes {
+            let parent = node.parent.filter(|&p| p < world.len());
+            world.push(parent.map_or(node.transform, |p| world[p] * node.transform));
+            shown.push(!node.hidden && parent.is_none_or(|p| shown[p]));
+        }
+        let mesh_bounds: Vec<Aabb> = self
+            .meshes
+            .iter()
+            .map(|mesh| {
+                let mut b = Aabb::EMPTY;
+                mesh.positions.iter().for_each(|&p| b.extend_point(p));
+                b
+            })
+            .collect();
+        let gather = |only_shown: bool| {
+            let mut bounds = Aabb::EMPTY;
+            for (i, node) in self.nodes.iter().enumerate() {
+                let Some(b) = node.mesh.and_then(|m| mesh_bounds.get(m)) else { continue };
+                if b.is_empty() || (only_shown && !shown[i]) {
+                    continue;
+                }
+                bounds.extend(&b.transformed(&world[i]));
+            }
+            bounds
+        };
+        let bounds = gather(true);
+        if bounds.is_empty() { gather(false) } else { bounds }
+    }
+
     /// Check the reader's own output before the pipeline runs on it. Every
     /// failure here is a bug in a reader, not in the file, and finding it at
     /// the boundary beats finding it as a panic three steps later.

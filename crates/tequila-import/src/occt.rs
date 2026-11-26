@@ -131,8 +131,10 @@ impl Format {
 
 /// Read `bytes` (a file in `format`) with the helper at `chord` (a fraction
 /// of each part's size) and `angle` (radians), reporting its steps as it
-/// goes.
-pub(crate) fn read(helper: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
+/// goes. The helper is stopped as soon as `stop` says so: an import
+/// cancelled in the import dialog does not leave OpenCASCADE reading on for
+/// minutes, holding gigabytes, behind it.
+pub(crate) fn read(helper: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step), stop: &dyn Fn() -> bool) -> Result<Read, String> {
     static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let folder = std::env::temp_dir().join(format!(
         "tequila-occt-{}-{}",
@@ -140,12 +142,12 @@ pub(crate) fn read(helper: &Path, bytes: &[u8], format: Format, chord: f64, angl
         COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let result = run(helper, &folder, bytes, format, chord, angle, progress);
+    let result = run(helper, &folder, bytes, format, (chord, angle), progress, stop);
     let _ = std::fs::remove_dir_all(&folder);
     result
 }
 
-fn run(helper: &Path, folder: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
+fn run(helper: &Path, folder: &Path, bytes: &[u8], format: Format, (chord, angle): (f64, f64), progress: &dyn Fn(Step), stop: &dyn Fn() -> bool) -> Result<Read, String> {
     let input = folder.join(format.file_name());
     let output = folder.join("model.fsocc");
     std::fs::write(&input, bytes).map_err(|e| format!("{}: {e}", input.display()))?;
@@ -190,6 +192,11 @@ fn run(helper: &Path, folder: &Path, bytes: &[u8], format: Format, chord: f64, a
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
+            Ok(None) if stop() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("the read was cancelled".to_string());
+            }
             Ok(None) if started.elapsed() > LONGEST => {
                 let _ = child.kill();
                 let _ = child.wait();
