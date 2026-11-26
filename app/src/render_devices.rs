@@ -175,7 +175,7 @@ pub fn render_window_line(ui: &mut egui::Ui, settings: &tequila_scene::render::R
 }
 
 /// The width the grid's device names are given.
-const DEVICE_COLUMN: f32 = 300.0;
+const DEVICE_COLUMN: f32 = 250.0;
 
 /// A change made in the Preferences grid.
 #[derive(Clone, Debug, PartialEq)]
@@ -203,7 +203,7 @@ pub fn preferences_grid(ui: &mut egui::Ui, view: &Choice, finals: &Choice) -> Ve
     let resolved: Vec<_> = uses.iter().map(|(_, choice, _)| catalogue.resolve(choice)).collect();
     ui.horizontal(|ui| {
         ui.add_space(24.0);
-        egui::Grid::new("render-devices").num_columns(3).spacing(egui::vec2(18.0, 6.0)).show(ui, |ui| {
+        egui::Grid::new("render-devices").num_columns(3).spacing(egui::vec2(14.0, 6.0)).show(ui, |ui| {
             ui.label("");
             for (i, (purpose, choice, title)) in uses.iter().enumerate() {
                 ui.horizontal(|ui| {
@@ -231,10 +231,12 @@ pub fn preferences_grid(ui: &mut egui::Ui, view: &Choice, finals: &Choice) -> Ve
                         None => catalogue.processor.name.clone(),
                     };
                     let ink = if renders { crate::theme::p().text } else { crate::theme::dim() };
-                    // A line each, never wrapped into a column of syllables.
-                    ui.set_min_width(DEVICE_COLUMN);
-                    ui.add(egui::Label::new(egui::RichText::new(name).color(ink)).extend());
-                    ui.add(egui::Label::new(egui::RichText::new(detail(catalogue, &key)).small().color(crate::theme::dim())).extend());
+                    // A line each, never wrapped into a column of syllables:
+                    // a name too long for the column ends in an ellipsis, and
+                    // says itself whole when pointed at.
+                    ui.set_width(DEVICE_COLUMN);
+                    ui.add(egui::Label::new(egui::RichText::new(name).color(ink)).truncate());
+                    ui.add(egui::Label::new(egui::RichText::new(detail(catalogue, &key)).small().color(crate::theme::dim())).truncate());
                 });
                 for (i, (purpose, choice, _)) in uses.iter().enumerate() {
                     let chosen = resolved[i].keys.contains(&key);
