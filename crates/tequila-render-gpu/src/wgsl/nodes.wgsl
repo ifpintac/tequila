@@ -160,7 +160,8 @@ fn cy_fmod(x: f32, y: f32) -> f32 {
     return bitcast<f32>(ux | sx);
 }
 
-// Sine and cosine of any argument (Cephes' sinf/cosf): reduced by quarter
+// Sine and cosine of any argument (Cephes' sinf/cosf), for the transport
+// and the Gabor (the nodes and patterns read cy_trig): reduced by quarter
 // turns in three parts, then a polynomial on [-pi/4, pi/4]. (sin, cos).
 fn cy_sincos(xx: f32) -> vec2<f32> {
     let x0 = abs(xx);

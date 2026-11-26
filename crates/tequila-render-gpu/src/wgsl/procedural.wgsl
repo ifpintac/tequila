@@ -10,8 +10,9 @@
 // Rust rounds every product an add reads; the card fuses a product into
 // the add after it unless the product goes through cy_exact, so every one
 // does. Division is tex_div's and square roots cy_sqrt's, both rounded as
-// IEEE rounds them; sine and cosine are cy_sincos's, an ulp or so from the
-// processor's.
+// IEEE rounds them; sine and cosine are cy_trig's, the processor's own
+// (tequila_texture::trig) to the bit - but the Gabor's, cy_sincos's, an ulp
+// or so from the platform's sinf the processor's Gabor reads.
 //#include nodes
 //#include textures
 
