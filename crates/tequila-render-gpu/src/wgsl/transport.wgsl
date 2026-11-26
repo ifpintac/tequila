@@ -1438,6 +1438,10 @@ struct PathState {
     ray: u32,
     eta_scale: f32,
     transmission_bounces: u32,
+    // Passes through glass (ic:847-861's glass_crossings): counted against
+    // the transmission limit and not against the bounces (#183), so the
+    // bounce limit is `bounce - glass_crossings`.
+    glass_crossings: u32,
     through_glass: u32,
     pass_pdf: f32,
     media: Media,
@@ -1501,6 +1505,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.ray = select(RAY_CAMERA, RAY_GLOSSY, reflected || in_floor);
     st.eta_scale = 1.0;
     st.transmission_bounces = 0u;
+    st.glass_crossings = 0u;
     st.through_glass = GLASS_SOLID;
     st.pass_pdf = PDF_INFINITE;
     st.media.len = 0u;
@@ -2640,7 +2645,8 @@ fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
 // roulette (ic:1862-2562), off the material `shaded` (material_at).
 fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>, light: ptr<function, LightSampleAt>) -> u32 {
     let bounce = (*st).bounce;
-    if (bounce >= (*st).max_bounces) {
+    // Passes through glass spend no bounce (ic:1944).
+    if (bounce - (*st).glass_crossings >= (*st).max_bounces) {
         return SHADE_END;
     }
     // The frame: along the anisotropy's tangent where the material is
@@ -2865,6 +2871,13 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // index squared kept for Russian roulette, and a medium's boundary
     // entered or left, recorded with the surface's own index (ic:2373-2399).
     if ((FEATURE_GLASS || FEATURE_SUBSURFACE) && sample.is_transmission) {
+        // A pass through glass - refracted, smooth or rough, through a thin
+        // wall, or the split's - is no bounce (ic:2453-2455); the way into a
+        // walk and a thin sheet's diffuse light through it (the subsurface
+        // slot) scatter as a bounce does.
+        if (splits || chosen.slot != LOBE_SUBSURFACE) {
+            (*st).glass_crossings += 1u;
+        }
         (*st).transmission_bounces += 1u;
         if ((*st).transmission_bounces > frame.max_transmission_bounces) {
             return shade_ends(split, splitting);
@@ -4230,7 +4243,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // once bent (ic:1773-1784), as Cycles makes its reflection
                 // valid on the normal the BSDF is given.
                 seg_turn = (FEATURE_PROGRAMS && (program.flags & (PROGRAM_BUMPS | PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) || (FEATURE_BEVEL && base.edge_radius > 0.0);
-                if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
+                if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce - st.glass_crossings < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
                     want = WANT_MAIN;
                 }
                 phase = PH_HIT;
