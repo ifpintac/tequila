@@ -794,7 +794,10 @@ fn the_newly_running_bumps_are_the_processors() {
                 .and_then(|(dpdu, _)| (dpdu - n * n.dot(dpdu)).try_normalize())
                 .unwrap_or_else(|| tequila_texture::TangentFrame::from_normal(n).tangent);
             let bitangent = n.cross(tangent);
-            let step = (point.footprint * point.scale * 0.1).max(1e-6);
+            // As bumped_normal steps (#188): a thousandth of the footprint,
+            // never under what an f32 tells apart at the point.
+            let finest = point.position.length() * point.scale * tequila_render_core::surface_bump::PRECISION_STEP;
+            let step = (point.footprint * point.scale * tequila_render_core::surface_bump::BUMP_FILTER_WIDTH).max(finest).max(1e-8);
             let restricted = program.restricted_to(&[bump_param(program).expect("a bump")]);
             let register = restricted.driven[0].1;
             let height = |offset: Vec3| {
