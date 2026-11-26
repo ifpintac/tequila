@@ -537,7 +537,7 @@ fn tq_instruction(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
 // profile in 3-4 (sine, saw, triangle).
 fn cy_wave(settings: u32, a: vec3<f32>, b: f32, distortion: f32, phase: f32) -> vec4<f32> {
     if ((settings & 32u) == 0u) {
-        return vec4<f32>((cy_exact3(a * b) + vec3<f32>(0.000001)) * 0.999999, 0.0);
+        return vec4<f32>(cy_exact3(cy_exact3(cy_exact3(a * b) + vec3<f32>(0.000001)) * 0.999999), 0.0);
     }
     let direction = (settings >> 1u) & 3u;
     var n: f32;
