@@ -1827,16 +1827,11 @@ impl eframe::App for TequilaApp {
             && !self.full_viewport
             && (ctx.screen_rect().width() >= 1100.0 || !self.show_project)
         {
-            egui::SidePanel::left("library")
-                // Exact, not a range.
-                //
-                // A resizable panel sizes itself to its contents, and a range
-                // is only advisory against that — the browser grew past a
-                // 340 px ceiling a hundred pixels a frame until the viewport
-                // had nothing left. The contents are bounded now as well, but
-                // the panel not being able to grow at all is the guarantee
-                // that does not depend on getting every child widget right.
-                .exact_width(library_tab::PANEL_WIDTH)
+            // Its edge drags it wider, for more across; it is told its width
+            // every frame, so nothing inside it can widen it as it once did,
+            // a hundred points a frame (`library_tab::panel`).
+            let (panel, shown) = library_tab::panel(ctx, self.library.width);
+            let drawn = panel
                 .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }))
                 .show(ctx, |ui| {
                     // Named for the section showing: the materials, or the
@@ -1849,7 +1844,10 @@ impl eframe::App for TequilaApp {
                         self.show_library = false;
                     }, "Hide the library · M");
                     profile::time("ui: library", || self.library_panel(ui));
-                });
+                })
+                .response
+                .rect;
+            library_tab::keep_dragged_width(ctx, &mut self.library.width, drawn, shown);
         }
 
         // Under the viewport and between the side panels, as a terminal sits
