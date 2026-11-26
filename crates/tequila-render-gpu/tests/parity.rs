@@ -556,6 +556,14 @@ fn backlit_translucency_is_the_processors_picture() {
     same_picture("backlit_translucency");
 }
 
+/// A clear shell split by material into two open parts that close each
+/// other (the processor's #169): one solid, its volume left where a path
+/// leaves through either part.
+#[test]
+fn a_shell_split_by_material_is_the_processors_picture() {
+    same_picture("split_shell");
+}
+
 /// The presets of the standard library with subsurface scattering that the
 /// card renders whole (their programs lowered with their pictures none
 /// loaded, as no preset of these has one; their surfaces on the card's

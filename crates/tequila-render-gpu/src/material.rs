@@ -29,10 +29,17 @@ use tequila_render_core::scene::Pane;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuMaterial {
     pub base_color: [f32; 4],
-    /// `metal_ior.n`.
+    /// `metal_ior.n`, and in `[3]` the crossing tint's red (below).
     pub metal_n: [f32; 4],
-    /// `metal_ior.k`.
+    /// `metal_ior.k`, and in `[3]` the crossing tint's green.
     pub metal_k: [f32; 4],
+    /// `specular_color`, and in `[3]` the crossing tint's blue: where
+    /// [`GLASS_TINTED`] says the transmission lobe's colour is not a grey,
+    /// the tint a spectral path takes a crossing of the glass at
+    /// (`spectral::crossing_tint` of that colour, integrator.rs's
+    /// `glass_pass`), whose spectrum met twice is the colour; nought
+    /// elsewhere. No program on the card drives the colour, so the record's
+    /// is the point's.
     pub specular_color: [f32; 4],
     pub coat_color: [f32; 4],
     pub fuzz_color: [f32; 4],
@@ -151,6 +158,10 @@ pub const GLASS_PANE_VOLUME: u32 = 64;
 /// The medium behind the surface scatters as well as absorbs
 /// (`Material::volume_scattering`): a path in it walks.
 pub const GLASS_SCATTERS: u32 = 128;
+/// The colour the transmission lobe tints a crossing by is not a grey: a
+/// spectral path through it takes its crossing tint
+/// ([`GpuMaterial::specular_color`]) rather than its weight's spectrum.
+pub const GLASS_TINTED: u32 = 256;
 
 fn colour(s: Spectrum) -> [f32; 4] {
     [s.r, s.g, s.b, 0.0]
@@ -177,6 +188,10 @@ impl GpuMaterial {
         let has_depth = !m.geometry_thin_walled && m.transmission_depth > 0.0;
         let c = if has_depth { m.transmission_tint } else { m.transmission_color * m.transmission_tint };
         let tint = [c.r.max(0.0).sqrt(), c.g.max(0.0).sqrt(), c.b.max(0.0).sqrt(), m.transmission_depth];
+        // The same colour as a spectral path takes a crossing of it
+        // (integrator.rs's glass_pass): none for a grey.
+        let tinted = !(c.r == c.g && c.g == c.b);
+        let crossing = if tinted { tequila_render_core::spectral::crossing_tint(c) } else { Spectrum::ZERO };
         let scattering = m.volume_scattering();
         let walk = m.subsurface_medium();
         let mut glass = 0;
@@ -189,6 +204,7 @@ impl GpuMaterial {
             (pane.is_some_and(|p| p.bends()), GLASS_BENDS),
             (pane.is_some_and(|p| p.has_volume()), GLASS_PANE_VOLUME),
             (scattering.is_some(), GLASS_SCATTERS),
+            (tinted, GLASS_TINTED),
         ] {
             if on {
                 glass |= flag;
@@ -197,9 +213,9 @@ impl GpuMaterial {
         let p = pane.copied();
         GpuMaterial {
             base_color: colour(m.base_color),
-            metal_n: colour(m.metal_ior.n),
-            metal_k: colour(m.metal_ior.k),
-            specular_color: colour(m.specular_color),
+            metal_n: [m.metal_ior.n.r, m.metal_ior.n.g, m.metal_ior.n.b, crossing.r],
+            metal_k: [m.metal_ior.k.r, m.metal_ior.k.g, m.metal_ior.k.b, crossing.g],
+            specular_color: [m.specular_color.r, m.specular_color.g, m.specular_color.b, crossing.b],
             coat_color: colour(m.coat_color),
             fuzz_color: colour(m.fuzz_color),
             base_weight: m.base_weight,

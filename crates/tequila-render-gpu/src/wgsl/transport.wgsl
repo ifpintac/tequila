@@ -602,10 +602,11 @@ struct ShadowRay {
     reach: f32,
 };
 
-// intersect.rs's shadow_ray: both ends offset, stopped just short of the
-// aim.
+// intersect.rs's shadow_ray: from `from_point` as it is - every caller has
+// stepped it off its surface already, once (Hit::offset, #179) - to the aim
+// stepped off its own, stopped just short of it.
 fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> ShadowRay {
-    let start = offset_at(from_point, from_normal, 0.0);
+    let start = from_point;
     let aim = offset_at(to, to_normal, 0.0);
     let delta = aim - start;
     let distance = sqrt(dot(delta, delta));
@@ -665,10 +666,13 @@ const WALK_PAST: u32 = 1u;
 // surface past the first cutout the camera sees, of opacity `first`; a
 // shadow catcher ends it, and a part the camera does not see is passed.
 const WALK_COVERAGE: u32 = 2u;
-// WALK_MEDIA: enclosing_media (ic:240-286), the media a path starts inside,
-// by counting along its first ray, through everything - opaque surfaces too
-// - up to 32 surfaces, the crossings of each medium's boundary: an odd
-// count of one solid's is inside it.
+// WALK_MEDIA: enclosing_media (ic:248-296), the media a path starts inside,
+// by counting along the line back from its first ray's origin, away from
+// where it looks (#169: that line usually meets nothing, where the one ahead
+// crosses everything in view), through everything - opaque surfaces too -
+// up to 32 surfaces, the crossings of each medium's boundary: an odd count
+// of one solid's (GpuInstance::solid, a shell split by material one) is
+// inside it.
 const WALK_MEDIA: u32 = 3u;
 // WALK_GLOW: SeenFrom::weight_of_glow's walk (ic:2730), the first surface
 // past what a shadow ray passes - a part that casts no shadow, clear glass,
@@ -1434,6 +1438,10 @@ struct PathState {
     ray: u32,
     eta_scale: f32,
     transmission_bounces: u32,
+    // Passes through glass (ic:847-861's glass_crossings): counted against
+    // the transmission limit and not against the bounces (#183), so the
+    // bounce limit is `bounce - glass_crossings`.
+    glass_crossings: u32,
     through_glass: u32,
     pass_pdf: f32,
     media: Media,
@@ -1497,6 +1505,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     st.ray = select(RAY_CAMERA, RAY_GLOSSY, reflected || in_floor);
     st.eta_scale = 1.0;
     st.transmission_bounces = 0u;
+    st.glass_crossings = 0u;
     st.through_glass = GLASS_SOLID;
     st.pass_pdf = PDF_INFINITE;
     st.media.len = 0u;
@@ -2617,6 +2626,27 @@ fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> 
     return true;
 }
 
+// integrator.rs's glass_pass, its number: what a crossing's `weight` scales
+// the lobe's tint `root` (the square root of the glass's colour) by, the
+// same in every channel the root has; nought where the weight is not that
+// root scaled - glass under a coloured coat - and the weight is read as it
+// is.
+fn glass_pass_scale(root: vec3<f32>, weight: vec3<f32>) -> f32 {
+    let has = root > vec3<f32>(1e-4);
+    let k = vec3<f32>(cy_div(weight.x, select(1.0, root.x, has.x)), cy_div(weight.y, select(1.0, root.y, has.y)), cy_div(weight.z, select(1.0, root.z, has.z)));
+    // The first channel the root has.
+    let scale = select(select(k.z, k.y, has.y), k.x, has.x);
+    if (!any(has) || !(is_finite(scale) && scale > 0.0)) {
+        return 0.0;
+    }
+    let apart = abs(k - vec3<f32>(scale)) > vec3<f32>(1e-3 * scale);
+    let stray = weight > vec3<f32>(1e-6);
+    if (any(select(stray, apart, has))) {
+        return 0.0;
+    }
+    return scale;
+}
+
 // Where a path that ends at the first glass ends: at once, or once the
 // reflection split off there is traced.
 fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
@@ -2636,7 +2666,8 @@ fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
 // roulette (ic:1862-2562), off the material `shaded` (material_at).
 fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface, shaded: ProgShaded, split: ptr<function, SplitOff>, light: ptr<function, LightSampleAt>) -> u32 {
     let bounce = (*st).bounce;
-    if (bounce >= (*st).max_bounces) {
+    // Passes through glass spend no bounce (ic:1944).
+    if (bounce - (*st).glass_crossings >= (*st).max_bounces) {
         return SHADE_END;
     }
     // The frame: along the anisotropy's tangent where the material is
@@ -2679,8 +2710,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // stack's interface and transmission read that index.
     let boundary = FEATURE_GLASS && (material.glass & GLASS_BOUNDARY) != 0u;
     // A walk that reaches its own part's surface from inside leaves through
-    // it, spread over the hemisphere outside (ic:1975).
-    let exiting_walk = FEATURE_SUBSURFACE && media_walking_in((*st).media, inst.solid);
+    // it, spread over the hemisphere outside (ic:1975). A walk is keyed by
+    // the part, a medium's boundary by its solid (GpuInstance::solid).
+    let exiting_walk = FEATURE_SUBSURFACE && media_walking_in((*st).media, inst.instance);
     var from_inside = false;
     var relative = material.specular_ior;
     if (boundary) {
@@ -2848,7 +2880,22 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     let throughput = (*st).throughput * (sample.f * (abs(sample.wi.z) / sample.pdf));
     var tp4 = (*st).tp4;
     if (FEATURE_SPECTRAL && spectral_on) {
-        tp4 = tp4 * spectral_of(sample.f * (abs(sample.wi.z) / sample.pdf), false);
+        // A pass through clear glass of a colour takes the glass's crossing
+        // tint, scaled by the number its weight scales the lobe's tint by
+        // (#187, ic:2438-2442's glass_pass): two crossings are the colour,
+        // where the weight's own spectrum read a garnet too red. Anything
+        // else is read by its weight; one look-up either way.
+        let weight = sample.f * (abs(sample.wi.z) / sample.pdf);
+        var read = weight;
+        var by = 1.0;
+        if ((material.glass & GLASS_TINTED) != 0u && sample.is_transmission && (splits || chosen.slot != LOBE_SUBSURFACE)) {
+            let k = glass_pass_scale(material.transmission_tint.xyz, weight);
+            if (k > 0.0) {
+                read = crossing_tint_of(material);
+                by = k;
+            }
+        }
+        tp4 = tp4 * cy_exact4(spectral_of(read, false) * by);
         // Through a dispersive surface each wavelength leaves its own way:
         // the hero goes on for all four (ic:2356-2363).
         if (disperses && sample.is_transmission && !(*st).alone) {
@@ -2860,6 +2907,13 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // index squared kept for Russian roulette, and a medium's boundary
     // entered or left, recorded with the surface's own index (ic:2373-2399).
     if ((FEATURE_GLASS || FEATURE_SUBSURFACE) && sample.is_transmission) {
+        // A pass through glass - refracted, smooth or rough, through a thin
+        // wall, or the split's - is no bounce (ic:2453-2455); the way into a
+        // walk and a thin sheet's diffuse light through it (the subsurface
+        // slot) scatter as a bounce does.
+        if (splits || chosen.slot != LOBE_SUBSURFACE) {
+            (*st).glass_crossings += 1u;
+        }
         (*st).transmission_bounces += 1u;
         if ((*st).transmission_bounces > frame.max_transmission_bounces) {
             return shade_ends(split, splitting);
@@ -2877,12 +2931,12 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
-            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, walking, albedo);
+            media_cross_walk(&media, select(inst.solid, inst.instance, walking), material.medium_priority, material.specular_ior, inst.material, walking, albedo);
             (*st).media = media;
             if (walking) {
                 (*st).guide = md_no_guide();
-                if (media_walking_in(media, inst.solid)) {
-                    (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
+                if (media_walking_in(media, inst.instance)) {
+                    (*st).guide = md_guide_new(inst.instance, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
                 }
             }
         }
@@ -3594,8 +3648,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var seg_raw: Surface;
         var seg_surf: Surface;
         // The shading normal at the segment's hit with its edges rounded
-        // (bevel_normal), what its bump bends.
+        // (bevel_normal), what its bump bends; and whether the normal the
+        // material leaves is to be turned again so its mirror reflection
+        // stays above the surface, once, as the hit is taken up (#170).
         var seg_rounded: vec3<f32>;
+        var seg_turn = false;
         var material: ProgShaded;
         let programs_cut = FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
         loop {
@@ -3631,11 +3688,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // ---- The segment sets out ----
             if (phase == PH_START) {
                 // Asked once where a path sets out: by a walk where anything
-                // transmits, none where nothing does.
+                // transmits, none where nothing does; along the line behind
+                // it.
                 if (st.fresh) {
                     st.fresh = false;
                     if (FEATURE_GLASS && (frame.glass_flags & SCENE_TRANSMITS) != 0u) {
-                        w = walk_new(WALK_MEDIA, st.origin, st.direction, 3.0e38);
+                        w = walk_new(WALK_MEDIA, st.origin, -st.direction, 3.0e38);
                         walking = true;
                         phase = PH_MEDIA;
                     } else {
@@ -3803,7 +3861,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         if (guiding) {
                             if (!st.guide.flown) {
                                 var opposite = -1.0;
-                                if (!open && scene_instances[hit.instance_custom_data].solid == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
+                                if (!open && scene_instances[hit.instance_custom_data].instance == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
                                     let d = md_dot(raw.position - st.guide.entry, -st.guide.normal);
                                     if (d > 0.0) {
                                         opposite = d;
@@ -4217,7 +4275,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 }
                 material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
                 let program = scene_programs[inst.material];
-                if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
+                // A bumped surface's normal, and a rounded one, turned again
+                // once bent (ic:1773-1784), as Cycles makes its reflection
+                // valid on the normal the BSDF is given.
+                seg_turn = (FEATURE_PROGRAMS && (program.flags & (PROGRAM_BUMPS | PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) || (FEATURE_BEVEL && base.edge_radius > 0.0);
+                if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce - st.glass_crossings < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
                     want = WANT_MAIN;
                 }
                 phase = PH_HIT;
@@ -4238,6 +4300,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             let cutout = !colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999;
             let covers = cutout && st.bounce == 0u && !st.reflected && !mirror && settled < 0.0;
             if (phase == PH_HIT) {
+                if (seg_turn) {
+                    material.normal = valid_for_reflection(seg_surf.geometric, -st.direction, material.normal);
+                    seg_turn = false;
+                }
                 if (covers) {
                     w = coverage_walk(offset_at(seg_raw.position, -seg_surf.geometric, seg_raw.magnitude), st.direction, material.material.geometry_opacity);
                     walking = true;
