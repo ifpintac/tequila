@@ -124,6 +124,41 @@ fn a_hollow_clear_glass_passes_on_its_light() {
     );
 }
 
+/// `mesh` made `factor` times as large about its centre.
+fn scaled(mesh: Mesh, factor: f32) -> Mesh {
+    let positions = mesh.positions.iter().map(|p| *p * factor).collect();
+    Mesh::new(positions, mesh.indices.clone()).with_normals(mesh.normals.clone())
+}
+
+/// Glass is many crossings and few bounces (`docs/01` §11): one hollow
+/// sphere inside another is eight crossings straight through, and they are
+/// counted against the transmission limit, not the bounces. In a white
+/// furnace, at six bounces with crossings to spare, the pair is as clear as
+/// with every limit lifted; at the Product preset's own six and eight, the
+/// eight straight through are allowed, and only paths turned back by a
+/// reflection into more crossings than that are cut. Counted as bounces,
+/// the crossings ate the six and the inner sphere went dark (0.11). With
+/// fewer crossings allowed than the eight it is dark again: the limit that
+/// holds is the transmission one.
+#[test]
+fn glass_passes_are_counted_apart_from_the_bounces() {
+    let parts = || vec![(shell(0.9), clear_glass()), (scaled(shell(0.9), 0.6), clear_glass())];
+    let limits = |crossings: u32| IntegratorConfig { max_transmission_bounces: crossings, ..IntegratorConfig::product() };
+    let open = centre(&render_parts(parts(), deep()));
+    let spare = centre(&render_parts(parts(), limits(16)));
+    let product = centre(&render_parts(parts(), IntegratorConfig::product()));
+    let few = centre(&render_parts(parts(), limits(4)));
+    println!("every limit lifted {open:.4}  six bounces, sixteen crossings {spare:.4}  product {product:.4}  four crossings {few:.4}");
+    assert!((open - 1.0).abs() < 0.04, "the furnace control is off: {open:.4}");
+    assert!(
+        (spare - open).abs() < 0.02,
+        "two hollow glass spheres, one inside the other, read {spare:.4} at six bounces with sixteen \
+         crossings allowed and {open:.4} with no limits: crossings are being counted as bounces"
+    );
+    assert!(product > 0.85, "at the Product preset's limits the pair reads {product:.4}; its eight crossings straight through are cut");
+    assert!(few < 0.5, "with four crossings allowed the inner sphere still reads {few:.4}");
+}
+
 
 /// A liquid in a glass keeps its colour (`docs/01` §6.1).
 ///

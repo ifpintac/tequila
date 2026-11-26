@@ -132,14 +132,16 @@ fn what_is_cut_away_casts_no_shadow() {
     // Light from straight above a point on the ground in front of the cut.
     let cut = scene(vec![front_half()]);
     let whole = scene(Vec::new());
-    let under_the_front = vec3(0.0, -1.5, 0.5);
+    // A step off the ground, as a shadow ray from it starts.
+    let on_the_ground = |p| tequila_core::math::offset_ray_origin(p, vec3(0.0, 1.0, 0.0));
+    let under_the_front = on_the_ground(vec3(0.0, -1.5, 0.5));
     let above = vec3(0.0, 10.0, 0.5);
     assert!(whole.occluded(under_the_front, vec3(0.0, 1.0, 0.0), above, vec3(0.0, -1.0, 0.0)));
     assert!(
         !cut.occluded(under_the_front, vec3(0.0, 1.0, 0.0), above, vec3(0.0, -1.0, 0.0)),
         "the cut-away front half still shadows the ground"
     );
-    let under_the_back = vec3(0.0, -1.5, -0.5);
+    let under_the_back = on_the_ground(vec3(0.0, -1.5, -0.5));
     let above_back = vec3(0.0, 10.0, -0.5);
     assert!(
         cut.occluded(under_the_back, vec3(0.0, 1.0, 0.0), above_back, vec3(0.0, -1.0, 0.0)),

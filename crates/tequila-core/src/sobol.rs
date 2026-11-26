@@ -17,9 +17,17 @@
 //! Owen seed perturbed by the group index `d / N`. Within a group of `N`
 //! dimensions the samples are jointly stratified; across groups they are
 //! decorrelated. This is the strategy Burley's paper describes, and it is why
-//! [`crate::sampler`] allocates exactly `NUM_BASE_DIMENSIONS` dimensions per
-//! bounce — so that each bounce's samples land inside one stratified group
-//! rather than straddling two.
+//! [`crate::sampler`] lays each bounce's dimensions out in whole groups, so
+//! no draw straddles two.
+//!
+//! Four, as Burley recommends, and not more. Sobol′'s first dimension pair
+//! is a perfect (0,2)-net, but pairs further in are not: at 256 points,
+//! dimensions 4 and 5 integrate a disc only about twice as well as random
+//! points do, where dimensions 0 and 1 do it fourteen times as well
+//! (`docs/07` R1). With groups of eight a bounce's direction was drawn from
+//! that pair, which is why a glossy floor reflecting a softbox was seven
+//! times noisier than Cycles'. With groups of four every two-dimensional
+//! draw is a group's leading pair.
 //!
 //! Owen scrambling makes every returned point uniformly distributed in
 //! `[0,1)` regardless of the underlying direction numbers, so the estimator is
@@ -29,7 +37,7 @@
 use crate::rng::{hash_combine, hash_u32};
 
 /// Number of genuine Sobol′ dimensions before padding kicks in.
-pub const NUM_BASE_DIMENSIONS: u32 = 8;
+pub const NUM_BASE_DIMENSIONS: u32 = 4;
 
 const MATRIX_BITS: usize = 32;
 
@@ -41,10 +49,6 @@ const POLYNOMIALS: [(u32, u32, &[u32]); NUM_BASE_DIMENSIONS as usize - 1] = [
     (1, 0, &[1]),
     (2, 1, &[1, 3]),
     (3, 1, &[1, 3, 1]),
-    (3, 2, &[1, 1, 1]),
-    (4, 1, &[1, 1, 3, 3]),
-    (4, 4, &[1, 3, 5, 13]),
-    (5, 2, &[1, 1, 5, 5, 17]),
 ];
 
 /// Direction numbers, `[dimension][bit]`. Generated once on first use rather
@@ -91,11 +95,55 @@ fn matrices() -> &'static [[u32; MATRIX_BITS]] {
     })
 }
 
+/// The direction numbers a byte at a time: for each dimension and each of
+/// an index's four bytes, the XOR of the direction numbers that byte's set
+/// bits select. 16 KB, built once from [`matrices`].
+static BYTE_TABLES: std::sync::OnceLock<Vec<[[u32; 256]; 4]>> = std::sync::OnceLock::new();
+
+/// The tables [`sobol_u32`] reads, `[dimension][byte][value]`: public so the
+/// graphics card's sampler (`tequila-render-gpu`) reads the very same ones.
+pub fn byte_tables() -> &'static [[[u32; 256]; 4]] {
+    BYTE_TABLES.get_or_init(|| {
+        matrices()
+            .iter()
+            .map(|v| {
+                let mut table = [[0u32; 256]; 4];
+                for (byte, row) in table.iter_mut().enumerate() {
+                    for (value, entry) in row.iter_mut().enumerate() {
+                        for bit in 0..8 {
+                            if (value >> bit) & 1 == 1 {
+                                *entry ^= v[byte * 8 + bit];
+                            }
+                        }
+                    }
+                }
+                table
+            })
+            .collect()
+    })
+}
+
 /// Raw Sobol′ value for `(index, dimension)` as a 32-bit fixed-point fraction.
 /// `dimension` must be below [`NUM_BASE_DIMENSIONS`]; padding is handled by
 /// [`sample_u32`].
+///
+/// Four table reads, one per byte of the index. The index arrives shuffled
+/// ([`sample_u32`]), so its high bits are set as often as its low ones and a
+/// loop over its bits ran all 32 times: a tenth of a render's time on a
+/// lamp-lit scene (`docs/07` R1). The same value as [`sobol_u32_by_bits`].
 #[inline]
 pub fn sobol_u32(index: u32, dimension: u32) -> u32 {
+    debug_assert!(dimension < NUM_BASE_DIMENSIONS);
+    let t = &byte_tables()[dimension as usize];
+    t[0][(index & 0xff) as usize]
+        ^ t[1][((index >> 8) & 0xff) as usize]
+        ^ t[2][((index >> 16) & 0xff) as usize]
+        ^ t[3][(index >> 24) as usize]
+}
+
+/// [`sobol_u32`] the way it is defined: the XOR of the direction numbers the
+/// index's set bits select.
+pub fn sobol_u32_by_bits(index: u32, dimension: u32) -> u32 {
     debug_assert!(dimension < NUM_BASE_DIMENSIONS);
     let v = &matrices()[dimension as usize];
     let mut x = 0u32;
@@ -142,26 +190,56 @@ pub fn nested_uniform_scramble(x: u32, seed: u32) -> u32 {
 /// so that neighbouring pixels do not share the same error pattern (§4.3).
 #[inline]
 pub fn sample_u32(index: u32, dimension: u32, seed: u32) -> u32 {
-    let group = dimension / NUM_BASE_DIMENSIONS;
-    let base_dim = dimension % NUM_BASE_DIMENSIONS;
-    let group_seed = hash_combine(seed, group.wrapping_mul(0x51633e2d));
+    let group = shuffle(index, dimension / NUM_BASE_DIMENSIONS, seed);
+    sample_u32_in(group, dimension % NUM_BASE_DIMENSIONS)
+}
 
+/// What [`sample_u32`] works out for a whole group of
+/// [`NUM_BASE_DIMENSIONS`] dimensions at once - the group's seed, and the
+/// index shuffled by it - so a caller drawing several of the group's
+/// dimensions for one index can work it out once ([`crate::sampler`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Group {
+    seed: u32,
+    shuffled: u32,
+}
+
+/// The [`Group`] of `index` in dimension group `group`.
+#[inline]
+pub fn shuffle(index: u32, group: u32, seed: u32) -> Group {
+    let group_seed = hash_combine(seed, group.wrapping_mul(0x51633e2d));
     // Shuffling the index randomizes *which* points of the sequence this
     // sample set draws, so different pixels do not all start from the same
     // corner of the domain. It preserves the net property, so the set stays
     // stratified.
-    let shuffled = nested_uniform_scramble(index, hash_u32(group_seed));
-    let x = sobol_u32(shuffled, base_dim);
-    nested_uniform_scramble(x, hash_combine(group_seed, base_dim ^ 0xa511_e9b3))
+    Group { seed: group_seed, shuffled: nested_uniform_scramble(index, hash_u32(group_seed)) }
+}
+
+/// [`sample_u32`] in base dimension `base_dim` of a [`Group`].
+#[inline]
+pub fn sample_u32_in(group: Group, base_dim: u32) -> u32 {
+    let x = sobol_u32(group.shuffled, base_dim);
+    nested_uniform_scramble(x, hash_combine(group.seed, base_dim ^ 0xa511_e9b3))
 }
 
 /// Owen-scrambled Sobol′ sample in `[0, 1)`.
 #[inline]
 pub fn sample(index: u32, dimension: u32, seed: u32) -> f32 {
+    to_unit(sample_u32(index, dimension, seed))
+}
+
+/// [`sample`] in base dimension `base_dim` of a [`Group`].
+#[inline]
+pub fn sample_in(group: Group, base_dim: u32) -> f32 {
+    to_unit(sample_u32_in(group, base_dim))
+}
+
+#[inline]
+fn to_unit(x: u32) -> f32 {
     // 24 significant bits: the most an f32 can represent exactly, and the
     // `min` guarantees the result never rounds up to 1.0.
     const ONE_MINUS_EPS: f32 = 1.0 - f32::EPSILON / 2.0;
-    ((sample_u32(index, dimension, seed) >> 8) as f32 * (1.0 / 16_777_216.0)).min(ONE_MINUS_EPS)
+    ((x >> 8) as f32 * (1.0 / 16_777_216.0)).min(ONE_MINUS_EPS)
 }
 
 #[cfg(test)]
@@ -276,6 +354,21 @@ mod tests {
         }
     }
 
+    /// The tables give exactly what the direction numbers do.
+    #[test]
+    fn the_byte_tables_are_the_direction_numbers() {
+        let mut index = 0x9e37_79b9u32;
+        for dim in 0..NUM_BASE_DIMENSIONS {
+            for i in (0..4096u32).chain([u32::MAX, 1 << 31, 0x00ff_ff00]) {
+                assert_eq!(sobol_u32(i, dim), sobol_u32_by_bits(i, dim), "index {i}, dimension {dim}");
+            }
+            for _ in 0..100_000 {
+                index = index.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+                assert_eq!(sobol_u32(index, dim), sobol_u32_by_bits(index, dim), "index {index}, dimension {dim}");
+            }
+        }
+    }
+
     #[test]
     fn samples_stay_in_unit_interval() {
         for dim in 0..40 {
@@ -328,7 +421,7 @@ mod tests {
     /// that is the whole justification for the sampler's dimension allocation.
     #[test]
     fn padding_preserves_within_group_stratification() {
-        // Dimensions 8 and 9 are group 1, base dims 0 and 1.
+        // Dimensions 8 and 9 are group 2, base dims 0 and 1.
         let k = 5u32;
         let n = 1u32 << (2 * k);
         let side = 1usize << k;

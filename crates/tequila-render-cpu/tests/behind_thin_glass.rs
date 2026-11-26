@@ -126,8 +126,14 @@ fn paint_just_behind_a_thin_lens_shows_through_it() {
         for gap in [2e-6, 4e-6] {
             let (through, _) = render(z, gap);
             println!("lens at z {z}: paint {:.0} µm behind {through:?}", gap * 1e6);
+            // The same samples through the same lens: within 0.1% (they
+            // agree to a millionth). The light sample's shadow ray used to be
+            // stepped off the paint twice, by its caller and again by
+            // `shadow_ray`, 2.3 µm in all a hand's length from the origin:
+            // past a lens 2 µm away, which it then missed, and the paint
+            // read 5% brighter than 100 µm behind.
             assert!(
-                (red(through) - red(reference)).abs() < 0.05 * red(reference),
+                (red(through) - red(reference)).abs() < 0.001 * red(reference),
                 "lens at z {z}, paint {gap} behind its back face: {through:?}, against {reference:?} 100 µm behind"
             );
         }

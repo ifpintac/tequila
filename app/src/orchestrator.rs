@@ -90,11 +90,12 @@ pub struct RenderRequest {
     /// Filter the guides before denoising. `None` leaves it to the sample
     /// count, which is the right call until someone disagrees.
     pub prefilter_guides: Option<bool>,
-    /// The document's firefly rejection and indirect clamp, as the final
-    /// render applies them. The viewport always rejected and never clamped,
-    /// so switching either off changed the saved image and not the preview.
+    /// The document's firefly rejection and clamps, as the final render
+    /// applies them. The viewport always rejected and never clamped, so
+    /// switching either off changed the saved image and not the preview.
     pub reject_fireflies: bool,
-    pub clamp_sample: Option<f32>,
+    pub clamp_indirect: Option<f32>,
+    pub clamp_direct: Option<f32>,
     /// Set while the user is dragging, which selects the interactive regime.
     pub interacting: bool,
     /// Solid is being drawn by the GPU ([`crate::solid_gpu`]): build the
@@ -261,7 +262,8 @@ impl PartialEq for RenderRequest {
             && self.denoise_cadence == other.denoise_cadence
             && self.prefilter_guides == other.prefilter_guides
             && self.reject_fireflies == other.reject_fireflies
-            && self.clamp_sample == other.clamp_sample
+            && self.clamp_indirect == other.clamp_indirect
+            && self.clamp_direct == other.clamp_direct
             && self.shading == other.shading
             && self.interacting == other.interacting
             && self.engine == other.engine
@@ -1386,7 +1388,8 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
             config: request.config.clone(),
             scene_seed: 0,
             reject_fireflies: request.reject_fireflies,
-            clamp_sample: request.clamp_sample,
+            clamp_indirect: request.clamp_indirect,
+            clamp_direct: request.clamp_direct,
             region: None,
             ..Default::default()
         },
@@ -1989,7 +1992,8 @@ mod tests {
             denoise_cadence: settings.denoise_cadence,
             prefilter_guides: Some(settings.prefilter_guides),
             reject_fireflies: settings.reject_fireflies,
-            clamp_sample: settings.clamp_indirect,
+            clamp_indirect: settings.clamp_indirect,
+            clamp_direct: settings.clamp_direct,
             interacting: false,
             gpu_solid: false,
             shading: Shading::Rendered,
@@ -2138,13 +2142,13 @@ mod tests {
         let device = Device::shared().expect("an Embree device");
         let built = rebuild(
             None,
-            RenderRequest { reject_fireflies: false, clamp_sample: Some(4.0), ..request() },
+            RenderRequest { reject_fireflies: false, clamp_indirect: Some(4.0), ..request() },
             &device,
             false,
             Duration::ZERO,
         );
         assert!(!built.context.reject_fireflies, "fireflies rejected though the document says not to");
-        assert_eq!(built.context.clamp_sample, Some(4.0), "the document's clamp was ignored");
+        assert_eq!(built.context.clamp_indirect, Some(4.0), "the document's clamp was ignored");
     }
 
     /// Tequila's renderer, still, with the document's cadence of four: each
@@ -2281,7 +2285,8 @@ mod tests {
             denoise_cadence: 1,
             prefilter_guides: None,
             reject_fireflies: true,
-            clamp_sample: None,
+            clamp_indirect: None,
+            clamp_direct: None,
             interacting: false,
             gpu_solid: false,
             shading: Shading::Rendered,

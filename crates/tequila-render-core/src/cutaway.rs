@@ -428,7 +428,7 @@ fn cuttable(scene: &SceneSnapshot, hit: &Hit) -> bool {
 }
 
 /// A step along the ray that clears a surface at `t` in single precision.
-fn step_past(ray: &Ray, t: f32) -> f32 {
+pub(crate) fn step_past(ray: &Ray, t: f32) -> f32 {
     t + (t.abs().max(ray.origin.abs().max_component()).max(1.0)) * 2e-6
 }
 
@@ -499,13 +499,27 @@ pub fn occluded(
     to_normal: Vec3,
     raw: impl Fn(&Ray) -> Option<Hit>,
 ) -> bool {
+    occluded_where(scene, from, from_normal, to, to_normal, raw, |instance| scene.casts_shadows(instance))
+}
+
+/// [`occluded`] where the surfaces of the instances `blocks` takes in stop
+/// the shadow ray and every other is passed.
+pub fn occluded_where(
+    scene: &SceneSnapshot,
+    from: Vec3,
+    from_normal: Vec3,
+    to: Vec3,
+    to_normal: Vec3,
+    raw: impl Fn(&Ray) -> Option<Hit>,
+    blocks: impl Fn(tequila_core::ids::InstanceId) -> bool,
+) -> bool {
     let ray = crate::intersect::shadow_ray(from, from_normal, to, to_normal);
     intersect(scene, &ray, |r| {
         // A shadow ray may pass surfaces that do not cast shadows.
         let mut r = *r;
         loop {
             let hit = raw(&r)?;
-            if scene.casts_shadows(hit.instance) {
+            if blocks(hit.instance) {
                 return Some(hit);
             }
             r.t_min = step_past(&r, hit.t);

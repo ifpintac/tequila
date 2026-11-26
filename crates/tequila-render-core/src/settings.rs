@@ -82,6 +82,16 @@ pub struct IntegratorConfig {
     /// What Cycles is told beyond the above (Blender's Light Paths): `None`
     /// throughout is what it was always told.
     pub cycles: CyclesTransport,
+    /// A ceiling on each contribution of light a path finds past the first
+    /// surface - its red, green and blue summed, scaled down to this where
+    /// they come to more - as Cycles' Clamp Indirect clamps
+    /// (`kernel_accum_clamp`), which firefly rejection sets to 10. Light seen
+    /// through mirrors and clear glass from the camera is not past it, as it
+    /// is to Cycles: a lamp in a mirror is the lamp. `None` clamps nothing.
+    /// Set per render from its settings, never saved here.
+    pub clamp_indirect: Option<f32>,
+    /// The same for light found at the first surface, Clamp Direct.
+    pub clamp_direct: Option<f32>,
     /// How a pixel's samples are spread, from the render settings for a
     /// final render; one pixel's box otherwise. Set per render, never saved
     /// here (it is the render's setting, `RenderSettings::pixel_filter`).
@@ -211,7 +221,8 @@ pub const DEFAULT_PIXEL_SPREAD: f32 = 1e-3;
 /// does not, for a studio that has to match Blender's exactly (Blender's
 /// Light Paths panel). Each `None` sends Cycles what it was always sent:
 /// diffuse and glossy bounces both `max_bounces` (at least 4), transparent
-/// 8, Filter Glossy 1, Cycles' own volume bounces and caustics.
+/// 8, Cycles' own volume bounces and caustics; and no Filter Glossy, which
+/// was 1 until 2026-11-19.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct CyclesTransport {
     /// Diffuse bounces. Set, or [`glossy_bounces`](Self::glossy_bounces)
@@ -223,7 +234,9 @@ pub struct CyclesTransport {
     pub transparent_bounces: Option<u32>,
     pub volume_bounces: Option<u32>,
     /// Blurs glossy reflections after diffuse bounces to cut noise; 0 is
-    /// none, Blender's 0.5 a little.
+    /// none, Blender's 0.5 a little. Unset, none: the blur takes light that
+    /// reaches a part through clear glass (`tequila-render-cycles`
+    /// `tests/filter_glossy.rs`).
     pub filter_glossy: Option<f32>,
     pub caustics_reflective: Option<bool>,
     pub caustics_refractive: Option<bool>,
@@ -385,6 +398,19 @@ pub struct FilterSampler {
 }
 
 impl FilterSampler {
+    /// The filter's width in pixels, as [`PixelFilter::sampler`] settled
+    /// it (1 for one that was not finite or not over nought).
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// The inverse of the filter's distribution over one half, in pixels
+    /// from the centre at even steps of the draw (1025 of them), which
+    /// [`FilterSampler::place`] reads between; `None` for a box.
+    pub fn table(&self) -> Option<&[f32]> {
+        self.table.as_deref()
+    }
+
     /// Where in (or around) the pixel a sample goes, for `jitter` uniform in
     /// [0, 1)²: the same point a box of one pixel always gave, and otherwise
     /// a point distributed as the filter is, about the pixel's centre.
@@ -495,6 +521,8 @@ impl IntegratorConfig {
             reflected: false,
             cycles: CyclesTransport::NONE,
             pixel_filter: PixelFilter::BOX,
+            clamp_indirect: None,
+            clamp_direct: None,
             spectral: SpectralMode::Auto,
             spectral_companions: true,
         }

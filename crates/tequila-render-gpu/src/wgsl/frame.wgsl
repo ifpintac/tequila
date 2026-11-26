@@ -1,0 +1,255 @@
+// What a frame of the first transport is told (transport.rs's FrameParams),
+// at @group(3) @binding(0), and where its samples go, @binding(1).
+
+struct FrameParams {
+    // Camera-to-world, row-major 3 x 4 (Camera::camera_to_world).
+    camera_to_world: array<vec4<f32>, 3>,
+    // tan(vertical fov / 2), and that times the aspect.
+    half_height: f32,
+    half_width: f32,
+    width: u32,
+    height: u32,
+    // The first sample index of this dispatch, and how many it draws.
+    sample_base: u32,
+    samples: u32,
+    scene_seed: u32,
+    max_bounces: u32,
+    // Russian roulette from this bounce on.
+    rr_start: u32,
+    // Ceilings on a contribution's summed red, green and blue; below zero,
+    // none.
+    clamp_direct: f32,
+    clamp_indirect: f32,
+    // How far past a shading point a shadow ray towards the sky aims.
+    shadow_far: f32,
+    env_rotation: array<vec4<f32>, 3>,
+    env_inverse_rotation: array<vec4<f32>, 3>,
+    env_width: u32,
+    env_height: u32,
+    env_tiles_x: u32,
+    env_tiles_y: u32,
+    env_intensity: f32,
+    env_weighted_sum: f32,
+    env_infinite: u32,
+    // Bit 0: add the samples up on the card (frame_pixels) rather than hand
+    // each back (frame_samples). Bit 1: firefly rejection.
+    mode: u32,
+    // Offsets into env_f32 and env_u32 (environment.wgsl).
+    off_luminance: u32,
+    off_cdf: u32,
+    off_power: u32,
+    off_rows: u32,
+    off_choice: u32,
+    off_tile_column: u32,
+    off_tile_row: u32,
+    off_row_start: u32,
+    // Path regularization (IntegratorConfig): from this bounce on, every
+    // reflection lobe at least this rough.
+    regularization_start: u32,
+    regularization_roughness: f32,
+    // The shadow catcher's tables in env_f32 (environment.wgsl's
+    // env_sample_irradiance): the rows' CDF, and the one weighted towards
+    // straight up, with its sum.
+    off_marginal: u32,
+    off_upward: u32,
+    env_upward_sum: f32,
+    // IntegratorConfig::shadows, and ::ground_illumination (a floor a bounce
+    // meets is shaded as its material rather than passed), 1 for on.
+    shadows: u32,
+    ground_illumination: u32,
+    // How many lamps the scene has (lamps.wgsl), whether its light
+    // hierarchy chooses among them rather than its alias table, and
+    // lights.rs's LAMPS_* flags.
+    light_count: u32,
+    light_hierarchy: u32,
+    lamp_flags: u32,
+    // IntegratorConfig::pixel_spread: a footprint is the hit's distance times
+    // it, for a material's program and its bump.
+    pixel_spread: f32,
+    // IntegratorConfig::max_transmission_bounces: how many times a path may
+    // go through a surface.
+    max_transmission_bounces: u32,
+    // IntegratorConfig::shadow_glass: the clear glass shadow rays pass
+    // (GLASS_SOLID, GLASS_CLEAR, GLASS_UNBENT).
+    shadow_glass: u32,
+    // SCENE_TRANSMITS: some material transmits (SceneSnapshot::
+    // has_transmissive), so a path starts by asking which media it is in;
+    // SCENE_PANES: some material is clear glass a shadow ray passes;
+    // SCENE_CUTOUTS: some material is cut out (SceneSnapshot::has_cutouts);
+    // SCENE_CUT_PROGRAMS: a program on the card drives some opacity;
+    // SCENE_EMITTERS: the glowing triangles are lights (emitters.wgsl);
+    // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials;
+    // SCENE_BEVEL: some material rounds its edges (edge_radius);
+    // SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE: the camera, and the mirrors
+    // and glass it sees through, see a colour or a backplate's picture past
+    // the parts (integrator.rs's past_the_scene); SCENE_FINITE_DOME: the
+    // environment is a dome of a size (dome_*), looked up from where a path
+    // is.
+    glass_flags: u32,
+    // The rows this dispatch draws, row_base and every row_stride-th after
+    // it: render_pass draws a big frame in interleaved sets of rows, each
+    // within the time a display allows the card and each as costly as any
+    // other. A whole frame is row 0 at a stride of 1.
+    row_base: u32,
+    row_stride: u32,
+    // Background::Color's colour, under SCENE_BACKGROUND_COLOUR; a
+    // backplate's picture under SCENE_BACKPLATE, from plate_offset in
+    // env_camera_image (environment.wgsl's plate_bilinear), and its size.
+    background: vec3<f32>,
+    plate_offset: u32,
+    plate_width: u32,
+    plate_height: u32,
+    // CAMERA_THIN_LENS, CAMERA_BLADED, CAMERA_SHIFT, CAMERA_ORTHOGRAPHIC,
+    // CAMERA_EQUIRECTANGULAR, CAMERA_FILTER_BOX, CAMERA_FILTER_TABLE.
+    camera_flags: u32,
+    // The thin lens (Camera::generate_ray): the opening's radius in scene
+    // units, the focus distance, a bladed opening's blades and turn.
+    lens_radius: f32,
+    focus_distance: f32,
+    aperture_blades: u32,
+    aperture_rotation: f32,
+    // A shifted lens's film offset in fractions of the sensor, under
+    // CAMERA_SHIFT.
+    shift_x: f32,
+    shift_y: f32,
+    // The pixel filter (FilterSampler::place): a box's width in pixels
+    // (CAMERA_FILTER_BOX), or the inverse of its distribution over one half
+    // (CAMERA_FILTER_TABLE), 1025 values: filter_table's 1024 four to a
+    // vector, and filter_last.
+    filter_width: f32,
+    filter_last: f32,
+    _pad5: u32,
+    // A dome of a size under SCENE_FINITE_DOME (Dome): its radius, its
+    // centre's height, 1 where its lower cap is the ground plane.
+    dome_radius: f32,
+    dome_height: f32,
+    dome_flatten: u32,
+    // Where the spectral tables start in the pictures' texels, under
+    // MODE_SPECTRAL.
+    spectral_base: u32,
+    filter_table: array<vec4<f32>, 256>,
+};
+
+// FrameParams::camera_flags (transport.rs's CAMERA_*): a thin lens with an
+// opening, each ray drawn from a point on it through its pinhole ray's
+// point on the focus plane; an opening of blades rather than a round one;
+// a shifted film; parallel rays from the film plane (the half-height and
+// half-width in scene units); every direction round the camera.
+const CAMERA_THIN_LENS: u32 = 1u;
+const CAMERA_BLADED: u32 = 2u;
+const CAMERA_SHIFT: u32 = 4u;
+const CAMERA_ORTHOGRAPHIC: u32 = 8u;
+const CAMERA_EQUIRECTANGULAR: u32 = 16u;
+// A pixel filter other than one pixel's box: a box of another width, or a
+// Gaussian or Blackman-Harris read from its table.
+const CAMERA_FILTER_BOX: u32 = 32u;
+const CAMERA_FILTER_TABLE: u32 = 64u;
+
+// FrameParams::shadow_glass (settings.rs's ShadowGlass).
+const GLASS_SOLID: u32 = 0u;
+const GLASS_CLEAR: u32 = 1u;
+const GLASS_UNBENT: u32 = 2u;
+
+// FrameParams::glass_flags.
+const SCENE_TRANSMITS: u32 = 1u;
+const SCENE_PANES: u32 = 2u;
+const SCENE_CUTOUTS: u32 = 4u;
+const SCENE_EMITTERS: u32 = 8u;
+const SCENE_LIGHT_MATERIALS: u32 = 16u;
+const SCENE_CUT_PROGRAMS: u32 = 32u;
+const SCENE_BEVEL: u32 = 64u;
+const SCENE_BACKGROUND_COLOUR: u32 = 128u;
+const SCENE_BACKPLATE: u32 = 256u;
+const SCENE_FINITE_DOME: u32 = 512u;
+
+// FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
+// enough reflection has a density to see by; a lamp a seeing bounce meets;
+// lamps shown in mirrors rather than by their stand-ins; one of the lamps a
+// bounce meets lights nothing diffusely.
+const LAMPS_SEEN: u32 = 1u;
+const LAMPS_MET: u32 = 2u;
+const LAMPS_IN_MIRRORS: u32 = 4u;
+const LAMPS_FOR_REFLECTIONS: u32 = 8u;
+// Shadow rays pass all clear glass and there is some, so a bounce that sees
+// meets glass that bends light as glass (the integrator's meets_glass).
+const LAMPS_MEETS_GLASS: u32 = 16u;
+// Some light passes a part its shadow rays pass, which a path stopping at
+// the part meets there (the integrator's passes_parts); some part casts no
+// shadow (SceneSnapshot::has_shadowless_parts); the lights are not sampled
+// directly (IntegratorConfig::direct_lighting off).
+const LAMPS_PASSES_PARTS: u32 = 32u;
+const LAMPS_SHADOWLESS: u32 = 64u;
+const LAMPS_UNSAMPLED: u32 = 128u;
+// The sky's light sample sees past the shadow-catching floors the bounces
+// pass, and a bounce past one keeps the sky's weight (sky_past_floors).
+const LAMPS_SKY_PAST_FLOORS: u32 = 256u;
+
+@group(3) @binding(0) var<uniform> frame: FrameParams;
+// Two vec4s a sample: radiance (and in w, 1 if the camera ray met
+// geometry), then the background a camera ray saw.
+@group(3) @binding(1) var<storage, read_write> frame_samples: array<vec4<f32>>;
+
+// Framebuffer's Pixel, as far as this transport fills it.
+struct PixelSums {
+    // Radiance, and in w the energy firefly rejection took off.
+    sum: vec4<f32>,
+    // Background, and in w the coverage.
+    background: vec4<f32>,
+    // Squared luminance, in two floats for the processor's one f64: the
+    // sum, and Kahan's compensation, which it is over by.
+    squares_high: f32,
+    squares_low: f32,
+    samples: u32,
+    _pad: u32,
+};
+
+@group(3) @binding(2) var<storage, read_write> frame_pixels: array<PixelSums>;
+
+// FrameParams::mode: the paths carry four wavelengths; and each its hero
+// alone from the start (transport.rs's MODE_SPECTRAL and MODE_ALONE).
+const MODE_SPECTRAL: u32 = 4u;
+const MODE_ALONE: u32 = 8u;
+
+fn luminance(c: vec3<f32>) -> f32 {
+    return 0.2722287 * c.x + 0.6740818 * c.y + 0.0536895 * c.z;
+}
+
+// Pixel::accumulate_with for a sample with no hue, no wavelength and no
+// clamp: firefly rejection (k = 8 deviations, from the 16th sample on)
+// judging only what the path found beyond the background.
+fn accumulate(pixel: u32, radiance_in: vec3<f32>, background: vec3<f32>, coverage: f32, hue: f32, signed: bool) {
+    var p = frame_pixels[pixel];
+    var radiance = radiance_in;
+    if ((frame.mode & 2u) != 0u && p.samples >= 16u) {
+        // A spectral sample's kept signed (`signed`): its wavelengths can
+        // register a little below nought in a channel.
+        var sampled = max(radiance - background, vec3<f32>(0.0));
+        if (signed) {
+            sampled = radiance - background;
+        }
+        // Judged by the light it carries, not its colour's luminance: a
+        // path carrying one wavelength over that wavelength's (hue, 1 for
+        // any other path).
+        let lum = luminance(sampled) / hue;
+        let n = f32(p.samples);
+        let mean = luminance(p.sum.xyz * (1.0 / n));
+        // Kahan's compensation is what the sum is over by.
+        let squares = p.squares_high - p.squares_low;
+        let deviation = sqrt(max(squares / n - mean * mean, 0.0));
+        let limit = mean + 8.0 * deviation;
+        if (lum > limit && limit < 3.4e38) {
+            p.sum.w += lum - limit;
+            radiance = radiance - sampled * (1.0 - limit / max(lum, 1e-9));
+        }
+    }
+    p.sum = vec4<f32>(p.sum.xyz + radiance, p.sum.w);
+    p.background = vec4<f32>(p.background.xyz + background, p.background.w + clamp(coverage, 0.0, 1.0));
+    // Kahan: the low word keeps what the high word's rounding lost.
+    let l = luminance(radiance);
+    let y = l * l - p.squares_low;
+    let t = p.squares_high + y;
+    p.squares_low = (t - p.squares_high) - y;
+    p.squares_high = t;
+    p.samples += 1u;
+    frame_pixels[pixel] = p;
+}

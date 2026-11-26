@@ -31,7 +31,42 @@ pub struct DielectricSpecular {
     /// common uncoated surface keeps the scalar Fresnel path and never pays
     /// for the complex arithmetic.
     pub film: Option<Film>,
+    /// What depends only on the angle the surface is seen from, and on the
+    /// lobe itself, worked out once for a shading point (`aim`).
+    seen: Option<Seen>,
 }
+
+/// [`DielectricSpecular`]'s table reads for one viewing angle, `mu`.
+///
+/// Every evaluation at a shading point asks for them again, for the same
+/// `wo` - the light samples', the bounce's, each MIS density - and so does
+/// every lobe beneath for the light this one lets through: a sixth of a
+/// lamp-lit render's time went on reading the same table entries
+/// (`docs/07` R1). Read from the same tables with the same arguments, so
+/// the same numbers.
+#[derive(Clone, Copy, Debug)]
+struct Seen {
+    mu: f32,
+    /// The lobe's place on the tables, for reads at other angles.
+    place: energy::Place,
+    e_o: f32,
+    e_avg: f32,
+    compensation: f32,
+    albedo: f32,
+}
+
+
+/// How much of a specular interface's compensation lobe - the light its
+/// microfacets lose to bouncing among themselves, given back as a broad
+/// lobe (Kulla and Conty) - is drawn from that lobe's own cosine-weighted
+/// directions, against the share of its energy. Drawn in full proportion,
+/// one sample in twenty on a plastic at roughness 0.3 went the broad way,
+/// where the highlight carries nearly everything, and the dark glossy
+/// plastics of the Headphones were the noisier for it; the lobe is still
+/// found by the interface's own sampling and the light samples, which cover
+/// every direction it reaches, so a quarter costs nothing in what the
+/// picture converges to (`docs/07` R1).
+const COMPENSATION_SHARE: f32 = 0.25;
 
 impl DielectricSpecular {
     pub fn new(roughness: f32, ior: f32) -> Self {
@@ -41,6 +76,49 @@ impl DielectricSpecular {
             tint: Spectrum::ONE,
             weight: 1.0,
             film: None,
+            seen: None,
+        }
+    }
+
+    /// Work out what evaluations seen from `wo` will ask for, once. Call it
+    /// after the lobe is otherwise complete (roughness, index, weight).
+    pub fn aim(&mut self, wo: Vec3) {
+        let mu = shading::abs_cos_theta(wo);
+        let table = energy::table();
+        let place = energy::GgxEnergyTable::place(self.distribution.average_alpha(), self.ior);
+        let (single, e_o) = table.dielectric_and_white_at(&place, mu);
+        let e_avg = table.white_average_at(&place);
+        let compensation = self.compensation_scale(e_avg);
+        let albedo = (self.weight * (single + compensation * (1.0 - e_o))).clamp(0.0, 1.0);
+        self.seen = Some(Seen { mu, place, e_o, e_avg, compensation, albedo });
+    }
+
+    /// [`Self::aim`], taking `other`'s reads when it is the same interface
+    /// aimed at the same `wo`, as the stack's two copies of its interface
+    /// are: one among the lobes it samples, one for what reaches the layers
+    /// beneath.
+    pub fn aim_as(&mut self, other: &DielectricSpecular, wo: Vec3) {
+        let same = other.seen.is_some_and(|s| s.mu == shading::abs_cos_theta(wo))
+            && other.distribution.average_alpha() == self.distribution.average_alpha()
+            && other.ior == self.ior
+            && other.weight == self.weight;
+        if same {
+            self.seen = other.seen;
+        } else {
+            self.aim(wo);
+        }
+    }
+
+    /// The hemispherical average of `white_directional` and the
+    /// compensation it calls for: the lobe's own, whatever the angle.
+    #[inline]
+    fn average_and_compensation(&self) -> (f32, f32) {
+        match &self.seen {
+            Some(s) => (s.e_avg, s.compensation),
+            None => {
+                let e_avg = energy::table().white_average(self.distribution.average_alpha());
+                (e_avg, self.compensation_scale(e_avg))
+            }
         }
     }
 
@@ -70,9 +148,13 @@ impl DielectricSpecular {
     }
 
     fn compensation_probability(&self, wo: Vec3) -> f32 {
-        let alpha = self.distribution.average_alpha();
-        let e_o = energy::table().white_directional(shading::abs_cos_theta(wo), alpha);
-        (1.0 - e_o).clamp(0.0, 0.5)
+        let mu = shading::abs_cos_theta(wo);
+        let e_o = match &self.seen {
+            Some(s) if s.mu == mu => s.e_o,
+            Some(s) => energy::table().white_directional_at(&s.place, mu),
+            None => energy::table().white_directional(mu, self.distribution.average_alpha()),
+        };
+        ((1.0 - e_o) * COMPENSATION_SHARE).clamp(0.0, 0.5)
     }
 
     fn compensation_scale(&self, e_avg: f32) -> f32 {
@@ -90,6 +172,15 @@ impl DielectricSpecular {
     /// module documentation of [`crate::energy`].
     pub fn directional_albedo(&self, wo: Vec3) -> f32 {
         let mu = shading::abs_cos_theta(wo);
+        match &self.seen {
+            Some(s) if s.mu == mu => return s.albedo,
+            // Aimed elsewhere: the same reads, from the lobe's place.
+            Some(s) => {
+                let (single, e_o) = energy::table().dielectric_and_white_at(&s.place, mu);
+                return (self.weight * (single + s.compensation * (1.0 - e_o))).clamp(0.0, 1.0);
+            }
+            None => {}
+        }
         let alpha = self.distribution.average_alpha();
         let table = energy::table();
         let single = table.dielectric_directional(mu, alpha, self.ior);
@@ -129,10 +220,15 @@ impl Bsdf for DielectricSpecular {
 
         let alpha = self.distribution.average_alpha();
         let table = energy::table();
-        let e_o = table.white_directional(wo.z, alpha);
-        let e_i = table.white_directional(wi.z, alpha);
-        let e_avg = table.white_average(alpha);
-        let multi = self.compensation_scale(e_avg) * multiple_scattering_value(e_o, e_i, e_avg);
+        // `wo.z` is positive here, so it is the angle `aim` read for.
+        let at = |mu: f32| match &self.seen {
+            Some(s) if s.mu == mu => s.e_o,
+            Some(s) => table.white_directional_at(&s.place, mu),
+            None => table.white_directional(mu, alpha),
+        };
+        let (e_o, e_i) = (at(wo.z), at(wi.z));
+        let (e_avg, compensation) = self.average_and_compensation();
+        let multi = compensation * multiple_scattering_value(e_o, e_i, e_avg);
 
         self.tint * ((single + Spectrum::splat(multi)) * self.weight)
     }

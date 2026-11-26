@@ -1161,7 +1161,9 @@ impl ShaderNode {
                     randomness: f(8),
                     normalize,
                 };
-                let out = settings.texture(dims, v(0).map(|x| x * s), f(1) * s);
+                // The cells' colour only for the output that is the colour.
+                let wants_colour = index == 1 && !matches!(feature, VoronoiFeature::DistanceToEdge | VoronoiFeature::NSphereRadius);
+                let out = settings.texture_for(dims, v(0).map(|x| x * s), f(1) * s, wants_colour);
                 match feature {
                     VoronoiFeature::DistanceToEdge => Value::Float(out.distance),
                     VoronoiFeature::NSphereRadius => Value::Float(out.radius),

@@ -21,6 +21,15 @@ use std::sync::Arc;
 
 /// A red sphere in front of a larger blue one, on the camera's axis.
 fn scene(front_seen: bool) -> EmbreeIntersector {
+    scene_with_front_at(front_seen, vec3(0.0, 0.0, 1.5))
+}
+
+/// The same, with the red sphere well off to the side.
+fn scene_without_front() -> EmbreeIntersector {
+    scene_with_front_at(true, vec3(10.0, 0.0, 1.5))
+}
+
+fn scene_with_front_at(front_seen: bool, front_at: Vec3) -> EmbreeIntersector {
     let meshes = vec![Arc::new(tequila_scene::demo::uv_sphere(1.0, 48, 24))];
     let materials = vec![
         Material {
@@ -33,7 +42,7 @@ fn scene(front_seen: bool) -> EmbreeIntersector {
         },
     ];
     let mut front = Instance::new(InstanceId(0), MeshId(0), MaterialId(0))
-        .with_transform(Transform::translation(vec3(0.0, 0.0, 1.5)));
+        .with_transform(Transform::translation(front_at));
     front.visible_to_camera = front_seen;
     let back = Instance::new(InstanceId(1), MeshId(0), MaterialId(1)).with_transform(
         Transform::from_matrix(
@@ -73,10 +82,17 @@ fn the_camera_sees_through_a_hidden_part_and_nothing_else_does() {
     assert!(alpha > 0.99, "the part behind it is solid: alpha {alpha}");
 
     // Everything but the camera still meets it: it still stands between the
-    // back sphere and a light in front.
+    // back sphere and a light in front. From a step off the back sphere's
+    // front (radius 2, so at z = 0), as a shadow ray from it starts; from
+    // inside the back sphere, as this was, the back sphere itself blocked.
+    let back_front = tequila_core::math::offset_ray_origin(Vec3::ZERO, Vec3::Z);
     assert!(
-        hidden.occluded(vec3(0.0, 0.0, 1.0 - 2.0), Vec3::Z, vec3(0.0, 0.0, 6.0), -Vec3::Z),
+        hidden.occluded(back_front, Vec3::Z, vec3(0.0, 0.0, 6.0), -Vec3::Z),
         "the hidden sphere stopped blocking light"
+    );
+    assert!(
+        !scene_without_front().occluded(back_front, Vec3::Z, vec3(0.0, 0.0, 6.0), -Vec3::Z),
+        "something but the hidden sphere blocked the light"
     );
     let bounced = hidden.intersect(&tequila_core::math::Ray::new(vec3(0.0, 0.0, 0.0), Vec3::Z));
     assert!(bounced.is_some_and(|h| h.instance == InstanceId(0)), "a bounce ray passed through the hidden sphere");

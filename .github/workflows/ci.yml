@@ -102,6 +102,46 @@ jobs:
             self-test
           if-no-files-found: ignore
 
+  # The graphics card's kernels against the processor's Rust, function by
+  # function (docs/07 D2, R2.4), on Mesa's software Vulkan driver: no
+  # runner has a graphics card, and lavapipe runs compute shaders, if not
+  # ray queries. TEQUILA_REQUIRE_GPU_TESTS makes a missing compute adapter
+  # a failure here, where elsewhere it is a skip; the tests that need ray
+  # queries (the parity test against the processor) skip. Embree is fetched
+  # because that test links the processor renderer.
+  gpu-differential:
+    name: graphics card kernels (software Vulkan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEQUILA_REQUIRE_GPU_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache third-party SDKs
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-${{ runner.os }}-${{ runner.arch }}-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-third-party.sh
+
+      - name: Mesa's software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          vulkaninfo --summary || true
+
+      - name: Test
+        run: cargo test --release -p tequila-render-gpu --no-fail-fast
+
   # GitHub's Intel Mac, kept until autumn 2027, which the Intel disk image
   # is built on (release-macos.yml) and nothing tested per commit. Lighter
   # than the jobs above, which run the whole suite: the command-line

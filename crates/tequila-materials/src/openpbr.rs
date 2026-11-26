@@ -358,6 +358,19 @@ impl Material {
         OpenPbrBsdf::from_inside(self, roughness_floor)
     }
 
+    /// [`Self::bsdf`], for a caller that aims it next
+    /// ([`OpenPbrBsdf::to_aim`]).
+    #[inline]
+    pub fn bsdf_to_aim(&self, roughness_floor: f32) -> OpenPbrBsdf {
+        OpenPbrBsdf::to_aim(self, roughness_floor)
+    }
+
+    /// [`Self::bsdf_from_inside`], for a caller that aims it next.
+    #[inline]
+    pub fn bsdf_from_inside_to_aim(&self, roughness_floor: f32) -> OpenPbrBsdf {
+        OpenPbrBsdf::from_inside_to_aim(self, roughness_floor)
+    }
+
     /// The catalog preset of §3.1, as a starting parameter block.
     ///
     /// Every "material type" is a set of defaults over this one block — §1's

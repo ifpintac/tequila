@@ -37,6 +37,10 @@ use tequila_render_core::material::Material;
 /// `animation` — measures features that do not exist yet. Adding empty
 /// placeholders for them would produce numbers that look like measurements and
 /// are not.
+///
+/// The last three are `simple_product` made slow in the ways `docs/07` R0.1
+/// asks the engines to be compared on: fibres, light scattering under the
+/// surface, and lamps alone with no environment to light the scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BenchScene {
     /// §4.1: 200k triangles, 8 materials, 1 HDRI. "The interactivity
@@ -45,15 +49,33 @@ pub enum BenchScene {
     /// §4.1: 5M triangles, 400 parts, heavy instancing. Built to exercise
     /// import, BVH construction and memory rather than shading.
     CadAssembly,
+    /// `simple_product` with its body in velvet grown with real fibres: the
+    /// curves and the fibre BSDF, the slowest case `docs/05` M6 measured.
+    FibreProduct,
+    /// `simple_product` with its body translucent: the random walk under
+    /// the surface.
+    SubsurfaceProduct,
+    /// `simple_product` lit by three lamps alone, the environment dark:
+    /// light sampling, and none of the environment's.
+    LampLit,
 }
 
 impl BenchScene {
-    pub const ALL: [BenchScene; 2] = [BenchScene::SimpleProduct, BenchScene::CadAssembly];
+    pub const ALL: [BenchScene; 5] = [
+        BenchScene::SimpleProduct,
+        BenchScene::CadAssembly,
+        BenchScene::FibreProduct,
+        BenchScene::SubsurfaceProduct,
+        BenchScene::LampLit,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             BenchScene::SimpleProduct => "simple_product",
             BenchScene::CadAssembly => "cad_assembly",
+            BenchScene::FibreProduct => "fibre_product",
+            BenchScene::SubsurfaceProduct => "subsurface_product",
+            BenchScene::LampLit => "lamp_lit",
         }
     }
 
@@ -65,6 +87,9 @@ impl BenchScene {
         match self {
             BenchScene::SimpleProduct => simple_product(),
             BenchScene::CadAssembly => cad_assembly(),
+            BenchScene::FibreProduct => fibre_product(),
+            BenchScene::SubsurfaceProduct => subsurface_product(),
+            BenchScene::LampLit => lamp_lit(),
         }
     }
 }
@@ -199,6 +224,23 @@ pub fn cylinder(radius: f32, height: f32, segments: usize) -> Mesh {
 /// the integrator switches between them, and the object sits on a ground plane
 /// that catches its shadow and bounces light back into it.
 pub fn simple_product() -> SceneDocument {
+    simple_product_with(None).0
+}
+
+/// `simple_product`, with its body in `body_material` when given, and the bus that
+/// built it for whatever is added after.
+fn simple_product_with(body_material: Option<(&'static str, MaterialType, Material)>) -> (SceneDocument, CommandBus) {
+    simple_product_mapped(&|(name, material_type, material)| match (&body_material, name) {
+        (Some(body), "Body") => body.clone(),
+        _ => (name, material_type, material),
+    })
+}
+
+/// A material of `simple_product`'s: its name, type and parameters.
+pub(crate) type BenchMaterial = (&'static str, MaterialType, Material);
+
+/// `simple_product` with each of its eight materials passed through `map`.
+pub(crate) fn simple_product_mapped(map: &dyn Fn(BenchMaterial) -> BenchMaterial) -> (SceneDocument, CommandBus) {
     let mut document = SceneDocument::new();
     let mut bus = CommandBus::new();
 
@@ -214,7 +256,7 @@ pub fn simple_product() -> SceneDocument {
 
     let meshes = vec![body, bezel, screen, lens, button, foot, ground];
     // Eight, as §4.1 specifies: one per visible part plus the ground.
-    let materials = vec![
+    let materials: Vec<BenchMaterial> = vec![
         (
             "Body",
             MaterialType::Plastic,
@@ -248,6 +290,8 @@ pub fn simple_product() -> SceneDocument {
             Material::plastic(Spectrum::from_srgb_encoded(Vec3::splat(0.55)), 0.35),
         ),
     ];
+
+    let materials: Vec<BenchMaterial> = materials.into_iter().map(map).collect();
 
     // Body, bezel, screen, lens, four buttons, four feet, ground, plus a root.
     let parts: Vec<(usize, usize, Transform)> = {
@@ -313,7 +357,94 @@ pub fn simple_product() -> SceneDocument {
         },
     )
     .expect("the benchmark scene is well formed");
+    // The ground above is the scene's floor, so the environment's own is
+    // turned off. Left on, as a new document has it, the two lay in the
+    // same plane and fought: streaks in Cycles, rings in Tequila's
+    // renderer, different in each, which the engine comparison counted as
+    // noise.
+    bus.apply(
+        &mut document,
+        Command::SetEnvironmentParameter {
+            parameter: crate::command::EnvironmentParameter::flag(crate::command::EnvParam::GroundEnabled, false),
+        },
+    )
+    .expect("the environment's ground turns off");
+    (document, bus)
+}
+
+/// `simple_product` in velvet with real fibres on its body: twenty to the
+/// square centimetre, 6 mm long, about 1.4 million over the body's 6.8 m².
+pub fn fibre_product() -> SceneDocument {
+    let mut velvet = MaterialType::Velvet.defaults();
+    velvet.fuzz_density = 20.0;
+    velvet.fuzz_length = 0.006;
+    simple_product_with(Some(("Body", MaterialType::Velvet, velvet))).0
+}
+
+/// `simple_product` with a translucent body: light enters it, wanders
+/// about 5 cm, and leaves elsewhere.
+pub fn subsurface_product() -> SceneDocument {
+    let translucent = MaterialType::Translucent.defaults();
+    simple_product_with(Some(("Body", MaterialType::Translucent, translucent))).0
+}
+
+/// `simple_product` with the environment turned down to nothing and three
+/// lamps in its place: a key and a fill panel above, a spot from behind.
+pub fn lamp_lit() -> SceneDocument {
+    use crate::command::{EnvParam, EnvironmentParameter};
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    let (mut document, mut bus) = simple_product_with(None);
+    bus.apply(
+        &mut document,
+        Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 0.0) },
+    )
+    .expect("the environment turns down");
+    // A panel shines along its own +Z and a spot along its -Z
+    // (`LightSettings::to_render_light`): a quarter turn about X one way or
+    // the other points each straight down.
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let lamps = [
+        ("Key", LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, 400.0, vec3(0.9, 2.2, 1.1), panel_down),
+        ("Fill", LightShape::Area { width: 1.0, height: 1.0, disc: true, two_sided: false }, 130.0, vec3(-1.6, 1.6, 0.6), panel_down),
+        ("Rim", LightShape::Spot { inner_degrees: 20.0, outer_degrees: 35.0, falloff: 1.0 }, 100.0, vec3(0.0, 2.4, -1.4), spot_down),
+    ];
+    for (name, shape, lumens, at, down) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(
+            &mut document,
+            Command::AddLight {
+                parent: None,
+                name: name.into(),
+                settings: Box::new(LightSettings { shape, intensity: Intensity::Lumens(lumens), ..LightSettings::default() }),
+            },
+        )
+        .expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
+    }
     document
+}
+
+/// A camera framed on a generated scene's product: on every part but the
+/// ground, which these scenes name "Ground". Framed on everything, the
+/// camera fits the 80 m ground and the product is a speck in the middle of
+/// it, and what a render measures is mostly floor.
+pub fn product_camera(document: &SceneDocument, aspect: f32) -> tequila_render_core::camera::Camera {
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(document, &product);
+    let centre = bounds.center();
+    let radius = (bounds.diagonal().length() * 0.5).max(1e-4);
+    let mut camera =
+        tequila_render_core::camera::Camera::look_at(centre + vec3(0.75, 0.45, 1.0).normalize() * radius * 2.6, centre, Vec3::Y);
+    camera.set_vertical_fov(0.62, aspect);
+    camera
 }
 
 /// §4.1's `cad_assembly`: 5M triangles, 400 parts, heavy instancing.
@@ -490,6 +621,25 @@ mod tests {
                 scene.name(),
                 a.difference_from(&b)
             );
+        }
+    }
+
+    #[test]
+    fn the_slow_variants_are_slow_in_the_way_they_say() {
+        let body = |d: &SceneDocument| d.materials.iter().find(|(_, m)| m.name == "Body").map(|(_, m)| m.material().clone()).unwrap();
+        let fibres = fibre_product();
+        let velvet = body(&fibres);
+        let request = tequila_materials::graph::FuzzRequest::of_material(&velvet).expect("fibres");
+        let wanted = crate::fuzz::wanted(6.8, &request);
+        assert!((1.0e6..2.0e6).contains(&wanted), "about 1.4 million fibres, not {wanted}");
+        assert!(body(&subsurface_product()).subsurface_weight > 0.9);
+        let lit = lamp_lit();
+        assert_eq!(lit.tree.iter().filter(|n| n.kind.light().is_some()).count(), 3);
+        assert_eq!(lit.environment.brightness, 0.0);
+        // One floor, the scene's own.
+        assert!(!simple_product().environment.ground.enabled);
+        for document in [fibres, lit] {
+            document.validate().unwrap();
         }
     }
 

@@ -1187,6 +1187,80 @@ impl LightSet {
         self.total_power
     }
 
+    /// The alias table [`LightSet::select`] reads, as built: (probability,
+    /// alternative) per light. For a renderer that chooses lamps itself
+    /// (`tequila-render-gpu`), which must choose them from these numbers and
+    /// not from a table of its own: Vose's construction rounds, and a table
+    /// rebuilt elsewhere can send a draw to the other light.
+    pub fn alias_table(&self) -> &[(f32, u32)] {
+        &self.alias
+    }
+
+    /// Each light's chance of being chosen by power ([`LightSet::selection_pdf`]).
+    pub fn probabilities(&self) -> &[f32] {
+        &self.probabilities
+    }
+
+    /// The light hierarchy [`LightSet::select_at`] descends, node by node in
+    /// the order it is stored (the root first); empty under
+    /// [`SelectionStrategy::Alias`]. As built, for the reason
+    /// [`LightSet::alias_table`] gives: the median split and the cones round
+    /// by floating point.
+    pub fn hierarchy(&self) -> impl ExactSizeIterator<Item = LightNodeView> + '_ {
+        self.nodes.iter().map(|node| LightNodeView {
+            centre: node.bounds.center(),
+            half: node.bounds.diagonal().length() * 0.5,
+            axis: node.axis,
+            cos_o: node.cos_o,
+            sin_o: node.sin_o,
+            cos_e: node.cos_e,
+            power: node.power,
+            first: node.first,
+            children: node.children,
+            parent: node.parent,
+            distant: node.distant,
+        })
+    }
+
+    /// The light indices the hierarchy's leaves point into
+    /// ([`LightNodeView::first`]).
+    pub fn order(&self) -> &[u32] {
+        &self.order
+    }
+
+    /// The leaf that holds each light, by its index ([`LightSet::selection_pdf_at`]).
+    pub fn leaves(&self) -> &[u32] {
+        &self.leaves
+    }
+}
+
+/// One node of the light hierarchy as [`LightSet::hierarchy`] shows it:
+/// what [`LightNode::importance`] reads - its bounds as their middle and
+/// half their diagonal, which is all it asks of them - and how the nodes
+/// link up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightNodeView {
+    /// The middle of the bounds of everything that emits in the subtree.
+    pub centre: Vec3,
+    /// Half the length of those bounds' diagonal.
+    pub half: f32,
+    pub axis: Vec3,
+    pub cos_o: f32,
+    pub sin_o: f32,
+    pub cos_e: f32,
+    pub power: f32,
+    /// A leaf's light, at this place in [`LightSet::order`].
+    pub first: u32,
+    /// The two children, or `None` for a leaf.
+    pub children: Option<(u32, u32)>,
+    /// The node above, `u32::MAX` at the root.
+    pub parent: u32,
+    /// The suns' subtree.
+    pub distant: bool,
+}
+
+impl LightSet {
+
     /// Choose a light, returning it and the probability of that choice.
     ///
     /// The probability is returned rather than assumed, because the estimator
@@ -1336,18 +1410,22 @@ struct LightNode {
     bounds: Aabb,
     /// Average emission direction of the subtree.
     axis: Vec3,
-    /// Half-angle the emission directions spread over. `pi` means every
-    /// direction, which is how an isotropic point light is represented — its
-    /// axis is then meaningless, and saying so here is what keeps the cone
-    /// term from ever cutting it down. For suns, how far the directions
-    /// their light comes from spread, discs included.
-    theta_o: f32,
-    /// How far past `theta_o` a light still falls off before reaching zero.
-    /// At most `pi/2`, because the term it feeds is a cosine and a wider
-    /// angle would make that cosine negative — which turns an importance into
-    /// a *negative* weight, makes one child's share exceed one, and stops the
-    /// traversal probabilities being a distribution at all.
-    theta_e: f32,
+    /// The cosine and sine of the half-angle the emission directions spread
+    /// over, `theta_o`. `pi` means every direction, which is how an
+    /// isotropic point light is represented — its axis is then meaningless,
+    /// and saying so here is what keeps the cone term from ever cutting it
+    /// down. For suns, how far the directions their light comes from
+    /// spread, discs included. Kept as cosine and sine, as `importance`
+    /// works with them.
+    cos_o: f32,
+    sin_o: f32,
+    /// The cosine of how far past `theta_o` a light still falls off before
+    /// reaching zero, `theta_e`. At most `pi/2`, because the term it feeds
+    /// is a cosine and a wider angle would make that cosine negative —
+    /// which turns an importance into a *negative* weight, makes one child's
+    /// share exceed one, and stops the traversal probabilities being a
+    /// distribution at all.
+    cos_e: f32,
     /// The lights' power; for suns, pi times their illuminance, which is
     /// what a lamp's power over its distance squared makes on a surface
     /// facing it.
@@ -1388,9 +1466,13 @@ impl LightNode {
             return 0.0;
         }
         // The way to the subtree, how far, and the half-angle its bounds
-        // subtend about that way.
-        let (direction, distance_squared, theta_u) = if self.distant {
-            (-self.axis, 1.0, self.theta_o)
+        // subtend about that way - as its cosine and sine. The angles below
+        // are worked with by their cosines throughout, with the sums and
+        // differences of angles taken by the identities, as Cycles' light
+        // tree does: an `acos` or `asin` at every node of every light
+        // sample's descent was 4% of a lamp-lit render (`docs/07` R1).
+        let (direction, distance_squared, cos_u, sin_u) = if self.distant {
+            (-self.axis, 1.0, self.cos_o, self.sin_o)
         } else {
             let centre = self.bounds.center();
             let half = self.bounds.diagonal().length() * 0.5;
@@ -1400,21 +1482,31 @@ impl LightNode {
             // The cone of the sphere round the bounds; within it, every way.
             // Measured to the box's corners instead, the choice was no
             // better and each step cost eight more directions.
-            let theta_u = if distance > half { (half / distance).clamp(0.0, 1.0).asin() } else { std::f32::consts::PI };
+            let (cos_u, sin_u) = if distance > half {
+                let sin_u = (half / distance).clamp(0.0, 1.0);
+                ((1.0 - sin_u * sin_u).max(0.0).sqrt(), sin_u)
+            } else {
+                (-1.0, 0.0)
+            };
             let distance = distance.max(0.5 * half).max(1e-4);
-            (direction, distance * distance, theta_u)
+            (direction, distance * distance, cos_u, sin_u)
         };
 
         // How the surface faces it: the least it can be turned from the
         // subtree, over every way to its bounds. A light below the horizon
         // contributes nothing, which is the single biggest saving the
         // heuristic makes in a scene lit from one side.
-        let mut cos_incident = direction.dot(normal).clamp(-1.0, 1.0);
+        let mut cos_i = direction.dot(normal).clamp(-1.0, 1.0);
         if two_sided {
-            cos_incident = cos_incident.abs();
+            cos_i = cos_i.abs();
         }
-        let theta_incident = (cos_incident.acos() - theta_u).max(0.0);
-        if theta_incident >= std::f32::consts::FRAC_PI_2 {
+        // The angle less the bounds' half-angle, no less than nothing.
+        let cos_incident = if cos_i >= cos_u {
+            1.0
+        } else {
+            cos_i * cos_u + (1.0 - cos_i * cos_i).max(0.0).sqrt() * sin_u
+        };
+        if cos_incident <= 0.0 {
             return 0.0;
         }
 
@@ -1423,14 +1515,27 @@ impl LightNode {
         let outgoing = if self.distant {
             1.0
         } else {
-            let theta = (-direction).dot(self.axis).clamp(-1.0, 1.0).acos();
-            let outside = (theta - self.theta_o - theta_u).max(0.0);
-            if outside >= self.theta_e {
-                return 0.0;
+            // The cone and the bounds' half-angle together, which from a
+            // half-turn on take in every way. Both angles are within a
+            // half-turn, so their sum reaches one exactly when the bounds'
+            // is at least what the cone's leaves of it: `cos_u <= -cos_o`.
+            // Read from the sum's sine instead, a point light's whole sphere
+            // seen from inside its bounds - a full turn - read as no angle
+            // at all, and half the ways out were cut off.
+            let cos_out = (-direction).dot(self.axis).clamp(-1.0, 1.0);
+            let cos_ou = self.cos_o * cos_u - self.sin_o * sin_u;
+            if cos_u <= -self.cos_o || cos_out >= cos_ou {
+                1.0
+            } else {
+                let sin_ou = self.sin_o * cos_u + self.cos_o * sin_u;
+                let outside = cos_out * cos_ou + (1.0 - cos_out * cos_out).max(0.0).sqrt() * sin_ou;
+                if outside <= self.cos_e {
+                    return 0.0;
+                }
+                outside
             }
-            outside.cos()
         };
-        self.power * theta_incident.cos() * outgoing / distance_squared
+        self.power * cos_incident * outgoing / distance_squared
     }
 }
 
@@ -1567,8 +1672,9 @@ fn cover(lights: &[Light], powers: &[f32], ids: &[u32], distant: bool) -> LightN
     LightNode {
         bounds,
         axis,
-        theta_o,
-        theta_e,
+        cos_o: theta_o.cos(),
+        sin_o: theta_o.sin(),
+        cos_e: theta_e.cos(),
         power,
         first: 0,
         children: None,
@@ -1687,6 +1793,106 @@ fn build_alias(probabilities: &[f32]) -> Vec<(f32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`LightNode::importance`] as it was written with the angles
+    /// themselves, before it took them by their cosines.
+    fn importance_by_angles(node: &LightNode, theta_o: f32, theta_e: f32, point: Vec3, normal: Vec3, two_sided: bool) -> f32 {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        if node.power <= 0.0 {
+            return 0.0;
+        }
+        let (direction, distance_squared, theta_u) = if node.distant {
+            (-node.axis, 1.0, theta_o)
+        } else {
+            let centre = node.bounds.center();
+            let half = node.bounds.diagonal().length() * 0.5;
+            let offset = centre - point;
+            let distance = offset.length();
+            let direction = if distance > 1e-6 { offset / distance } else { normal };
+            let theta_u = if distance > half { (half / distance).clamp(0.0, 1.0).asin() } else { PI };
+            let distance = distance.max(0.5 * half).max(1e-4);
+            (direction, distance * distance, theta_u)
+        };
+        let mut cos_incident = direction.dot(normal).clamp(-1.0, 1.0);
+        if two_sided {
+            cos_incident = cos_incident.abs();
+        }
+        let theta_incident = (cos_incident.acos() - theta_u).max(0.0);
+        if theta_incident >= FRAC_PI_2 {
+            return 0.0;
+        }
+        let outgoing = if node.distant {
+            1.0
+        } else {
+            let theta = (-direction).dot(node.axis).clamp(-1.0, 1.0).acos();
+            let outside = (theta - theta_o - theta_u).max(0.0);
+            if outside >= theta_e {
+                return 0.0;
+            }
+            outside.cos()
+        };
+        node.power * theta_incident.cos() * outgoing / distance_squared
+    }
+
+    /// Taking the angles by their cosines changes nothing but the rounding:
+    /// over every kind of cone - a point light's whole sphere, a panel's
+    /// half, a spot's narrow one, a sun's disc - and points near, far and
+    /// inside the bounds, it gives what the angles themselves gave.
+    #[test]
+    fn importance_by_cosines_is_importance_by_angles() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        use tequila_core::math::vec3;
+        let mut rng = tequila_core::rng::Pcg32::new(17, 3);
+        let unit = |rng: &mut tequila_core::rng::Pcg32| loop {
+            let v = vec3(rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0, rng.next_f32() * 2.0 - 1.0);
+            if let Some(v) = v.try_normalize() {
+                return v;
+            }
+        };
+        let mut worst = 0.0f32;
+        for case in 0..200_000 {
+            let theta_o = match case % 5 {
+                0 => PI,
+                1 => FRAC_PI_2,
+                2 => 0.0,
+                _ => rng.next_f32() * PI,
+            };
+            let theta_e = if case % 3 == 0 { FRAC_PI_2 } else { rng.next_f32() * FRAC_PI_2 };
+            let centre = vec3(rng.next_f32() * 4.0 - 2.0, rng.next_f32() * 4.0 - 2.0, rng.next_f32() * 4.0 - 2.0);
+            let extent = vec3(rng.next_f32(), rng.next_f32(), rng.next_f32()) * (rng.next_f32() * 2.0);
+            let node = LightNode {
+                bounds: Aabb::from_points(centre - extent, centre + extent),
+                axis: unit(&mut rng),
+                cos_o: theta_o.cos(),
+                sin_o: theta_o.sin(),
+                cos_e: theta_e.cos(),
+                power: 1.0,
+                first: 0,
+                children: None,
+                parent: u32::MAX,
+                distant: case % 7 == 0,
+            };
+            let point = vec3(rng.next_f32() * 6.0 - 3.0, rng.next_f32() * 6.0 - 3.0, rng.next_f32() * 6.0 - 3.0);
+            let normal = unit(&mut rng);
+            let two_sided = case % 2 == 0;
+            let by_cosines = node.importance(point, normal, two_sided);
+            let by_angles = importance_by_angles(&node, theta_o, theta_e, point, normal, two_sided);
+            // Where either is next to a cut-off the other may fall either
+            // side of it; elsewhere they agree to rounding.
+            let scale = by_angles.max(by_cosines).max(1e-6);
+            let apart = (by_cosines - by_angles).abs() / scale;
+            if apart > 1e-3 {
+                let near_edge = by_angles.min(by_cosines) < 1e-3 * scale.max(1.0) || (by_angles - by_cosines).abs() < 2e-3;
+                assert!(
+                    near_edge,
+                    "case {case}: by cosines {by_cosines}, by angles {by_angles} (theta_o {theta_o}, theta_e {theta_e}, distant {})",
+                    node.distant
+                );
+            }
+            worst = worst.max((by_cosines - by_angles).abs());
+        }
+        assert!(worst < 0.05, "the largest difference was {worst}");
+    }
 
     /// A spread keeps an area light's power, gathered into its beam: over
     /// the hemisphere, the attenuation weighted by the cosine averages to

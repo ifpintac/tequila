@@ -374,6 +374,36 @@ pub fn prewarm() {
     let _ = table();
 }
 
+/// The film's response at its nodes, [`SHORTEST`] to [`LONGEST`] 5 nm
+/// apart, as [`Wavelengths`] reads it between them: read-only, for a
+/// renderer that traces wavelengths elsewhere (Tequila's on the graphics
+/// card) to read the same numbers.
+pub fn response_nodes() -> &'static [[f32; 3]] {
+    &response().nodes
+}
+
+/// The wavelength distribution's cumulative distribution at its 1 nm bins'
+/// edges (401 of them) and each bin's density, as [`sample_wavelength`]
+/// reads them: read-only, as [`response_nodes`].
+pub fn sampling_tables() -> (&'static [f64], &'static [f32]) {
+    let sampling = sampling();
+    (&sampling.cdf, &sampling.density)
+}
+
+impl Table {
+    /// The brightness each slice along the third axis stands for:
+    /// read-only, as [`response_nodes`].
+    pub fn scale(&self) -> &[f32; RESOLUTION] {
+        &self.scale
+    }
+
+    /// The `3 × RESOLUTION³` coefficient triples as [`Table::sigmoid`]
+    /// reads them: read-only, as [`response_nodes`].
+    pub fn coefficients(&self) -> &[[f32; 3]] {
+        &self.coefficients
+    }
+}
+
 /// `smoothstep(smoothstep(t))`: the brightness axis, crowded at both ends,
 /// where colours change fastest with brightness.
 fn brightness(t: f64) -> f64 {
@@ -671,6 +701,59 @@ pub fn colour_of(spectrum: impl Fn(f32) -> f32) -> Spectrum {
         }
     }
     Spectrum { r: sum[0] as f32, g: sum[1] as f32, b: sum[2] as f32 }
+}
+
+/// The tint one crossing of clear glass gives a spectral path, as the RGB
+/// [`reflectance`] reads: the colour whose spectrum, met twice - in at one
+/// face, out at another - the film reads as `colour`. An RGB path takes the
+/// square root of the colour at each crossing, which twice is the colour;
+/// a spectral path given the square root reads its spectrum, and that
+/// spectrum squared is not the colour's: the square root's spectrum is
+/// broader, and twice over it passed more light than the colour says, a
+/// garnet 9% too red. So the root is sought whose spectrum squared is the
+/// colour's, by a few multiplicative steps from the square root.
+///
+/// Worked out once a colour (the integrator keeps them), not per path:
+/// each step integrates a spectrum.
+pub fn crossing_tint(colour: Spectrum) -> Spectrum {
+    let target = colour.to_array().map(|c| if c.is_finite() { c.clamp(0.0, 1.0) } else { 0.0 });
+    let mut tint = target.map(f32::sqrt);
+    if target[0] == target[1] && target[1] == target[2] {
+        return Spectrum { r: tint[0], g: tint[1], b: tint[2] };
+    }
+    let response = response();
+    // Coarser than `colour_of`'s tenth of a nanometre: the steps only need
+    // to know which way to go, and the last is checked by the tests at the
+    // fine step.
+    let step = 1.0f64;
+    let n = ((LONGEST - SHORTEST) as f64 / step) as usize;
+    for _ in 0..12 {
+        let (sigmoid, scale) = reflectance(Spectrum { r: tint[0], g: tint[1], b: tint[2] });
+        let mut seen = [0.0f64; 3];
+        for i in 0..n {
+            let wavelength = SHORTEST + ((i as f64 + 0.5) * step) as f32;
+            let r = response.at(wavelength);
+            let v = f64::from(sigmoid.at(normalized(wavelength)) * scale);
+            for c in 0..3 {
+                seen[c] += f64::from(r[c]) * v * v * step;
+            }
+        }
+        let mut worst = 0.0f64;
+        for c in 0..3 {
+            let want = f64::from(target[c]);
+            if want <= 0.0 {
+                tint[c] = 0.0;
+                continue;
+            }
+            let ratio = want / seen[c].max(1e-12);
+            worst = worst.max((ratio - 1.0).abs());
+            tint[c] = (f64::from(tint[c]) * ratio.sqrt()).clamp(0.0, 1.0) as f32;
+        }
+        if worst < 1e-4 {
+            break;
+        }
+    }
+    Spectrum { r: tint[0], g: tint[1], b: tint[2] }
 }
 
 /// CIELAB of a colour in the rendering space, against D65: how the table
@@ -1100,6 +1183,42 @@ mod tests {
                 assert!((s.at(u) - v).abs() < 1e-6, "grey {v} is {} at {u}", s.at(u));
             }
         }
+    }
+
+    /// Clear glass of a colour, crossed twice, is that colour on a spectral
+    /// path as on an RGB one: the crossing tint's spectrum, squared, reads
+    /// as the colour, where the square root's squared read a garnet 9% too
+    /// red. Greys are their square roots.
+    #[test]
+    fn two_crossings_of_glass_are_its_colour() {
+        let squared = |tint: Spectrum| {
+            let (sigmoid, scale) = reflectance(tint);
+            colour_of(|wavelength| {
+                let v = sigmoid.at(normalized(wavelength)) * scale;
+                v * v
+            })
+        };
+        let garnet = Spectrum { r: 0.3575, g: 0.0854, b: 0.0777 };
+        let naive = squared(Spectrum { r: garnet.r.sqrt(), g: garnet.g.sqrt(), b: garnet.b.sqrt() });
+        assert!(naive.r > garnet.r * 1.05, "the square root's spectrum squared reads {naive:?} for {garnet:?}: the test sees nothing");
+        for colour in [
+            garnet,
+            Spectrum { r: 0.76, g: 0.96, b: 0.04 },
+            Spectrum { r: 0.05, g: 0.4, b: 0.15 },
+            Spectrum { r: 0.2, g: 0.3, b: 0.9 },
+            Spectrum { r: 0.95, g: 0.9, b: 0.8 },
+        ] {
+            let seen = squared(crossing_tint(colour));
+            for (c, channel) in ["red", "green", "blue"].iter().enumerate() {
+                let (want, got) = (colour.to_array()[c], seen.to_array()[c]);
+                // To 2.5%: the palma's lime, as saturated as a bright colour
+                // gets, has no smooth spectrum whose square is it exactly,
+                // and its green comes back 2% short.
+                assert!((got - want).abs() < 0.025 * want + 2e-3, "{colour:?} crossed twice reads {got:.4} {channel}, not {want:.4}");
+            }
+        }
+        let grey = crossing_tint(Spectrum::splat(0.25));
+        assert_eq!(grey, Spectrum::splat(0.5));
     }
 
     /// The hero alone carries the light of all four.

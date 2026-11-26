@@ -169,6 +169,20 @@ impl MeshCache {
         MeshCache::default()
     }
 
+    /// `texture` as what `id` decodes to, for a picture made rather than
+    /// read from a file: the parity set's (`crate::parity`), generated so
+    /// no image file is shipped.
+    pub fn insert_texture(&mut self, id: TextureId, texture: Arc<Texture>) {
+        self.textures.insert(id, Some(texture));
+    }
+
+    /// `profile` as what the photometric file at `path` reads, for a profile
+    /// made rather than read from a file: the parity set's
+    /// (`crate::parity::parity_profile`), generated so no file is shipped.
+    pub fn insert_photometry(&mut self, path: &str, profile: Arc<tequila_render_core::ies::IesProfile>) {
+        self.photometry.insert(path.to_string(), Some(profile));
+    }
+
     /// Decode a texture, or hand back what was decoded before.
     ///
     /// A failure is remembered as a failure, so a missing file is attempted

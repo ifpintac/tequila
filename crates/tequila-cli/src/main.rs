@@ -40,6 +40,7 @@ use std::time::Instant;
 
 mod farm;
 mod mcp;
+mod noise_bench;
 mod self_test;
 mod serve;
 
@@ -53,8 +54,12 @@ struct Options {
     /// A `.tequila` project or a model to import. `None` renders the demo
     /// scene.
     input: Option<String>,
-    /// Measure a reference benchmark scene rather than rendering an image.
-    bench: Option<BenchScene>,
+    /// Measure a reference benchmark scene, or a file, rather than
+    /// rendering an image: a generated scene's name or a path.
+    bench: Option<String>,
+    /// Where `--bench` with an engine appends its measurement, one JSON
+    /// object a line.
+    json: Option<String>,
     material: DemoMaterial,
     roughness: f32,
     preset: Option<LightingPreset>,
@@ -167,6 +172,7 @@ impl Default for Options {
             output: "tequila.png".into(),
             input: None,
             bench: None,
+            json: None,
             material: DemoMaterial::Plastic,
             pins: None,
             sky: None,
@@ -239,7 +245,12 @@ tequila - headless renderer
 usage: tequila [options]
 
       --bench NAME      measure a reference scene instead of rendering:
-                        simple_product | cad_assembly
+                        simple_product | cad_assembly, against the targets.
+                        With --engine, --device or --json, or a project
+                        file for NAME: the time each engine takes to a
+                        clean picture (-w -h -s set the size and samples,
+                        -o keeps the first picture)
+      --json FILE       with --bench: append the measurement to FILE
   -i, --input PATH      a .tequila project, a KeyShot scene (.ksp .bip,
                         rendered with its own camera, lighting and look),
                         or a model to import (.obj .stl .ply .3mf .fbx
@@ -265,7 +276,8 @@ usage: tequila [options]
       --engine NAME     tequila or cycles: render with Blender's Cycles,
                         when tequila_cycles.dll is installed (default: a
                         project's own engine, else tequila)
-      --device NAME     the Cycles device: CPU, OPTIX, CUDA (default: the
+      --device NAME     Cycles: CPU, OPTIX, CUDA; Tequila's renderer: CPU,
+                        or GPU (experimental, docs/07) (default: the
                         engine's - a project's graphics-card engine uses the
                         card, else the processor)
       --hdri PATH       light with an HDR or EXR environment
@@ -470,13 +482,8 @@ fn parse_args() -> Result<Options, String> {
             "--rows" => options.rows = value()?.parse().map_err(|_| "rows must be a number")?,
             "--tilt" => options.tilt = value()?.parse().map_err(|_| "tilt must be a number")?,
             "-i" | "--input" => options.input = Some(value()?),
-            "--bench" => {
-                let name = value()?;
-                options.bench = Some(
-                    BenchScene::from_name(&name)
-                        .ok_or_else(|| format!("unknown benchmark scene {name:?}"))?,
-                );
-            }
+            "--bench" => options.bench = Some(value()?),
+            "--json" => options.json = Some(value()?),
             "-w" | "--width" => {
                 options.width = Some(value()?.parse().map_err(|_| "width must be a number")?)
             }
@@ -583,8 +590,13 @@ fn main() {
         }
     };
 
-    let outcome = match options.bench {
-        Some(scene) => benchmark(scene),
+    let outcome = match options.bench.as_deref() {
+        // The targets report, as before, unless an engine, a file or
+        // `--json` asks for the comparison of engines.
+        Some(name) => match BenchScene::from_name(name) {
+            Some(scene) if options.cycles.is_none() && options.json.is_none() && options.device.is_none() => benchmark(scene),
+            _ => noise_bench::run(&options, name),
+        },
         None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
         None if options.self_test => test_this_computer(&options),
         None if options.substance_info.is_some() => substance_info(options.substance_info.as_deref().unwrap_or_default()),
@@ -1365,7 +1377,8 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         scene_seed: 0,
         // The project's own, as the Render window renders with.
         reject_fireflies: if project { settings.reject_fireflies } else { true },
-        clamp_sample: if project { settings.clamp_indirect } else { None },
+        clamp_indirect: if project { settings.clamp_indirect } else { None },
+        clamp_direct: if project { settings.clamp_direct } else { None },
         region: None,
         ..Default::default()
     };
@@ -1380,6 +1393,33 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         return render_with_cycles(&cycles_device, output, &scene, camera, width, height, samples, keep_alpha, &context.config, denoise, style, cut, project.then_some(&settings));
     }
 
+    // `--device GPU` with Tequila's own renderer: its first transport on the
+    // graphics card (docs/07 R2.5), every surface grey and diffuse until R3
+    // brings the materials over.
+    let on_card = options.device.as_deref().is_some_and(|d| d.eq_ignore_ascii_case("gpu"));
+    let card = if on_card {
+        let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
+            .map_err(|why| format!("--device GPU: {why}"))?;
+        println!(
+            "  on the graphics card, {}: materials, glass among them, volumes that scatter, subsurface scattering, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor, the lamps, background colours and backplates, depth of field, shifted, orthographic and 360-degree cameras, pixel filters, a dome of a size, parts hidden from some rays and held out, shadow links, parts and lamps that cast no shadow, IES lamps, the floor's shadows from the lamps, direct lighting off, metallic flakes, thin films, dispersion, rendering by wavelength; caustics, fibres, cutaways and Volume Maps are still to come (docs/07 R3)",
+            gpu.describe()
+        );
+        let settings = tequila_render_gpu::transport::FrameSettings {
+            camera: context.camera,
+            config: context.config.clone(),
+            scene_seed: context.scene_seed,
+            reject_fireflies: context.reject_fireflies,
+            clamp_direct: context.clamp_direct,
+            clamp_indirect: context.clamp_indirect,
+        };
+        Some((tequila_render_gpu::transport::GpuRenderer::new(gpu, tequila_render_core::intersect::Intersector::scene(&intersector)), settings))
+    } else {
+        None
+    };
+    // The card returns no albedo or normals yet, which the denoiser's guides
+    // are made of.
+    let denoise = denoise && card.is_none();
+
     let mut framebuffer = Framebuffer::new(width, height);
     let render_start = Instant::now();
     println!(
@@ -1393,7 +1433,10 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     let mut done = 0;
     while done < samples {
         let batch = BATCH.min(samples - done);
-        render_pass(&intersector, &mut framebuffer, &context, &schedule, batch);
+        match &card {
+            Some((renderer, settings)) => renderer.render_pass(&mut framebuffer, settings, batch),
+            None => render_pass(&intersector, &mut framebuffer, &context, &schedule, batch),
+        }
         done += batch;
         print!(
             "\r  {done}/{} spp   {:.0}% converged",

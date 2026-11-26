@@ -282,18 +282,22 @@ mod tests {
         assert!(!i.occluded(Vec3::ZERO, Vec3::Y, vec3(5.0, 0.1, 0.0), -Vec3::Y));
     }
 
-    /// A shadow ray aimed at a surface must not report that surface as its own
-    /// occluder. This is the offsetting bug that turns every light black.
+    /// A shadow ray leaving a surface, one step off it, or aimed at one, must
+    /// not report that surface as its own occluder. This is the offsetting
+    /// bug that turns every light black.
     #[test]
     fn a_surface_does_not_shadow_itself() {
+        use tequila_core::math::offset_ray_origin;
         let i = AnalyticIntersector::new(empty_scene()).with_plane(Plane::new(
             Vec3::ZERO,
             Vec3::Y,
             MaterialId(0),
         ));
-        assert!(!i.occluded(Vec3::ZERO, Vec3::Y, vec3(0.0, 10.0, 0.0), -Vec3::Y));
+        assert!(!i.occluded(offset_ray_origin(Vec3::ZERO, Vec3::Y), Vec3::Y, vec3(0.0, 10.0, 0.0), -Vec3::Y));
+        assert!(!i.occluded(vec3(0.0, 10.0, 0.0), -Vec3::Y, Vec3::ZERO, Vec3::Y), "met the surface it was aimed at");
         // Also at a large scene scale, where a fixed epsilon would fail.
         let far = vec3(1.0e5, 0.0, 1.0e5);
-        assert!(!i.occluded(far, Vec3::Y, far + vec3(0.0, 100.0, 0.0), -Vec3::Y));
+        assert!(!i.occluded(offset_ray_origin(far, Vec3::Y), Vec3::Y, far + vec3(0.0, 100.0, 0.0), -Vec3::Y));
+        assert!(!i.occluded(far + vec3(0.0, 100.0, 0.0), -Vec3::Y, far, Vec3::Y), "met the surface it was aimed at, at scale");
     }
 }

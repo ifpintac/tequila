@@ -337,6 +337,233 @@ pub struct Environment {
     /// The surface the image is mapped onto. Not part of the CDF, so changing
     /// it is free.
     dome: Dome,
+    /// The image in tiles, for drawing only from what a surface facing one
+    /// way can see ([`Environment::sample_facing`]).
+    facing: Facing,
+}
+
+/// [`Environment::tables`]: the images and the sampling tables, borrowed.
+#[derive(Debug)]
+pub struct EnvironmentTables<'a> {
+    pub image: &'a Image,
+    /// What the camera sees; `image` itself when the two are the same.
+    pub camera_image: &'a Image,
+    pub intensity: f32,
+    pub rotation: Mat4,
+    pub inverse_rotation: Mat4,
+    pub width: usize,
+    pub height: usize,
+    pub luminance: &'a [f32],
+    pub conditional_cdf: &'a [f32],
+    pub weighted_sum: f32,
+    /// The dome is infinitely far, which is all `sample_facing` handles.
+    pub infinite: bool,
+    pub tiles_x: usize,
+    pub tiles_y: usize,
+    pub tile_of_column: &'a [u16],
+    pub tile_of_row: &'a [u16],
+    pub power: &'a [f32],
+    pub rows: &'a [f32],
+    pub row_start: &'a [usize],
+    pub choice: &'a [f32],
+    /// The rows' CDF, `height + 1` entries, that [`Environment::sample_irradiance`]
+    /// draws a surface not facing straight up from.
+    pub marginal_cdf: &'a [f32],
+    /// The rows' CDF weighted by their mean cosine towards straight up,
+    /// `height + 1` entries, and its normalization constant: what a floor
+    /// facing straight up draws from, and its light
+    /// ([`Environment::sample_irradiance`], [`Environment::irradiance_bound`]).
+    pub upward_cdf: &'a [f32],
+    pub upward_sum: f32,
+}
+
+/// The environment cut into tiles, each a cone of directions, and for each
+/// of a few hundred ways a surface can face, the chance of drawing from each
+/// tile: in proportion to its light and to the most that light can lean onto
+/// a surface facing within that range, and nothing from a tile wholly behind
+/// it (`docs/07` R1).
+///
+/// Drawn in proportion to its light alone, the sky sends a surface's samples
+/// wherever it is brightest, behind the surface as readily as in front: on
+/// the Headphones, lit by rim strips from behind, 63% of them fell below the
+/// surface they were lighting and lit nothing, and the dim front of the sky
+/// that does light what the camera sees was drawn seldom. Within a tile the
+/// draw is as before, by the light of each texel, so the density is the
+/// whole image's reweighted tile by tile, and it is known for any direction
+/// and any facing, which is what weighing a bounce that met the sky against
+/// it needs.
+#[derive(Clone, Debug)]
+struct Facing {
+    tiles_x: usize,
+    tiles_y: usize,
+    /// Which tile column each image column is in, and which tile row each
+    /// image row.
+    tile_of_column: Vec<u16>,
+    tile_of_row: Vec<u16>,
+    /// Each tile's light: `luminance * sin(theta)` summed over its texels,
+    /// as the rows below add it up.
+    power: Vec<f32>,
+    /// Each tile's light row by row, summed up its rows (`rows + 1` entries a
+    /// tile, from `row_start`).
+    rows: Vec<f32>,
+    row_start: Vec<usize>,
+    /// For each facing (`FACING_BINS` to a cube face), the chance of each
+    /// tile summed up the tiles: `tiles + 1` entries a facing, 1 at the end,
+    /// or 0 throughout where nothing lights a surface facing that way.
+    choice: Vec<f32>,
+}
+
+/// Facings to a side of the cube a surface's normal is binned on.
+const FACING_BINS: usize = 8;
+
+/// The tiles across and down: an equirectangular image's 2:1, each tile some
+/// eleven degrees of sky.
+const TILES_X: usize = 32;
+const TILES_Y: usize = 16;
+
+/// A point on the cube of facings: `face` 0 to 5 (+X, -X, +Y, -Y, +Z, -Z),
+/// `a` and `b` along the face from -1 to 1.
+fn face_point(face: usize, a: f32, b: f32) -> Vec3 {
+    let s = if face % 2 == 0 { 1.0 } else { -1.0 };
+    match face / 2 {
+        0 => Vec3 { x: s, y: a, z: b },
+        1 => Vec3 { x: a, y: s, z: b },
+        _ => Vec3 { x: a, y: b, z: s },
+    }
+}
+
+/// The facing bin a normal (in the image's own frame) falls in.
+fn facing_bin(n: Vec3) -> usize {
+    let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
+    let (face, a, b, major) = if ax >= ay && ax >= az {
+        (if n.x >= 0.0 { 0 } else { 1 }, n.y, n.z, ax)
+    } else if ay >= az {
+        (if n.y >= 0.0 { 2 } else { 3 }, n.x, n.z, ay)
+    } else {
+        (if n.z >= 0.0 { 4 } else { 5 }, n.x, n.y, az)
+    };
+    let major = major.max(1e-12);
+    let cell = |t: f32| (((t / major + 1.0) * 0.5 * FACING_BINS as f32) as usize).min(FACING_BINS - 1);
+    (face * FACING_BINS + cell(a)) * FACING_BINS + cell(b)
+}
+
+impl Facing {
+    fn new(
+        width: usize,
+        height: usize,
+        luminance_row_integrals: &[f32],
+        conditional_cdf: &[f32],
+    ) -> Facing {
+        let tiles_x = TILES_X.min(width).max(1);
+        let tiles_y = TILES_Y.min(height).max(1);
+        let column_start = |tx: usize| tx * width / tiles_x;
+        let row_begin = |ty: usize| ty * height / tiles_y;
+        let mut tile_of_column = vec![0u16; width];
+        for tx in 0..tiles_x {
+            for c in tile_of_column.iter_mut().take(column_start(tx + 1)).skip(column_start(tx)) {
+                *c = tx as u16;
+            }
+        }
+        let mut tile_of_row = vec![0u16; height];
+        for ty in 0..tiles_y {
+            for r in tile_of_row.iter_mut().take(row_begin(ty + 1)).skip(row_begin(ty)) {
+                *r = ty as u16;
+            }
+        }
+        let tiles = tiles_x * tiles_y;
+        let mut power = vec![0.0f32; tiles];
+        let mut rows = Vec::new();
+        let mut row_start = vec![0usize; tiles];
+        let mut axis = vec![Vec3::Y; tiles];
+        let mut spread = vec![0.0f32; tiles];
+        for ty in 0..tiles_y {
+            for tx in 0..tiles_x {
+                let t = ty * tiles_x + tx;
+                let (x0, x1) = (column_start(tx), column_start(tx + 1));
+                let (y0, y1) = (row_begin(ty), row_begin(ty + 1));
+                row_start[t] = rows.len();
+                let mut running = 0.0f32;
+                rows.push(0.0);
+                for y in y0..y1 {
+                    let row = &conditional_cdf[y * (width + 1)..(y + 1) * (width + 1)];
+                    running += luminance_row_integrals[y] * (row[x1] - row[x0]).max(0.0);
+                    rows.push(running);
+                }
+                power[t] = running;
+                // The tile's cone: its middle, and the widest angle out to
+                // its edges, where a tile on the image's grid is widest.
+                let at = |u: f32, v: f32| {
+                    tequila_core::sampling::equirect_to_direction(Vec2 { x: u / width as f32, y: v / height as f32 })
+                };
+                let middle = at((x0 + x1) as f32 * 0.5, (y0 + y1) as f32 * 0.5);
+                let mut edge = Vec::new();
+                for k in 0..=8 {
+                    let f = k as f32 / 8.0;
+                    let (u, v) = (x0 as f32 + (x1 - x0) as f32 * f, y0 as f32 + (y1 - y0) as f32 * f);
+                    edge.extend([at(u, y0 as f32), at(u, y1 as f32), at(x0 as f32, v), at(x1 as f32, v)]);
+                }
+                let mean = edge.iter().fold(middle, |sum, d| sum + *d);
+                let a = mean.try_normalize().unwrap_or(middle);
+                axis[t] = a;
+                // Half again a step along the edge, for the sky between the
+                // points measured.
+                let widest = edge.iter().map(|d| a.dot(*d).clamp(-1.0, 1.0).acos()).fold(0.0f32, f32::max);
+                let step = PI / tiles_y as f32 / 8.0;
+                spread[t] = (widest + step).min(PI);
+            }
+        }
+        // Each facing's chances: a tile's light times the most it can lean
+        // onto a surface facing anywhere in the bin, nothing from a tile no
+        // such surface can see.
+        let bins = 6 * FACING_BINS * FACING_BINS;
+        let mut choice = vec![0.0f32; bins * (tiles + 1)];
+        for face in 0..6 {
+            for i in 0..FACING_BINS {
+                for j in 0..FACING_BINS {
+                    let bin = (face * FACING_BINS + i) * FACING_BINS + j;
+                    let at = |k: f32| k / FACING_BINS as f32 * 2.0 - 1.0;
+                    let centre = face_point(face, at(i as f32 + 0.5), at(j as f32 + 0.5)).normalize();
+                    let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)];
+                    let reach = corners
+                        .iter()
+                        .map(|(di, dj)| centre.dot(face_point(face, at(i as f32 + di), at(j as f32 + dj)).normalize()).clamp(-1.0, 1.0).acos())
+                        .fold(0.0f32, f32::max)
+                        + 1e-3;
+                    let out = &mut choice[bin * (tiles + 1)..(bin + 1) * (tiles + 1)];
+                    let mut running = 0.0f32;
+                    for t in 0..tiles {
+                        let apart = centre.dot(axis[t]).clamp(-1.0, 1.0).acos() - reach - spread[t];
+                        let lean = if apart <= 0.0 {
+                            1.0
+                        } else if apart >= std::f32::consts::FRAC_PI_2 {
+                            0.0
+                        } else {
+                            apart.cos()
+                        };
+                        running += power[t] * lean;
+                        out[t + 1] = running;
+                    }
+                    if running > 0.0 {
+                        for entry in out.iter_mut().skip(1) {
+                            *entry /= running;
+                        }
+                    }
+                }
+            }
+        }
+        Facing { tiles_x, tiles_y, tile_of_column, tile_of_row, power, rows, row_start, choice }
+    }
+
+    fn tiles(&self) -> usize {
+        self.tiles_x * self.tiles_y
+    }
+
+    /// The tile chances for a surface facing `n`, in the image's frame.
+    fn choices(&self, n: Vec3) -> &[f32] {
+        let bin = facing_bin(n);
+        let stride = self.tiles() + 1;
+        &self.choice[bin * stride..(bin + 1) * stride]
+    }
 }
 
 impl Environment {
@@ -430,6 +657,7 @@ impl Environment {
                 *entry *= inv;
             }
         }
+        let facing = Facing::new(width, height, &row_integrals, &conditional_cdf);
 
         // The same rows, each weighted by how squarely it faces straight up:
         // the light onto a floor, row by row, for `sample_irradiance` to draw
@@ -463,6 +691,7 @@ impl Environment {
             width,
             height,
             dome: Dome::default(),
+            facing,
         }
     }
 
@@ -513,6 +742,39 @@ impl Environment {
     /// The image the camera sees, when it differs from the one that lights.
     pub fn camera_image(&self) -> Option<&Arc<Image>> {
         self.camera_image.as_ref()
+    }
+
+    /// Everything [`Self::radiance`], [`Self::background_radiance_from`],
+    /// [`Self::sample_facing`], [`Self::pdf_facing`], [`Self::irradiance_bound`]
+    /// and [`Self::sample_irradiance`] read (an infinitely far dome), for a renderer
+    /// that keeps its own copy: the graphics card's (`tequila-render-gpu`),
+    /// which uploads these as they are so it samples the very same light.
+    pub fn tables(&self) -> EnvironmentTables<'_> {
+        let f = &self.facing;
+        EnvironmentTables {
+            image: &self.image,
+            camera_image: self.camera_image.as_deref().unwrap_or(&self.image),
+            intensity: self.intensity,
+            rotation: self.rotation,
+            inverse_rotation: self.inverse_rotation,
+            width: self.width,
+            height: self.height,
+            luminance: &self.luminance,
+            conditional_cdf: &self.conditional_cdf,
+            weighted_sum: self.weighted_sum,
+            infinite: self.dome.is_infinite(),
+            tiles_x: f.tiles_x,
+            tiles_y: f.tiles_y,
+            tile_of_column: &f.tile_of_column,
+            tile_of_row: &f.tile_of_row,
+            power: &f.power,
+            rows: &f.rows,
+            row_start: &f.row_start,
+            choice: &f.choice,
+            marginal_cdf: &self.marginal_cdf,
+            upward_cdf: &self.upward_cdf,
+            upward_sum: self.upward_sum,
+        }
     }
 
     /// Radiance arriving at `origin` from a world-space direction.
@@ -597,9 +859,91 @@ impl Environment {
         })
     }
 
+    /// Importance-sample a direction as seen from `origin` by a surface whose
+    /// geometric normal, on the side it is lit from, is `facing`: only what
+    /// it can see, in proportion to its light and to how squarely it can
+    /// lean onto such a surface ([`Facing`]). `None`, a surface lit from
+    /// both sides, and a finite dome draw from the whole sky
+    /// ([`Self::sample_from`]). [`Self::pdf_facing`] is its density.
+    pub fn sample_facing(&self, origin: Vec3, facing: Option<Vec3>, u: Vec2) -> Option<EnvironmentSample> {
+        let Some(normal) = facing.filter(|_| self.dome.is_infinite()) else {
+            return self.sample_from(origin, u);
+        };
+        if self.weighted_sum <= 0.0 {
+            return None;
+        }
+        let f = &self.facing;
+        let choices = f.choices(self.inverse_rotation.transform_vector(normal));
+        let tiles = f.tiles();
+        if !(choices[tiles] > 0.0) {
+            return None;
+        }
+        // The tile, and what is left of `u.x` for the column.
+        let t = find_interval(choices, u.x);
+        let ux = segment_offset(choices, t, u.x);
+        let (tx, ty) = (t % f.tiles_x, t / f.tiles_x);
+        let (x0, x1) = (tx * self.width / f.tiles_x, (tx + 1) * self.width / f.tiles_x);
+        let y0 = ty * self.height / f.tiles_y;
+        // The row, by the tile's light row by row.
+        let rows = &f.rows[f.row_start[t]..f.row_start[t] + (ty + 1) * self.height / f.tiles_y - y0 + 1];
+        let total = rows[rows.len() - 1];
+        if !(total > 0.0) {
+            return None;
+        }
+        let along = u.y * total;
+        let ry = find_interval(rows, along);
+        let dy = segment_offset(rows, ry, along);
+        let y = y0 + ry;
+        // The column, by the row's own CDF over the tile's columns.
+        let row = &self.conditional_cdf[y * (self.width + 1)..(y + 1) * (self.width + 1)];
+        let across = row[x0] + ux * (row[x1] - row[x0]);
+        let x = find_interval(row, across).clamp(x0, x1 - 1);
+        let dx = segment_offset(row, x, across);
+        let uv = Vec2 { x: (x as f32 + dx) / self.width as f32, y: (y as f32 + dy) / self.height as f32 };
+        let direction = self.rotation.transform_vector(equirect_to_direction(uv)).normalize();
+        let pdf = self.pdf_facing(origin, direction, facing);
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(pdf > 0.0) {
+            return None;
+        }
+        Some(EnvironmentSample { direction, radiance: self.radiance(direction), pdf, distance: f32::INFINITY })
+    }
+
+    /// Density of [`Self::sample_facing`] having produced `world_direction`
+    /// at `origin`, for a surface facing `facing`.
+    pub fn pdf_facing(&self, origin: Vec3, world_direction: Vec3, facing: Option<Vec3>) -> f32 {
+        let Some(normal) = facing.filter(|_| self.dome.is_infinite()) else {
+            return self.pdf_from(origin, world_direction);
+        };
+        if self.weighted_sum <= 0.0 {
+            return 0.0;
+        }
+        let f = &self.facing;
+        let choices = f.choices(self.inverse_rotation.transform_vector(normal));
+        let local = self.inverse_rotation.transform_vector(world_direction);
+        let uv = direction_to_equirect(local);
+        let x = ((uv.x * self.width as f32) as usize).min(self.width - 1);
+        let y = ((uv.y * self.height as f32) as usize).min(self.height - 1);
+        let t = f.tile_of_row[y] as usize * f.tiles_x + f.tile_of_column[x] as usize;
+        let chance = choices[t + 1] - choices[t];
+        let power = f.power[t];
+        if !(chance > 0.0 && power > 0.0) {
+            return 0.0;
+        }
+        // The tile's chance, times the texel's share of the tile, over the
+        // texel's solid angle - the whole image's density with the tile's
+        // chance in place of its share of the whole (see `pdf`).
+        chance * self.luminance[y * self.width + x] * (self.width * self.height) as f32 / (power * 2.0 * PI * PI)
+    }
+
     /// Radiance arriving from a world-space direction, with the dome
     /// infinitely far away.
     pub fn radiance(&self, world_direction: Vec3) -> Spectrum {
+        // Turned down to nothing, it is black everywhere, without the
+        // texture read (`docs/07` R1).
+        if self.intensity == 0.0 {
+            return Spectrum::ZERO;
+        }
         let local = self.inverse_rotation.transform_vector(world_direction);
         let uv = direction_to_equirect(local);
         let rgb = self.image.sample_bilinear_wrap_u(uv.x, uv.y);
@@ -637,6 +981,7 @@ impl Environment {
         // except as a slow brightness drift towards the poles.
         luminance * (self.width * self.height) as f32 / (self.weighted_sum * 2.0 * PI * PI)
     }
+
 
     /// The most one direction drawn by [`Self::sample_irradiance`] can bring
     /// onto a surface at `origin` facing `normal`, in luminance.
@@ -1497,6 +1842,69 @@ mod tests {
         });
         let got = estimate(&dome, vec3(2.5, 0.0, -1.0), Vec3::Y);
         assert!((got - expected).abs() < 0.02 * expected, "in a close, flattened dome: {got:.4} against {expected:.4}");
+    }
+
+    /// Drawing only what a surface can see ([`Environment::sample_facing`])
+    /// is a density over the sphere for every facing, agrees with its own
+    /// draws, puts nothing behind the surface, gives every direction in
+    /// front that has light some chance, and estimates the same light onto
+    /// the surface as drawing from the whole sky.
+    #[test]
+    fn drawing_what_a_surface_faces_is_a_density_and_estimates_the_same() {
+        let env = sun_env(40, 10, 400.0);
+        let mut rng = Pcg32::new(11, 3);
+        let normals = [vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(-0.3, -0.2, 0.93).normalize(), vec3(0.6, -0.7, -0.4).normalize()];
+        for n in normals {
+            // A density: the integral over the sphere is 1, or 0 where
+            // nothing lights a surface facing that way.
+            // By quadrature, at four points to each of the image's texels.
+            let (gw, gh) = (256usize, 128usize);
+            let mut integral = 0.0f64;
+            for gy in 0..gh {
+                for gx in 0..gw {
+                    let uv = vec2((gx as f32 + 0.5) / gw as f32, (gy as f32 + 0.5) / gh as f32);
+                    let d = tequila_core::sampling::equirect_to_direction(uv);
+                    let solid = 2.0 * std::f64::consts::PI * std::f64::consts::PI * (uv.y as f64 * std::f64::consts::PI).sin() / (gw * gh) as f64;
+                    let pdf = env.pdf_facing(Vec3::ZERO, d, Some(n));
+                    integral += pdf as f64 * solid;
+                    if pdf == 0.0 && d.dot(n) > 0.0 {
+                        assert!(env.radiance(d).luminance() == 0.0 || env.pdf(d) == 0.0, "{n:?}: a lit direction in front of the surface could never be drawn: {d:?}");
+                    }
+                }
+            }
+            let _ = sample_uniform_sphere(vec2(rng.next_f32(), rng.next_f32()));
+            assert!((integral - 1.0).abs() < 0.03, "{n:?}: the density integrates to {integral}");
+            // Its draws: their density is the one it reports, none lies
+            // wholly behind the surface's tiles, and the light onto the
+            // surface they estimate is the whole sky's.
+            let (mut facing_estimate, mut whole_estimate) = (0.0f64, 0.0f64);
+            let draws = 200_000;
+            for i in 0..draws {
+                let u = vec2((i as f32 + 0.5) / draws as f32, rng.next_f32());
+                if let Some(s) = env.sample_facing(Vec3::ZERO, Some(n), u) {
+                    let pdf = env.pdf_facing(Vec3::ZERO, s.direction, Some(n));
+                    assert!((pdf - s.pdf).abs() <= 1e-3 * pdf.max(1.0), "{n:?}: sampled pdf {} against {pdf}", s.pdf);
+                    facing_estimate += (s.radiance.luminance() * s.direction.dot(n).max(0.0) / s.pdf) as f64;
+                }
+                if let Some(s) = env.sample(u) {
+                    whole_estimate += (s.radiance.luminance() * s.direction.dot(n).max(0.0) / s.pdf) as f64;
+                }
+            }
+            let (a, b) = (facing_estimate / draws as f64, whole_estimate / draws as f64);
+            // The light onto the surface by quadrature, over a grid much finer
+            // than the image's texels.
+            let (gw, gh) = (1024usize, 512usize);
+            let mut reference = 0.0f64;
+            for gy in 0..gh {
+                for gx in 0..gw {
+                    let uv = vec2((gx as f32 + 0.5) / gw as f32, (gy as f32 + 0.5) / gh as f32);
+                    let d = tequila_core::sampling::equirect_to_direction(uv);
+                    let solid = 2.0 * std::f64::consts::PI * std::f64::consts::PI * (uv.y as f64 * std::f64::consts::PI).sin() / (gw * gh) as f64;
+                    reference += (env.radiance(d).luminance() * d.dot(n).max(0.0)) as f64 * solid;
+                }
+            }
+            assert!((a - reference).abs() < 0.01 * reference.max(1e-3), "{n:?}: drawn by facing {a}, by quadrature {reference} (from the whole sky {b})");
+        }
     }
 
     #[test]
