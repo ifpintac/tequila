@@ -2626,6 +2626,27 @@ fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> 
     return true;
 }
 
+// integrator.rs's glass_pass, its number: what a crossing's `weight` scales
+// the lobe's tint `root` (the square root of the glass's colour) by, the
+// same in every channel the root has; nought where the weight is not that
+// root scaled - glass under a coloured coat - and the weight is read as it
+// is.
+fn glass_pass_scale(root: vec3<f32>, weight: vec3<f32>) -> f32 {
+    let has = root > vec3<f32>(1e-4);
+    let k = vec3<f32>(cy_div(weight.x, select(1.0, root.x, has.x)), cy_div(weight.y, select(1.0, root.y, has.y)), cy_div(weight.z, select(1.0, root.z, has.z)));
+    // The first channel the root has.
+    let scale = select(select(k.z, k.y, has.y), k.x, has.x);
+    if (!any(has) || !(is_finite(scale) && scale > 0.0)) {
+        return 0.0;
+    }
+    let apart = abs(k - vec3<f32>(scale)) > vec3<f32>(1e-3 * scale);
+    let stray = weight > vec3<f32>(1e-6);
+    if (any(select(stray, apart, has))) {
+        return 0.0;
+    }
+    return scale;
+}
+
 // Where a path that ends at the first glass ends: at once, or once the
 // reflection split off there is traced.
 fn shade_ends(split: ptr<function, SplitOff>, splitting: bool) -> u32 {
@@ -2859,7 +2880,22 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     let throughput = (*st).throughput * (sample.f * (abs(sample.wi.z) / sample.pdf));
     var tp4 = (*st).tp4;
     if (FEATURE_SPECTRAL && spectral_on) {
-        tp4 = tp4 * spectral_of(sample.f * (abs(sample.wi.z) / sample.pdf), false);
+        // A pass through clear glass of a colour takes the glass's crossing
+        // tint, scaled by the number its weight scales the lobe's tint by
+        // (#187, ic:2438-2442's glass_pass): two crossings are the colour,
+        // where the weight's own spectrum read a garnet too red. Anything
+        // else is read by its weight; one look-up either way.
+        let weight = sample.f * (abs(sample.wi.z) / sample.pdf);
+        var read = weight;
+        var by = 1.0;
+        if ((material.glass & GLASS_TINTED) != 0u && sample.is_transmission && (splits || chosen.slot != LOBE_SUBSURFACE)) {
+            let k = glass_pass_scale(material.transmission_tint.xyz, weight);
+            if (k > 0.0) {
+                read = crossing_tint_of(material);
+                by = k;
+            }
+        }
+        tp4 = tp4 * cy_exact4(spectral_of(read, false) * by);
         // Through a dispersive surface each wavelength leaves its own way:
         // the hero goes on for all four (ic:2356-2363).
         if (disperses && sample.is_transmission && !(*st).alone) {
