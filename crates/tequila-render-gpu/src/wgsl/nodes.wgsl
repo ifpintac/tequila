@@ -203,6 +203,44 @@ fn cy_cos(x: f32) -> f32 {
     return cy_sincos(x).y;
 }
 
+// Sine and cosine as the processor's nodes and patterns have them
+// (tequila-texture's trig.rs: one implementation on both, as the platform's
+// sinf cannot be matched): Cephes' sinf and cosf, the reduction by quarter
+// turns and both polynomials in fused steps as written there. (sin, cos).
+fn cy_trig(xx: f32) -> vec2<f32> {
+    let x0 = abs(xx);
+    var j = cy_to_i32(x0 * 1.27323954473516);
+    var y = cy_u32_to_f32(u32(j));
+    if ((j & 1) != 0) {
+        j += 1;
+        y += 1.0;
+    }
+    let k = (j >> 1) & 3;
+    var x = fma(-y, 0.78515625, x0);
+    x = fma(-y, 2.4187564849853515625e-4, x);
+    x = fma(-y, 3.77489497744594108e-8, x);
+    let z = cy_exact(x * x);
+    let p = fma(fma(-1.9515295891e-4, z, 8.3321608736e-3), z, -1.6666654611e-1);
+    let s = fma(cy_exact(p * z), x, x);
+    let q = fma(fma(2.443315711809948e-5, z, -1.388731625493765e-3), z, 4.166664568298827e-2);
+    let c = fma(cy_exact(q * z), z, fma(-0.5, z, 1.0));
+    var sine: f32;
+    var cosine: f32;
+    switch k {
+        case 0: { sine = s; cosine = c; }
+        case 1: { sine = c; cosine = -s; }
+        case 2: { sine = -s; cosine = -c; }
+        default: { sine = -c; cosine = s; }
+    }
+    if (xx < 0.0) {
+        sine = -sine;
+    }
+    if (x0 != x0 || x0 > 3.4e38) {
+        return vec2<f32>(bitcast<f32>(0x7FC00000u));
+    }
+    return vec2<f32>(sine, cosine);
+}
+
 // A square root rounded as Rust rounds it: the card's, corrected by its
 // remainder.
 fn cy_sqrt(a: f32) -> f32 {
@@ -1354,7 +1392,7 @@ fn cy_math(op: u32, a: f32, b: f32, c: f32) -> f32 {
     // Sine, cosine and tangent from one reduction, in one place.
     var sc = vec2<f32>(0.0, 1.0);
     if (op >= 29u && op <= 31u) {
-        sc = cy_sincos(a);
+        sc = cy_trig(a);
     }
     switch op {
         case 0u: { return a + b; }
@@ -1391,7 +1429,7 @@ fn cy_math(op: u32, a: f32, b: f32, c: f32) -> f32 {
         case 28u: { return cy_pingpong(a, b); }
         case 29u: { return sc.x; }
         case 30u: { return sc.y; }
-        case 31u: { return sc.x / sc.y; }
+        case 31u: { return cy_quot(sc.x, sc.y); }
         case 32u: { return asin(clamp(a, -1.0, 1.0)); }
         case 33u: { return acos(clamp(a, -1.0, 1.0)); }
         case 34u: { return cy_atan(a); }
@@ -1424,7 +1462,7 @@ fn cy_dot3x(a: vec3<f32>, b: vec3<f32>) -> f32 {
 fn cy_vector_component(op: u32, a: f32, b: f32, c: f32) -> f32 {
     var sc = vec2<f32>(0.0, 1.0);
     if (op >= 26u) {
-        sc = cy_sincos(a);
+        sc = cy_trig(a);
     }
     switch op {
         case 3u: { return cy_safe_divide(a, b); }
@@ -1435,7 +1473,7 @@ fn cy_vector_component(op: u32, a: f32, b: f32, c: f32) -> f32 {
         case 25u: { return floor(select(0.0, cy_div(a, b), b != 0.0)) * b; }
         case 26u: { return sc.x; }
         case 27u: { return sc.y; }
-        default: { return sc.x / sc.y; }
+        default: { return cy_quot(sc.x, sc.y); }
     }
 }
 
@@ -1736,7 +1774,7 @@ fn cy_mapping_node(kind: u32, vector: vec3<f32>, location: vec3<f32>, rotation: 
     var sines = vec4<f32>(0.0);
     var cosines = vec4<f32>(1.0);
     for (var i = 0u; i < 3u; i++) {
-        let sc = cy_sincos(rotation[i]);
+        let sc = cy_trig(rotation[i]);
         sines = cy_set(sines, i, sc.x);
         cosines = cy_set(cosines, i, sc.y);
     }

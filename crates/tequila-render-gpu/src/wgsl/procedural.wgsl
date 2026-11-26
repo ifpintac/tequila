@@ -279,7 +279,7 @@ fn tq_weave(x: f32, y: f32, seed: u32, pattern: u32, c: vec4<f32>) -> f32 {
     let weft = tq_thread(abs(fy - 0.5), c.y);
     let warp_scale = 1.0 - cy_exact(c.z * tq_hash2(i, 0x7a3d, seed));
     let weft_scale = 1.0 - cy_exact(c.z * tq_hash2(0x1f5b, j, seed ^ 0x4b3f27a1u));
-    let arch = cy_sin(cy_exact(CY_PI * select(fx, fy, warp_on_top)));
+    let arch = cy_trig(cy_exact(CY_PI * select(fx, fy, warp_on_top))).x;
     let top = select(weft, warp, warp_on_top);
     let top_scale = select(weft_scale, warp_scale, warp_on_top);
     let under = select(warp, weft, warp_on_top);
@@ -345,7 +345,7 @@ fn tq_scratches(a: f32, b: f32, c: vec4<f32>, seed: u32) -> f32 {
         }
         let centre = cell + vec2<f32>(tq_hash2(cx, cy, seed), tq_hash2(cx, cy, seed ^ 0x2f3911abu));
         let angle = cy_exact((tq_hash2(cx, cy, seed ^ 0x7c931055u) - 0.5) * c.w * CY_TAU);
-        let sc = cy_sincos(angle);
+        let sc = cy_trig(angle);
         let half_length = 0.2 + cy_exact(tq_hash2(cx, cy, seed ^ 0x11a73c4du) * 0.3);
         let offset = p - centre;
         // The dot with the scratch's direction; its third component is
@@ -413,7 +413,7 @@ fn tq_stage(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
         case TQ_MARBLE: {
             // a[1] the turbulence; a[2] frequency, distortion.
             let banded = cy_exact(tq_along(axis, p) * a[2].x) + cy_exact(a[1].x * a[2].y);
-            return vec4<f32>(cy_sin(banded) * 0.5 + 0.5);
+            return vec4<f32>(cy_trig(banded).x * 0.5 + 0.5);
         }
         case TQ_WOOD: {
             let uv = tq_across(axis, p);
@@ -574,7 +574,7 @@ fn cy_wave(settings: u32, a: vec3<f32>, b: f32, distortion: f32, phase: f32) -> 
             let m = tex_div(n, CY_TAU);
             v = abs(m - floor(m + 0.5)) * 2.0;
         }
-        default: { v = 0.5 + 0.5 * cy_sin(n - 1.57079632679489661923); }
+        default: { v = 0.5 + 0.5 * cy_trig(n - 1.57079632679489661923).x; }
     }
     return vec4<f32>(v);
 }
