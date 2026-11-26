@@ -602,10 +602,11 @@ struct ShadowRay {
     reach: f32,
 };
 
-// intersect.rs's shadow_ray: both ends offset, stopped just short of the
-// aim.
+// intersect.rs's shadow_ray: from `from_point` as it is - every caller has
+// stepped it off its surface already, once (Hit::offset, #179) - to the aim
+// stepped off its own, stopped just short of it.
 fn shadow_ray(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> ShadowRay {
-    let start = offset_at(from_point, from_normal, 0.0);
+    let start = from_point;
     let aim = offset_at(to, to_normal, 0.0);
     let delta = aim - start;
     let distance = sqrt(dot(delta, delta));
