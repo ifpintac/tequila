@@ -12,7 +12,7 @@
 //! Generated, as the benchmark scenes are (`bench`), so they are the same
 //! on every machine and in every version.
 
-use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped};
+use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped, subsurface_product};
 use crate::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
 use crate::{CommandBus, SceneDocument};
 use tequila_core::math::{vec2, vec3, Transform};
@@ -57,12 +57,18 @@ impl ParityScene {
         (self.lens)(product_camera(document, self.width as f32 / self.height as f32))
     }
 
-    /// A cache to snapshot the scene through, holding its pictures: the
-    /// snapshot takes them from it as it would a file's.
+    /// A cache to snapshot the scene through, holding its pictures and the
+    /// set's photometric profiles ([`parity_profile`]): the snapshot takes
+    /// them from it as it would a file's.
     pub fn cache(&self) -> crate::snapshot::MeshCache {
         let mut cache = crate::snapshot::MeshCache::new();
         for (id, texture) in (self.pictures)() {
             cache.insert_texture(id, Arc::new(texture));
+        }
+        for path in PROFILES {
+            if let Some(profile) = parity_profile(path) {
+                cache.insert_photometry(path, Arc::new(profile));
+            }
         }
         cache
     }
@@ -495,7 +501,514 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: finite_dome,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "hidden_parts",
+    covers: "R3 tier A, visibility flags and holdout: the Headphones' floor with a glass ball and a chrome one \
+             before the product, and five parts standing clear of everything: a ball hidden from the camera \
+             (seen in the chrome, gone from the floor's mirror and from the camera's coverage), one hidden from \
+             reflections, a block from diffuse bounces, a ball behind the glass from paths through it, and one \
+             held out - a hole with no alpha where the camera sees it, black in the floor's mirror",
+
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: hidden_parts,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shadow_links",
+    covers: "R3 tier A, shadow linking: lamp_lit with the key's shadow left off the body, the rim spot's shadow \
+             cast by the feet and the buttons alone, and a point lamp at the side whose shadow the bezel does not \
+             cast - shadow rays walking the parts rather than asking whether any is in the way, and the key, a \
+             panel a ray can meet, met past the body by the bounces that stop at it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: shadow_links,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "shadowless_parts",
+    covers: "R3 tier A, the light past a part its shadow rays pass: the studio floor (occlusion, a bounce, a \
+             reflection fading by distance measured past such parts) under the sky, a key panel and a fill disc \
+             that casts no shadow; a glossy ball and a chrome one casting none before the product, and a card \
+             casting none between a glowing panel and the product - the lamps met past them by a seeing bounce \
+             that stops at them, and the sky and the glow past them by a bounce weighed against the light \
+             samples",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: shadowless_parts,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "floor_lamps",
+    covers: "R3 tier A, the floor's shadows from the lamps: product_floor under the sky, a key panel, a spot, a \
+             point with a radius, a sun with a disc, a spot whose shadow the feet alone cast, a point that casts \
+             none and a disc that lights the product alone - each drawn for the floor's shadow by its bound onto \
+             the point, kept or not against it, its shadow ray through its shadow links",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: floor_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "ies_lamps",
+    covers: "R3 tier A, IES lamps: product_floor under a dim sky, lit by a downlight's profile on a point lamp \
+             above, an asymmetric profile measured over a quadrant on a spot at the side (folded into the other \
+             three), and one over a half on a panel facing down - light samples, the light hierarchy's choice, \
+             and the floor's shadows from them",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: ies_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "direct_off",
+    covers: "R3 tier A, direct lighting off: lamps_in_view with its feet glowing and the lights sampled by \
+             nothing - the sky and the glows found by bounces alone and weighed whole, the lamps lighting nothing \
+             and their stand-ins shown wherever the camera sees along",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: direct_off,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "metallic_paint",
+    covers: "R3 tier A, flakes: lamp_lit's product in metallic paints - the body candy red under a clear coat, \
+             flakes 3 mm across over half of it leaning up to half of sixty degrees; the buttons mirror-smooth \
+             flakes all over, no coat, leaning anywhere to sixty degrees; the bezel a half metal under a coat and a \
+             fuzz, flakes 2 mm over a third of it - the flake field (Worley cells in the part's object space, a \
+             flake's presence and lean from its cell), the metal lobe in the flake's frame under the coat in place \
+             of that share of the base, its share of the base's response the coat traps light against, mirror flakes \
+             as delta lobes and Filter Glossy's blur of them, the stack's choice of a flake by its albedo where it faces",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: metallic_paint,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "thin_film",
+    covers: "R3 tier A, thin film: the product under the environment, films over every kind of interface - a \
+             rough plastic body under a film 450 nm thick, an aluminium bezel anodised under one 320 nm thick of \
+             index 2, a mirror-smooth lens coated against reflection (110 nm of index 1.38), the trim mirror-smooth \
+             gold under a thick film (1.2 um) at seven tenths, the buttons half metal half plastic under a film \
+             at half its weight and a coat with none - the Airy sum at 600, 550 and 450 nm over a dielectric and \
+             over a metal's complex index, both polarizations, blended with the bare interface by the film's weight, \
+             on rough and mirror-smooth lobes",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: thin_film,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_rgb",
+    covers: "R3 tier B, dispersion in an RGB render (spectral off): lamp_lit's product with a smooth ball of \
+             dispersive glass (index 1.9, Abbe number 18) and a rough one (0.2, Abbe number 30) in front of it - \
+             a wavelength drawn at the first such glass a path meets (a draw of the open stream), the path \
+             weighed by the colour it stands for, the index at that wavelength at every dispersive surface after, \
+             entering and leaving alike; no split at dispersive glass; the firefly rejection judging a dispersed \
+             path by the light it carries",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_rgb,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "dispersion_spectral",
+    covers: "R3 tier B, spectral mode: dispersion_rgb's balls rendered by wavelength, as Auto renders a scene that \
+             disperses - four wavelengths a path from the sample's wavelength dimension (the hero and three spaced \
+             evenly in the sampling distribution's measure), every colour read at them by the processor's \
+             Jakob-Hanika table, the hero's index at a dispersive surface, the hero alone through it (and for the \
+             light sampled through the rough one), the film's response at the end, the firefly rejection judging \
+             a path by how luminous its wavelengths are",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: dispersion_spectral,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_floor",
+    covers: "R3 tier B, spectral mode on the floor: glass_ball_floor and a small dispersive gem beside the ball, so \
+             the picture is traced by wavelength - the sky at an escape and in light samples, the floor's shadow \
+             and its reflection (a path of its own on the same wavelengths), the split at the plain glass ball \
+             (its reflection filtered by the weight the wavelengths share), Beer-Lambert inside it, the clamps \
+             judged by the colour the wavelengths register as",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_floor,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_lamps",
+    covers: "R3 tier B, spectral mode on: lamps_in_view rendered by wavelength though nothing in it disperses, as              the render's Spectral On renders it - the spectral tables put on the card at the first frame that asks              for them; the lamps met along the way and their stand-ins, the sky, the lamps' and the sky's light              samples summed as one colour and read at the four wavelengths, plastics, metals and the ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_lamps,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "spectral_options",
+    covers: "R3 tier B with tier A's options, spectral mode on: shadowless_parts rendered by wavelength - the lamps,              the sky and the glowing panel met past the balls and the card that cast no shadow, through a fill disc              that casts none, and the studio floor's nearness measured past them - with an IES downlight over the              floor drawn for its shadows, a ball the camera does not see and one held out; every colour that meets              a path there read at the four wavelengths",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: spectral_options,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "milk_in_glass",
+    covers: "R3 tier B, a volume that scatters: liquid_in_glass with its liquid cloudy - a walk through the medium              it fills, each flight drawn in a channel chosen by the path's throughput times the medium's albedo and              weighed over all three, a collision turning the path by Henyey-Greenstein's phase function (forward a              little), a flight that reaches the surface weighed by what survives it, Russian roulette in a long              walk; refracting where the liquid meets the glass, the glass's own absorption between",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: milk_in_glass,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "scattering_volumes",
+    covers: "R3 tier B, volumes whose surfaces bend nothing (Scattering Medium): a haze and a forward-scattering wax              under the sky, a key panel and a spot - at each collision the lights sampled directly (one draw of the              whole sky, one lamp chosen by power), each weighed by the phase function and by what of the medium              lies between (medium_transmittance, the medium's own surface passed), the sky past it weighed by the              phase function's density against the sky's own",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: scattering_volumes,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "subsurface_product",
+    covers: "R3 tier B, subsurface scattering: the bench's subsurface_product, simple_product with a translucent body \
+             - the stack's subsurface lobe beside the diffuse, the walk's doorway: a path that takes it starts a \
+             random walk under the surface, guided back towards where it came in (Dwivedi's turns, half of them, \
+             each flight weighed by every way it could have been drawn), its first flight looking ten mean free \
+             paths ahead for the surface opposite, and leaves through the part's own surface, spread over the \
+             hemisphere outside, sampling the sky that side of it and the lamps",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: subsurface_product,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "backlit_translucency",
+    covers: "R3 tier B, subsurface scattering lit from behind: simple_product on its modelled ground under the sky, \
+             a translucent slab a centimetre thick and a thin-walled translucent sheet standing in front of it, a \
+             panel lamp behind them - the slab's walks guided across to its far side once the first flight has \
+             seen it, the sheet's light through it in its subsurface colour (no walk), both lit from the side the \
+             lamp is on",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: backlit_translucency,
+    lens: framed,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "split_shell",
+    covers: "the processor's #169 on the card: simple_product on its modelled ground, and in front of it a clear lime \
+             tray - closed towards the camera, open towards the product - modelled as the palma's shell halves come \
+             in, split by material slot into two open parts, its outside with the rim and its inside, that close \
+             each other's open edges: one solid (SceneSnapshot::solid), so a path that goes in through one part and \
+             out through the other leaves the volume, which scatters a little; the media a path starts inside \
+             counted along the line behind the camera",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: split_shell,
+    lens: framed,
+    pictures: no_pictures,
 }];
+
+/// A lamp added to `document`: its name, its settings and its place.
+fn add_lamp(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, settings: crate::lighting::LightSettings, transform: Transform) {
+    let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+    bus.apply(document, Command::AddLight { parent: None, name: name.into(), settings: Box::new(settings) }).expect("a lamp");
+    let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+    bus.apply(document, Command::set_transform(id, transform)).expect("the lamp placed");
+}
+
+/// `document`'s lamp called `name`, its settings changed by `change`.
+fn change_lamp(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, change: &dyn Fn(&mut crate::lighting::LightSettings)) {
+    let node = document.tree.iter().find(|n| n.name == name && n.kind.light().is_some()).expect("the lamp");
+    let id = node.id;
+    let mut settings = node.kind.light().expect("a lamp").clone();
+    change(&mut settings);
+    bus.apply(document, Command::SetLight { node: id, settings: Box::new(settings) }).expect("the lamp is set");
+}
+
+/// Shadow links naming the parts wearing the materials `names`: the only
+/// parts that cast the lamp's shadow, or with `exclude` the parts that do
+/// not.
+fn shadow_linked(document: &SceneDocument, names: &[&str], exclude: bool) -> Option<crate::lighting::LightLinking> {
+    let nodes = names.iter().flat_map(|name| parts_named(document, name)).collect();
+    Some(crate::lighting::LightLinking { exclude, nodes, product: false })
+}
+
+/// A frame placing a lamp at `at`, its +Z (the way a panel shines) towards
+/// `facing`.
+fn facing_frame(at: tequila_core::math::Vec3, facing: tequila_core::math::Vec3) -> Transform {
+    use tequila_core::math::{Mat4, Vec3};
+    let z = facing.normalize();
+    let x = Vec3::Y.cross(z).normalize();
+    let y = z.cross(x);
+    Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+}
+
+/// lamp_lit with shadow links: the key's shadow left off the body, the rim's
+/// cast by the feet and the buttons alone, and a point lamp at the side
+/// whose shadow the bezel does not cast.
+fn shadow_links() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    let mut document = lamp_lit();
+    let mut bus = crate::command::CommandBus::new();
+    let key = shadow_linked(&document, &["Body"], true);
+    change_lamp(&mut document, &mut bus, "Key", &|s| s.shadow_links = key.clone());
+    let rim = shadow_linked(&document, &["Foot", "Button"], false);
+    change_lamp(&mut document, &mut bus, "Rim", &|s| s.shadow_links = rim.clone());
+    let side = LightSettings {
+        shape: LightShape::Point { radius: 0.0 },
+        intensity: Intensity::Lumens(120.0),
+        shadow_links: shadow_linked(&document, &["Bezel"], true),
+        ..LightSettings::default()
+    };
+    add_lamp(&mut document, &mut bus, "Side", side, Transform::translation(vec3(1.6, 0.9, 0.2)));
+    document
+}
+
+/// The studio floor under the sky, a key panel and a fill disc that casts no
+/// shadow; a glossy ball and a chrome one casting none, standing clear of
+/// the floor and the product (see hidden_parts), and a card casting none
+/// between a glowing panel and the product.
+fn shadowless_parts() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use crate::tree::Rays;
+    let mut document = product_floor_studio();
+    let mut bus = crate::command::CommandBus::new();
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let panel_down = Transform::rotation(tequila_core::math::Vec3::X, quarter);
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Key",
+        LightSettings { shape: LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, intensity: Intensity::Lumens(400.0), ..LightSettings::default() },
+        Transform::translation(vec3(0.9, 2.2, 1.1)) * panel_down,
+    );
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Fill",
+        LightSettings {
+            shape: LightShape::Area { width: 1.0, height: 1.0, disc: true, two_sided: false },
+            intensity: Intensity::Lumens(130.0),
+            visibility: tequila_render_core::light::Visibility { shadow: false, ..Default::default() },
+            ..LightSettings::default()
+        },
+        Transform::translation(vec3(-1.6, 1.6, 0.6)) * panel_down,
+    );
+    let glow = Material { emission_color: Spectrum { r: 1.0, g: 0.7, b: 0.4 }, emission_luminance: 6.0, ..MaterialType::Emissive.defaults() };
+    let card = Material::diffuse(Spectrum::splat(0.6));
+    let panel_at = vec3(-0.95, 0.25, 0.55);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glow Panel", crate::bench::rounded_box(vec3(0.004, 0.18, 0.3), 0.002, 8), MaterialType::Emissive, glow, Transform::translation(panel_at)),
+            ("Card", crate::bench::rounded_box(vec3(0.003, 0.12, 0.2), 0.002, 8), MaterialType::Diffuse, card, Transform::translation(vec3(-0.8, 0.13, 0.55))),
+        ],
+    );
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glossy Ball", ball(0.1), MaterialType::Plastic, Material::plastic(Spectrum { r: 0.7, g: 0.2, b: 0.15 }, 0.15), Transform::translation(vec3(0.42, 0.102, 0.88))),
+            ("Chrome Ball", ball(0.08), MaterialType::Metal, chrome, Transform::translation(vec3(-0.3, 0.082, 0.9))),
+        ],
+    );
+    for name in ["Glossy Ball", "Chrome Ball", "Card"] {
+        for id in parts_named(&document, name) {
+            bus.apply(&mut document, Command::set_rays(id, Rays { shadow: false, ..Rays::default() })).expect("the part's rays are set");
+        }
+    }
+    document
+}
+
+/// product_floor under the sky and seven lamps of every kind.
+fn floor_lamps() -> SceneDocument {
+    use crate::lighting::{Intensity, LightLinking, LightSettings, LightShape};
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let feet = shadow_linked(&document, &["Foot"], false);
+    let lamps = [
+        ("Key", LightSettings { shape: LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false }, intensity: Intensity::Lumens(300.0), ..LightSettings::default() }, Transform::translation(vec3(0.9, 2.2, 1.1)) * panel_down),
+        ("Spot", LightSettings { shape: LightShape::Spot { inner_degrees: 15.0, outer_degrees: 30.0, falloff: 1.0 }, intensity: Intensity::Lumens(150.0), ..LightSettings::default() }, Transform::translation(vec3(-0.6, 2.0, 1.2)) * Transform::rotation(Vec3::X, -1.2)),
+        ("Bulb", LightSettings { shape: LightShape::Point { radius: 0.05 }, intensity: Intensity::Lumens(80.0), ..LightSettings::default() }, Transform::translation(vec3(-1.0, 1.0, -0.4))),
+        ("Sun", LightSettings { shape: LightShape::Sun { angle_degrees: 3.0 }, intensity: Intensity::Lux(1.5), ..LightSettings::default() }, Transform::rotation(Vec3::Y, 0.7) * Transform::rotation(Vec3::X, -0.9)),
+        ("Feet Spot", LightSettings { shape: LightShape::Spot { inner_degrees: 25.0, outer_degrees: 40.0, falloff: 1.0 }, intensity: Intensity::Lumens(100.0), shadow_links: feet, ..LightSettings::default() }, Transform::translation(vec3(0.3, 2.4, -1.3)) * spot_down * Transform::rotation(Vec3::X, 0.4)),
+        ("Shadowless", LightSettings { shape: LightShape::Point { radius: 0.0 }, intensity: Intensity::Lumens(60.0), visibility: tequila_render_core::light::Visibility { shadow: false, ..Default::default() }, ..LightSettings::default() }, Transform::translation(vec3(1.2, 0.8, -0.6))),
+        ("Product Only", LightSettings { shape: LightShape::Area { width: 0.6, height: 0.6, disc: true, two_sided: false }, intensity: Intensity::Lumens(90.0), links: Some(LightLinking { exclude: false, nodes: Vec::new(), product: true }), ..LightSettings::default() }, facing_frame(vec3(0.2, 0.9, 1.8), vec3(-0.1, -0.5, -1.0))),
+    ];
+    for (name, settings, transform) in lamps {
+        add_lamp(&mut document, &mut bus, name, settings, transform);
+    }
+    document
+}
+
+/// The path the set's photometric profiles are read from, by name
+/// ([`parity_profile`]): the parity cache holds them (`ParityScene::cache`).
+pub const PROFILES: [&str; 3] = ["parity:downlight", "parity:quadrant", "parity:half"];
+
+/// One of the set's photometric profiles, made here as an IES file's text
+/// (no file is shipped): a downlight - vertical angles 0-90°, rotationally
+/// symmetric, its intensity falling off by its angle; one measured over a
+/// quadrant of horizontal angles (0-90°, which the profile folds into the
+/// other three) and every vertical angle, brighter one way round; and one
+/// over a half (0-180°).
+pub fn parity_profile(path: &str) -> Option<tequila_render_core::ies::IesProfile> {
+    let (vertical, horizontal): (Vec<f32>, Vec<f32>) = match path {
+        "parity:downlight" => ((0..10).map(|i| i as f32 * 10.0).collect(), vec![0.0]),
+        "parity:quadrant" => ((0..13).map(|i| i as f32 * 15.0).collect(), vec![0.0, 30.0, 60.0, 90.0]),
+        "parity:half" => ((0..7).map(|i| i as f32 * 15.0).collect(), vec![0.0, 45.0, 90.0, 135.0, 180.0]),
+        _ => return None,
+    };
+    let mut text = String::from("IESNA:LM-63-2002\n[TEST] parity\nTILT=NONE\n");
+    text.push_str(&format!("1 -1 1 {} {} 1 2 0 0 0\n1 1 100\n", vertical.len(), horizontal.len()));
+    for v in &vertical {
+        text.push_str(&format!("{v} "));
+    }
+    text.push('\n');
+    for h in &horizontal {
+        text.push_str(&format!("{h} "));
+    }
+    text.push('\n');
+    for (j, h) in horizontal.iter().enumerate() {
+        for v in &vertical {
+            let theta = v.to_radians();
+            let value = match path {
+                "parity:downlight" => 1000.0 * theta.cos().max(0.0).powf(1.5),
+                "parity:quadrant" => 600.0 * (0.35 + 0.65 * (0.5 + 0.5 * theta.cos())) * (1.0 - 0.6 * h.to_radians().sin()) + 40.0 * j as f32,
+                _ => 800.0 * (theta.cos().max(0.0) + 0.1) * (0.4 + 0.6 * (h.to_radians() * 0.5).cos().abs()),
+            };
+            text.push_str(&format!("{value} "));
+        }
+        text.push('\n');
+    }
+    tequila_render_core::ies::IesProfile::parse(&text).ok()
+}
+
+/// product_floor under a dim sky, lit by the set's three profiles: the
+/// downlight on a point lamp above, the quadrant on a spot at the side, the
+/// half on a panel facing down.
+fn ies_lamps() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape, Photometry};
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    bus.apply(&mut document, Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 0.25) }).expect("the environment turns down");
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let profile = |path: &str| Some(Photometry { path: path.to_string() });
+    let lamps = [
+        ("Downlight", LightSettings { shape: LightShape::Point { radius: 0.0 }, photometry: profile(PROFILES[0]), intensity: Intensity::Candela(0.02), ..LightSettings::default() }, Transform::translation(vec3(0.2, 1.8, 0.4))),
+        ("Quadrant", LightSettings { shape: LightShape::Spot { inner_degrees: 20.0, outer_degrees: 30.0, falloff: 1.0 }, photometry: profile(PROFILES[1]), intensity: Intensity::Candela(0.015), ..LightSettings::default() }, Transform::translation(vec3(-1.4, 1.3, 0.9)) * Transform::rotation(Vec3::Y, -0.9) * Transform::rotation(Vec3::X, -0.5)),
+        ("Half", LightSettings { shape: LightShape::Area { width: 0.5, height: 0.5, disc: false, two_sided: false }, photometry: profile(PROFILES[2]), intensity: Intensity::Candela(0.01), ..LightSettings::default() }, Transform::translation(vec3(1.0, 1.6, -0.5)) * Transform::rotation(Vec3::X, quarter) * Transform::rotation(Vec3::Z, 0.4)),
+    ];
+    for (name, settings, transform) in lamps {
+        add_lamp(&mut document, &mut bus, name, settings, transform);
+    }
+    document
+}
+
+/// lamps_in_view, its feet glowing, under direct lighting off.
+fn direct_off() -> SceneDocument {
+    let mut document = lamps_in_view();
+    let mut bus = crate::command::CommandBus::new();
+    let key = document.materials.iter().find(|(_, m)| m.name == "Foot").map(|(k, _)| k).expect("the feet's material");
+    let mut definition = document.materials.get(key).expect("the feet's material").clone();
+    *definition.graph.material_mut() = Material { emission_color: Spectrum { r: 1.0, g: 0.5, b: 0.2 }, emission_luminance: 12.0, ..MaterialType::Emissive.defaults() };
+    document.materials.insert_with_key(key, definition);
+    let config = IntegratorConfig { direct_lighting: false, ..document.lighting.config() };
+    bus.apply(&mut document, Command::SetLightingConfig { config: Box::new(config) }).expect("the lighting is set");
+    document
+}
+
+/// The parts of `document` wearing the material called `name`.
+fn parts_named(document: &SceneDocument, name: &str) -> Vec<crate::tree::NodeId> {
+    document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_some_and(|m| m.name == name))
+        .map(|n| n.id)
+        .collect()
+}
+
+/// glass_ball_floor, a chrome ball beside the glass, and five parts each
+/// hidden from one kind of ray or held out, standing clear of the floor and
+/// of every other part: where two faces touch, which one a ray meets is a
+/// tie that Embree and the ray query break differently, and passing one
+/// part's face then skips the other's.
+fn hidden_parts() -> SceneDocument {
+    use crate::tree::Rays;
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let chrome = Material::metal(tequila_materials::fresnel::metals::ALUMINIUM, 0.0);
+    let matte = |r: f32, g: f32, b: f32| Material::diffuse(Spectrum { r, g, b });
+    let gloss = |r: f32, g: f32, b: f32| Material::plastic(Spectrum { r, g, b }, 0.2);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Chrome Ball", ball(0.1), MaterialType::Metal, chrome, Transform::translation(vec3(-0.35, 0.101, 0.8))),
+            ("Unseen Ball", ball(0.06), MaterialType::Diffuse, matte(0.8, 0.15, 0.1), Transform::translation(vec3(-0.12, 0.062, 0.98))),
+            ("Unreflected Ball", ball(0.07), MaterialType::Plastic, gloss(0.1, 0.5, 0.8), Transform::translation(vec3(-0.6, 0.072, 0.98))),
+            ("Undiffused Block", crate::bench::rounded_box(vec3(0.06, 0.05, 0.06), 0.01, 8), MaterialType::Diffuse, matte(0.9, 0.85, 0.2), Transform::translation(vec3(0.62, 0.052, 0.72))),
+            ("Behind Glass", ball(0.06), MaterialType::Plastic, gloss(0.2, 0.8, 0.25), Transform::translation(vec3(0.1, 0.062, 0.7))),
+            ("Held Out", ball(0.07), MaterialType::Plastic, gloss(0.9, 0.9, 0.9), Transform::translation(vec3(0.62, 0.072, 1.08))),
+        ],
+    );
+    for (name, rays) in [
+        ("Unseen Ball", Rays { camera: false, ..Rays::default() }),
+        ("Unreflected Ball", Rays { glossy: false, ..Rays::default() }),
+        ("Undiffused Block", Rays { diffuse: false, ..Rays::default() }),
+        ("Behind Glass", Rays { transmission: false, ..Rays::default() }),
+        ("Held Out", Rays { holdout: true, ..Rays::default() }),
+    ] {
+        let parts = parts_named(&document, name);
+        assert!(!parts.is_empty(), "the scene has a {name}");
+        for id in parts {
+            bus.apply(&mut document, Command::set_rays(id, rays)).expect("the part's rays are set");
+        }
+    }
+    document
+}
 
 /// glass_ball_floor on a dome 8 m across, a metre up, round below as
 /// above: the floor's 3 m well inside it.
@@ -533,6 +1046,7 @@ fn wide_box() -> SceneDocument {
 pub fn config(document: &SceneDocument) -> IntegratorConfig {
     let mut config = document.lighting.config();
     config.pixel_filter = document.render.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    config.spectral = document.render.spectral;
     config
 }
 
@@ -1601,6 +2115,181 @@ fn driven_film() -> SceneDocument {
     document
 }
 
+/// `document`'s material `name` changed by `change`.
+fn repainted(document: &mut SceneDocument, name: &str, change: &dyn Fn(&mut Material)) {
+    let key = document.materials.iter().find(|(_, m)| m.name == name).map(|(k, _)| k).expect("the material");
+    change(document.materials.get_mut(key).expect("the material").graph.material_mut());
+}
+
+/// lamp_lit's product in metallic paints (`flakes.rs`): flakes of a few
+/// millimetres, a pixel or so across here, so each sparkles on its own.
+fn metallic_paint() -> SceneDocument {
+    let mut document = lamp_lit();
+    repainted(&mut document, "Body", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.3, g: 0.02, b: 0.025 },
+            flake_weight: 0.5,
+            flake_size: 0.003,
+            flake_spread: 0.5,
+            flake_roughness: 0.15,
+            flake_color: Spectrum { r: 0.9, g: 0.55, b: 0.45 },
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Button", &|m| {
+        *m = Material {
+            base_color: Spectrum { r: 0.05, g: 0.1, b: 0.3 },
+            coat_weight: 0.0,
+            flake_weight: 1.0,
+            flake_size: 0.004,
+            flake_spread: 1.0,
+            flake_roughness: 0.0,
+            flake_color: Spectrum::splat(0.95),
+            ..MaterialType::MetallicPaint.defaults()
+        }
+    });
+    repainted(&mut document, "Bezel", &|m| {
+        m.base_color = Spectrum { r: 0.2, g: 0.6, b: 0.3 };
+        m.base_metalness = 0.5;
+        m.coat_weight = 1.0;
+        m.fuzz_weight = 0.5;
+        m.fuzz_color = Spectrum { r: 0.9, g: 0.9, b: 1.0 };
+        m.flake_weight = 0.3;
+        m.flake_size = 0.002;
+        m.flake_spread = 0.8;
+        m.flake_roughness = 0.3;
+        m.flake_color = Spectrum { r: 0.8, g: 0.85, b: 0.9 };
+    });
+    document
+}
+
+/// `simple_product` with thin films over its interfaces (`thin_film.rs`):
+/// over a rough dielectric, a rough metal, a smooth dielectric, a smooth
+/// metal and a half metal under a coat.
+fn thin_film() -> SceneDocument {
+    use tequila_materials::fresnel::metals;
+    let film = |m: &mut Material, weight: f32, thickness: f32, ior: f32| {
+        m.thin_film_weight = weight;
+        m.thin_film_thickness = thickness;
+        m.thin_film_ior = ior;
+    };
+    simple_product_mapped(&|(name, material_type, mut m)| {
+        match name {
+            "Body" => film(&mut m, 1.0, 450.0, 1.45),
+            "Bezel" => film(&mut m, 1.0, 320.0, 2.0),
+            "Lens" => {
+                m.specular_roughness = 0.0;
+                film(&mut m, 1.0, 110.0, 1.38);
+            }
+            "Trim" => {
+                m = Material::metal(metals::GOLD, 0.0);
+                film(&mut m, 0.7, 1200.0, 1.6);
+            }
+            "Button" => {
+                m.base_metalness = 0.5;
+                m.coat_weight = 1.0;
+                m.coat_roughness = 0.1;
+                film(&mut m, 0.5, 600.0, 1.33);
+            }
+            _ => {}
+        }
+        (name, material_type, m)
+    })
+    .0
+}
+
+/// lamp_lit's product with two balls of dispersive glass in front of it,
+/// one smooth and one rough, rendered as `spectral` says.
+fn dispersive_balls(spectral: tequila_render_core::settings::SpectralMode) -> SceneDocument {
+    let mut document = lamp_lit();
+    let mut bus = crate::command::CommandBus::new();
+    let smooth = Material {
+        transmission_depth: 0.4,
+        transmission_color: Spectrum { r: 0.95, g: 0.97, b: 0.9 },
+        specular_ior: 1.9,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 18.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let rough = Material { specular_roughness: 0.2, specular_ior: 1.6, transmission_dispersion_abbe: 30.0, ..smooth.clone() };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Smooth Gem", ball(0.12), MaterialType::GlassSolid, smooth, Transform::translation(vec3(0.25, 0.121, 0.85))),
+            ("Rough Gem", ball(0.08), MaterialType::GlassSolid, rough, Transform::translation(vec3(-0.25, 0.081, 0.9))),
+        ],
+    );
+    document.render.spectral = spectral;
+    document
+}
+
+/// The dispersive balls in an RGB render.
+fn dispersion_rgb() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Off)
+}
+
+/// lamps_in_view rendered by wavelength, though nothing in it disperses.
+fn spectral_lamps() -> SceneDocument {
+    let mut document = lamps_in_view();
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// shadowless_parts rendered by wavelength (Spectral On), though nothing in
+/// it disperses, with an IES downlight over the floor, a ball the camera
+/// does not see and one held out, standing clear of every other part.
+fn spectral_options() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape, Photometry};
+    use crate::tree::Rays;
+    let mut document = shadowless_parts();
+    let mut bus = crate::command::CommandBus::new();
+    add_lamp(
+        &mut document,
+        &mut bus,
+        "Downlight",
+        LightSettings { shape: LightShape::Point { radius: 0.0 }, photometry: Some(Photometry { path: PROFILES[0].to_string() }), intensity: Intensity::Candela(0.02), ..LightSettings::default() },
+        Transform::translation(vec3(0.2, 1.8, 0.4)),
+    );
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Unseen Ball", ball(0.06), MaterialType::Diffuse, Material::diffuse(Spectrum { r: 0.2, g: 0.3, b: 0.85 }), Transform::translation(vec3(0.05, 0.062, 0.95))),
+            ("Held Out", ball(0.07), MaterialType::Plastic, Material::plastic(Spectrum { r: 0.9, g: 0.85, b: 0.2 }, 0.2), Transform::translation(vec3(0.75, 0.072, 0.95))),
+        ],
+    );
+    for (name, rays) in [("Unseen Ball", Rays { camera: false, ..Rays::default() }), ("Held Out", Rays { holdout: true, ..Rays::default() })] {
+        for id in parts_named(&document, name) {
+            bus.apply(&mut document, Command::set_rays(id, rays)).expect("the part's rays are set");
+        }
+    }
+    document.render.spectral = tequila_render_core::settings::SpectralMode::On;
+    document
+}
+
+/// The dispersive balls rendered by wavelength.
+fn dispersion_spectral() -> SceneDocument {
+    dispersive_balls(tequila_render_core::settings::SpectralMode::Auto)
+}
+
+/// glass_ball_floor and a small dispersive gem beside the ball, so the
+/// picture is traced by wavelength.
+fn spectral_floor() -> SceneDocument {
+    let mut document = glass_ball_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let gem = Material {
+        transmission_depth: 0.2,
+        transmission_color: Spectrum { r: 0.9, g: 0.95, b: 1.0 },
+        specular_ior: 2.0,
+        specular_roughness: 0.0,
+        transmission_dispersion_abbe: 25.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Gem", ball(0.05), MaterialType::GlassSolid, gem, Transform::translation(vec3(-0.1, 0.051, 0.95)))]);
+    document
+}
+
 /// `simple_product` on its modelled ground, bumped by pictures every way:
 /// a height map, a normal map through the UVs, and the normal map laid
 /// down by projections.
@@ -1623,5 +2312,209 @@ fn bumped_product() -> SceneDocument {
     texture_material(&mut document, "Bezel", &[wire(6, Some(tri_planar), Param::Bump)]);
     let from_above = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(12.0, 12.0, 1.0), ..Mapping::default() };
     texture_material(&mut document, "Button", &[wire(6, Some(from_above), Param::Bump)]);
+    document
+}
+
+/// liquid_in_glass with its liquid cloudy: a medium that scatters as well
+/// as absorbs (`Material::volume_scattering`), nested in the glass that
+/// outranks it nowhere but where they overlap.
+fn milk_in_glass() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let milky = Material {
+        transmission_color: Spectrum { r: 0.96, g: 0.9, b: 0.75 },
+        transmission_depth: 0.1,
+        transmission_scatter: Spectrum { r: 2.0, g: 2.5, b: 3.0 },
+        transmission_scatter_anisotropy: 0.3,
+        medium_priority: 1.0,
+        ..MaterialType::Liquid.defaults()
+    };
+    let at = Transform::translation(vec3(0.3, 0.151, 0.85));
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glass Shell", hollow_ball(0.15, 0.14), MaterialType::GlassSolid, glass, at),
+            ("Milky Liquid", ball(0.142), MaterialType::Liquid, milky, at),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground under the sky and two lamps - a
+/// key panel and a spot from behind - with two volumes whose surfaces bend
+/// nothing (Scattering Medium's index of 1) in front of the body: a haze
+/// that scatters every way, and a waxy one that scatters forward.
+fn scattering_volumes() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::Vec3;
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let lamps = [
+        ("Key", LightShape::Area { width: 0.8, height: 0.6, disc: false, two_sided: false }, 160.0, vec3(0.55, 1.2, 0.75), panel_down),
+        ("Rim", LightShape::Spot { inner_degrees: 20.0, outer_degrees: 35.0, falloff: 1.0 }, 80.0, vec3(0.0, 1.4, -0.9), spot_down),
+    ];
+    for (name, shape, lumens, at, down) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(
+            &mut document,
+            Command::AddLight { parent: None, name: name.into(), settings: Box::new(LightSettings { shape, intensity: Intensity::Lumens(lumens), ..LightSettings::default() }) },
+        )
+        .expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
+    }
+    let haze = Material { transmission_color: Spectrum { r: 0.9, g: 0.92, b: 0.97 }, ..MaterialType::ScatteringMedium.defaults() };
+    let wax = MaterialType::TranslucentMedium.defaults();
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Haze", ball(0.15), MaterialType::ScatteringMedium, haze, Transform::translation(vec3(0.3, 0.151, 0.85))),
+            ("Wax", ball(0.1), MaterialType::TranslucentMedium, wax, Transform::translation(vec3(-0.3, 0.101, 0.95))),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground under the sky, a translucent
+/// slab a centimetre thick and a thin-walled translucent sheet standing in
+/// front of it, facing the camera, and a panel lamp behind them shining
+/// through towards it.
+fn backlit_translucency() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let eye = product_camera(&document, 320.0 / 180.0).position();
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(&document, &product);
+    let (middle, radius) = (bounds.center(), (bounds.diagonal().length() * 0.5).max(1e-4));
+    let toward = vec3(eye.x - middle.x, 0.0, eye.z - middle.z).normalize();
+    let right = Vec3::Y.cross(toward).normalize();
+    let placed = |at: Vec3, facing: Vec3| {
+        let z = facing.normalize();
+        let x = Vec3::Y.cross(z).normalize();
+        let y = z.cross(x);
+        Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+    };
+    let slab_at = middle + toward * (0.7 * radius) - right * (0.3 * radius);
+    let sheet_at = middle + toward * (0.7 * radius) + right * (0.35 * radius);
+    let lamp_at = middle + toward * (0.45 * radius) + Vec3::Y * (0.05 * radius);
+    let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+    let settings = LightSettings {
+        shape: LightShape::Area { width: 0.9 * radius, height: 0.4 * radius, disc: false, two_sided: false },
+        intensity: Intensity::Nits(30.0),
+        ..LightSettings::default()
+    };
+    bus.apply(&mut document, Command::AddLight { parent: None, name: "Back".into(), settings: Box::new(settings) }).expect("a lamp");
+    let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+    bus.apply(&mut document, Command::set_transform(id, placed(lamp_at, eye - lamp_at))).expect("the lamp placed");
+    let slab = Material {
+        subsurface_color: Spectrum { r: 0.95, g: 0.7, b: 0.45 },
+        subsurface_radius: Spectrum { r: 0.03, g: 0.02, b: 0.012 },
+        ..MaterialType::Translucent.defaults()
+    };
+    let sheet = Material {
+        base_color: Spectrum { r: 0.8, g: 0.8, b: 0.75 },
+        subsurface_weight: 0.7,
+        subsurface_color: Spectrum { r: 0.9, g: 0.85, b: 0.6 },
+        specular_roughness: 0.5,
+        geometry_thin_walled: true,
+        ..Material::default()
+    };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Slab", crate::bench::rounded_box(vec3(0.4 * radius, 0.45 * radius, 0.012), 0.003, 8), MaterialType::Translucent, slab, placed(slab_at, eye - slab_at)),
+            ("Sheet", crate::bench::rounded_box(vec3(0.35 * radius, 0.5 * radius, 0.002), 0.0008, 8), MaterialType::Translucent, sheet, placed(sheet_at, eye - sheet_at)),
+        ],
+    );
+    document
+}
+
+/// A tray `half` across each way from its middle and `depth` deep, as the
+/// palma P8's shell halves come in: closed towards +Z, open towards -Z,
+/// walls a tenth of `half` thick, modelled as two open surfaces that close
+/// each other along the inner edge of the rim - its outside with the rim,
+/// then its inside. Every corner is worked out the same way in both, so the
+/// edges they share meet exactly (tequila-render-cpu's split_solid test).
+fn split_tray(half: f32, depth: f32) -> (crate::geometry::Mesh, crate::geometry::Mesh) {
+    use tequila_core::math::Vec3;
+    let (outer, inner) = (half, 0.9 * half);
+    let (front, inside_front, back) = (0.5 * depth, 0.5 * depth - 0.1 * half, -0.5 * depth);
+    let p = |x: f32, y: f32, z: f32| vec3(x, y, z);
+    let side = |r: f32| [(-r, -r), (r, -r), (r, r), (-r, r)];
+    let (o, i) = (side(outer), side(inner));
+    let mut outside = vec![[p(-outer, -outer, front), p(outer, -outer, front), p(outer, outer, front), p(-outer, outer, front)]];
+    let mut inside = vec![[p(-inner, -inner, inside_front), p(-inner, inner, inside_front), p(inner, inner, inside_front), p(inner, -inner, inside_front)]];
+    for k in 0..4 {
+        let (a, b) = (o[k], o[(k + 1) % 4]);
+        let (c, d) = (i[k], i[(k + 1) % 4]);
+        // Outer wall, facing out; the rim between the walls, facing back;
+        // the inner wall, facing into the tray.
+        outside.push([p(a.0, a.1, back), p(b.0, b.1, back), p(b.0, b.1, front), p(a.0, a.1, front)]);
+        outside.push([p(a.0, a.1, back), p(c.0, c.1, back), p(d.0, d.1, back), p(b.0, b.1, back)]);
+        inside.push([p(c.0, c.1, back), p(c.0, c.1, inside_front), p(d.0, d.1, inside_front), p(d.0, d.1, back)]);
+    }
+    let mesh = |quads: &[[Vec3; 4]]| {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for quad in quads {
+            let first = positions.len() as u32;
+            positions.extend_from_slice(quad);
+            indices.extend_from_slice(&[first, first + 1, first + 2, first, first + 2, first + 3]);
+        }
+        crate::geometry::Mesh::new(positions, indices)
+    };
+    (mesh(&outside), mesh(&inside))
+}
+
+/// `simple_product` on its modelled ground under the sky, and a clear lime
+/// tray standing in front of it facing the camera, split by material slot
+/// into its outside and its inside ([`split_tray`]): the palma P8's shell,
+/// which rendered an opaque dark green while its media were told apart by
+/// part.
+fn split_shell() -> SceneDocument {
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let eye = product_camera(&document, 320.0 / 180.0).position();
+    let (middle, toward) = (vec3(0.0, 0.0, 0.85), vec3(eye.x, 0.0, eye.z - 0.85).normalize());
+    let half = 0.11;
+    let x = Vec3::Y.cross(toward).normalize();
+    let at = middle + vec3(-0.28, half + 0.002, 0.0);
+    let placed = Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, Vec3::Y, toward)).expect("a frame");
+    // The palma's shell material at this size: a lime all transmission,
+    // its volume reaching its colour in 3 cm and faintly scattering.
+    let lime = Material {
+        transmission_weight: 1.0,
+        transmission_color: Spectrum { r: 0.76, g: 0.96, b: 0.04 },
+        transmission_depth: 0.03,
+        transmission_scatter: Spectrum { r: 0.07, g: 0.09, b: 0.02 },
+        specular_ior: 1.585,
+        medium_priority: 1.0,
+        ..MaterialType::Plastic.defaults()
+    };
+    let (outside, inside) = split_tray(half, 0.08);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Shell Outside", outside, MaterialType::Plastic, lime.clone(), placed),
+            ("Shell Inside", inside, MaterialType::Plastic, lime, placed),
+        ],
+    );
     document
 }

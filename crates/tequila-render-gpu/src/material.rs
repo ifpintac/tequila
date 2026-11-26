@@ -2,14 +2,17 @@
 //! `tequila_materials::openpbr::Material` that `openpbr.wgsl`'s stack reads,
 //! laid out for a storage buffer.
 //!
-//! The stack on the card is fuzz, coat, metal, dielectric specular, the
-//! transmission lobe (glass, thin-walled or solid) and the diffuse
-//! substrate, and this holds what that reads; and what the integrator reads
-//! of glass besides - the medium a solid part is (its priority, its index as
-//! the scene has it, whether its volume absorbs) and the clear glass a
-//! shadow ray passes (`Pane`). Subsurface, thin film and flakes are not on
-//! the card yet, so their parameters are not here; [`GpuMaterial::supports`]
-//! says whether a material is one the card's stack is the processor's for.
+//! The stack on the card is fuzz, coat, a metal flake under the coat,
+//! metal and dielectric specular (each under a thin film where the material
+//! has one), the transmission lobe (glass, thin-walled or
+//! solid) and the diffuse substrate, and this holds what that reads; and
+//! what the integrator reads of glass besides - the medium a solid part is
+//! (its priority, its index as the scene has it, whether its volume absorbs
+//! or scatters, and the medium a walk through it crosses) and the clear
+//! glass a shadow ray passes (`Pane`); the thin film over the metal and the
+//! interface; and the subsurface colour and the medium a walk under the
+//! surface crosses. [`GpuMaterial::supports`] says whether a material is
+//! one the card's stack is the processor's for.
 //! Cutout opacity and emission are the integrator's, not the BSDF's, and
 //! are here for it to read (`transport.wgsl`: a cutout's holes, a glowing
 //! surface), among the floats a program writes.
@@ -26,10 +29,17 @@ use tequila_render_core::scene::Pane;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct GpuMaterial {
     pub base_color: [f32; 4],
-    /// `metal_ior.n`.
+    /// `metal_ior.n`, and in `[3]` the crossing tint's red (below).
     pub metal_n: [f32; 4],
-    /// `metal_ior.k`.
+    /// `metal_ior.k`, and in `[3]` the crossing tint's green.
     pub metal_k: [f32; 4],
+    /// `specular_color`, and in `[3]` the crossing tint's blue: where
+    /// [`GLASS_TINTED`] says the transmission lobe's colour is not a grey,
+    /// the tint a spectral path takes a crossing of the glass at
+    /// (`spectral::crossing_tint` of that colour, integrator.rs's
+    /// `glass_pass`), whose spectrum met twice is the colour; nought
+    /// elsewhere. No program on the card drives the colour, so the record's
+    /// is the point's.
     pub specular_color: [f32; 4],
     pub coat_color: [f32; 4],
     pub fuzz_color: [f32; 4],
@@ -95,6 +105,37 @@ pub struct GpuMaterial {
     /// where the strength is none), and in `[3]` what it absorbs a metre
     /// before its colour, `volume_density` over `transmission_depth`.
     pub volume_glow: [f32; 4],
+    /// Metallic paint's flakes (`flakes.rs`): `flake_color`, and in `[3]`
+    /// `flake_weight`, how much of the surface they cover.
+    pub flake_color: [f32; 4],
+    /// `flake_size`, `flake_spread` and `flake_roughness`, and in `[3]` the
+    /// point's `flake_coverage`: nought in a scene's record, filled in at
+    /// each point by the kernel (`flakes.wgsl`) as the processor fills it
+    /// in, wherever the weight is over 1e-4.
+    pub flake: [f32; 4],
+    /// The point's `flake_normal`, the flake's lean in the shading frame:
+    /// straight up in a scene's record, the kernel's at a point. `[3]`
+    /// unused.
+    pub flake_normal: [f32; 4],
+    /// The thin film over the metal and the dielectric interface
+    /// (`thin_film.rs`): `thin_film_weight`, `thin_film_thickness` in
+    /// nanometres and `thin_film_ior`; and in `[3]`
+    /// `transmission_dispersion_abbe`, the glass's dispersion.
+    pub film: [f32; 4],
+    /// A volume that scatters ([`GLASS_SCATTERS`]): the medium
+    /// `Material::volume_scattering` makes, which a walk through it
+    /// crosses - its extinction per metre, and in `[3]` its phase
+    /// function's anisotropy; and its single-scattering albedo.
+    pub volume_extinction: [f32; 4],
+    pub volume_albedo: [f32; 4],
+    /// `subsurface_color`, and in `[3]` `subsurface_weight`.
+    pub subsurface_color: [f32; 4],
+    /// The medium a walk under the surface crosses
+    /// (`Material::subsurface_medium`): its extinction per metre, and in
+    /// `[3]` its phase function's anisotropy; and its single-scattering
+    /// albedo.
+    pub subsurface_extinction: [f32; 4],
+    pub subsurface_albedo: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -114,6 +155,13 @@ pub const GLASS_BENDS: u32 = 32;
 /// The pane's volume absorbs between its way in and its way out
 /// (`Pane::has_volume`).
 pub const GLASS_PANE_VOLUME: u32 = 64;
+/// The medium behind the surface scatters as well as absorbs
+/// (`Material::volume_scattering`): a path in it walks.
+pub const GLASS_SCATTERS: u32 = 128;
+/// The colour the transmission lobe tints a crossing by is not a grey: a
+/// spectral path through it takes its crossing tint
+/// ([`GpuMaterial::specular_color`]) rather than its weight's spectrum.
+pub const GLASS_TINTED: u32 = 256;
 
 fn colour(s: Spectrum) -> [f32; 4] {
     [s.r, s.g, s.b, 0.0]
@@ -140,6 +188,12 @@ impl GpuMaterial {
         let has_depth = !m.geometry_thin_walled && m.transmission_depth > 0.0;
         let c = if has_depth { m.transmission_tint } else { m.transmission_color * m.transmission_tint };
         let tint = [c.r.max(0.0).sqrt(), c.g.max(0.0).sqrt(), c.b.max(0.0).sqrt(), m.transmission_depth];
+        // The same colour as a spectral path takes a crossing of it
+        // (integrator.rs's glass_pass): none for a grey.
+        let tinted = !(c.r == c.g && c.g == c.b);
+        let crossing = if tinted { tequila_render_core::spectral::crossing_tint(c) } else { Spectrum::ZERO };
+        let scattering = m.volume_scattering();
+        let walk = m.subsurface_medium();
         let mut glass = 0;
         for (on, flag) in [
             (m.geometry_thin_walled, GLASS_THIN),
@@ -149,6 +203,8 @@ impl GpuMaterial {
             (pane.is_some_and(|p| p.plain), GLASS_PLAIN),
             (pane.is_some_and(|p| p.bends()), GLASS_BENDS),
             (pane.is_some_and(|p| p.has_volume()), GLASS_PANE_VOLUME),
+            (scattering.is_some(), GLASS_SCATTERS),
+            (tinted, GLASS_TINTED),
         ] {
             if on {
                 glass |= flag;
@@ -157,9 +213,9 @@ impl GpuMaterial {
         let p = pane.copied();
         GpuMaterial {
             base_color: colour(m.base_color),
-            metal_n: colour(m.metal_ior.n),
-            metal_k: colour(m.metal_ior.k),
-            specular_color: colour(m.specular_color),
+            metal_n: [m.metal_ior.n.r, m.metal_ior.n.g, m.metal_ior.n.b, crossing.r],
+            metal_k: [m.metal_ior.k.r, m.metal_ior.k.g, m.metal_ior.k.b, crossing.g],
+            specular_color: [m.specular_color.r, m.specular_color.g, m.specular_color.b, crossing.b],
             coat_color: colour(m.coat_color),
             fuzz_color: colour(m.fuzz_color),
             base_weight: m.base_weight,
@@ -199,20 +255,23 @@ impl GpuMaterial {
                 let per_metre = if m.transmission_depth > 0.0 { m.volume_density.max(0.0) / m.transmission_depth } else { 0.0 };
                 [glow.r, glow.g, glow.b, per_metre]
             },
+            flake_color: [m.flake_color.r, m.flake_color.g, m.flake_color.b, m.flake_weight],
+            flake: [m.flake_size, m.flake_spread, m.flake_roughness, m.flake_coverage],
+            flake_normal: [m.flake_normal.x, m.flake_normal.y, m.flake_normal.z, 0.0],
+            film: [m.thin_film_weight, m.thin_film_thickness, m.thin_film_ior, m.transmission_dispersion_abbe],
+            volume_extinction: scattering.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
+            volume_albedo: scattering.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
+            subsurface_color: [m.subsurface_color.r, m.subsurface_color.g, m.subsurface_color.b, m.subsurface_weight],
+            subsurface_extinction: walk.map_or([0.0; 4], |s| [s.extinction.r, s.extinction.g, s.extinction.b, s.anisotropy]),
+            subsurface_albedo: walk.map_or([0.0; 4], |s| [s.albedo.r, s.albedo.g, s.albedo.b, 0.0]),
         }
     }
 
-    /// Whether the card renders `m` as the processor does: no subsurface at
-    /// all (even a share too small for its own lobe takes from the diffuse),
-    /// no thin film the processor would put on, no flake under this point;
-    /// and as glass, none that scatters in its volume (a random walk) or
-    /// that disperses light (a wavelength of its own).
-    pub fn supports(m: &Material) -> bool {
-        let glass = m.transmission_weight > 0.0;
-        m.subsurface_weight == 0.0
-            && m.thin_film_weight <= 1e-4
-            && (m.flake_weight <= 1e-4 || m.flake_coverage <= 0.0)
-            && !(glass && m.volume_scattering().is_some())
-            && !(glass && m.transmission_dispersion_abbe > 0.0)
+    /// Whether the card renders `m` as the processor does: every material's
+    /// stack now, subsurface, flakes, thin films, glass that disperses light
+    /// and volumes that scatter among them (what a program drives the card
+    /// may still refuse, `program::lower`).
+    pub fn supports(_m: &Material) -> bool {
+        true
     }
 }

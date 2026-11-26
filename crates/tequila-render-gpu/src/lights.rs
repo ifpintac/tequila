@@ -59,10 +59,12 @@ pub struct GpuLight {
     pub alias_alt: u32,
     /// The hierarchy's leaf that holds it.
     pub leaf: u32,
-    /// Where its linked instances start in the links buffer, and how many.
+    /// Where its lists start in the links buffer: the instances it lights
+    /// (its light links, `link_count` of them), then the instances that cast
+    /// its shadow or do not (its shadow links, `shadow_link_count`).
     pub links: u32,
     pub link_count: u32,
-    pub _pad: u32,
+    pub shadow_link_count: u32,
 }
 
 /// `lights.wgsl`'s `GpuLightNode`: a node as `LightSet::hierarchy` shows it.
@@ -109,6 +111,13 @@ pub const FLAG_SPREAD_FULL: u32 = 1024;
 pub const FLAG_RECTANGLE: u32 = 2048;
 pub const FLAG_LINKS_ONLY: u32 = 4096;
 pub const FLAG_LINKS_ALL_BUT: u32 = 8192;
+/// Its shadow links name the only instances that cast its shadow
+/// (`LightLinks::Only`), or the ones that do not (`LightLinks::AllBut`).
+pub const FLAG_SHADOW_LINKS_ONLY: u32 = 16384;
+pub const FLAG_SHADOW_LINKS_ALL_BUT: u32 = 32768;
+/// An IES lamp, whose profile follows its link lists in the links buffer
+/// (`lamps.wgsl`'s `ies_candela`).
+pub const FLAG_IES: u32 = 65536;
 
 fn v4(v: Vec3, w: f32) -> [f32; 4] {
     [v.x, v.y, v.z, w]
@@ -176,6 +185,11 @@ pub fn light_record(light: &Light) -> GpuLight {
                 r.rect_z = v4(x.cross(y), 0.0);
                 r.rect_origin = v4(origin, 0.0);
             }
+            // Light::irradiance_bound's from the lamp alone: the reach of
+            // its sphere, and its brightest radiance's luminance.
+            let (u, v) = (area.half_u.length(), area.half_v.length());
+            r.cos_a = if area.disc { u.max(v) } else { (u * u + v * v).sqrt() };
+            r.cos_b = area.radiance.luminance().max(0.0) * area.spread_attenuation(1.0) * face_peak(area);
         }
         LightKind::Point(point) => {
             r.kind = KIND_POINT;
@@ -192,9 +206,14 @@ pub fn light_record(light: &Light) -> GpuLight {
             r.exponent = spot.falloff;
         }
         LightKind::Ies(ies) => {
+            // The luminaire's frame (IesLight::candela): its right, its up
+            // and its aim; the profile is the links buffer's.
             r.kind = KIND_IES;
+            flags |= FLAG_IES;
             r.position = v4(ies.position, 0.0);
             r.normal = v4(ies.direction, 0.0);
+            r.half_u = v4(ies.right, 0.0);
+            r.half_v = v4(ies.direction.cross(ies.right), 0.0);
             r.radiance = s4(ies.intensity, 0.0);
         }
         LightKind::Distant(sun) => {
@@ -211,13 +230,28 @@ pub fn light_record(light: &Light) -> GpuLight {
     r
 }
 
+/// `AreaLight::face_peak`: the brightest its face can be, one over the
+/// average its falloff and fade are divided by.
+fn face_peak(area: &tequila_render_core::light::AreaLight) -> f32 {
+    if area.is_even() {
+        return 1.0;
+    }
+    let falloff = area.falloff.clamp(0.0, 1.0);
+    let fade = area.fade.clamp(-1.0, 1.0).abs();
+    let edge_mean = if area.disc { 1.0 - 0.5 * falloff } else { (1.0 - falloff / 3.0).powi(2) };
+    1.0 / (edge_mean * (1.0 - 0.5 * fade)).max(1e-3)
+}
+
 /// The lamps of a scene as the card reads them, and the selection
 /// structure over them.
 #[derive(Clone, Debug, Default)]
 pub struct LightRecords {
     pub lights: Vec<GpuLight>,
     pub nodes: Vec<GpuLightNode>,
-    /// Every lamp's linked instances, end to end.
+    /// Every lamp's linked instances, end to end, and an IES lamp's profile
+    /// after them: the counts of its vertical and horizontal angles, the
+    /// span its horizontal angles fold about, the angles and the candela
+    /// values (horizontal-major), as f32 bits.
     pub links: Vec<u32>,
     /// Whether [`Self::nodes`] is what chooses (`SelectionStrategy::Hierarchy`).
     pub hierarchy: bool,
@@ -242,16 +276,31 @@ impl LightRecords {
                 r.probability = probabilities[i];
                 (r.alias_p, r.alias_alt) = alias[i];
                 r.leaf = leaves.get(i).copied().unwrap_or(LEAF);
-                let (flag, list) = match &light.links {
-                    LightLinks::All => (0, None),
-                    LightLinks::Only(these) => (FLAG_LINKS_ONLY, Some(these)),
-                    LightLinks::AllBut(these) => (FLAG_LINKS_ALL_BUT, Some(these)),
+                // Its light links, then its shadow links, end to end.
+                let start = links.len() as u32;
+                let lists = |links: &LightLinks, only: u32, all_but: u32| match links {
+                    LightLinks::All => None,
+                    LightLinks::Only(these) => Some((only, these.clone())),
+                    LightLinks::AllBut(these) => Some((all_but, these.clone())),
                 };
-                if let Some(list) = list {
+                if let Some((flag, list)) = lists(&light.links, FLAG_LINKS_ONLY, FLAG_LINKS_ALL_BUT) {
                     r.flags |= flag;
-                    r.links = links.len() as u32;
+                    r.links = start;
                     r.link_count = list.len() as u32;
-                    links.extend_from_slice(list);
+                    links.extend_from_slice(&list);
+                }
+                if let Some((flag, list)) = lists(&light.shadow_links, FLAG_SHADOW_LINKS_ONLY, FLAG_SHADOW_LINKS_ALL_BUT) {
+                    r.flags |= flag;
+                    r.links = start;
+                    r.shadow_link_count = list.len() as u32;
+                    links.extend_from_slice(&list);
+                }
+                if let LightKind::Ies(ies) = &light.kind {
+                    r.links = start;
+                    let (vertical, horizontal, candela) = ies.profile.table();
+                    let span = horizontal.last().copied().unwrap_or(0.0).max(1e-6);
+                    links.extend_from_slice(&[vertical.len() as u32, horizontal.len() as u32, span.to_bits()]);
+                    links.extend(vertical.iter().chain(horizontal).chain(candela).map(|v| v.to_bits()));
                 }
                 r
             })
@@ -321,24 +370,36 @@ pub const LAMPS_IN_MIRRORS: u32 = 4;
 pub const LAMPS_FOR_REFLECTIONS: u32 = 8;
 /// Shadow rays pass all clear glass and there is some (`meets_glass`).
 pub const LAMPS_MEETS_GLASS: u32 = 16;
+/// Some light passes a part its shadow rays pass, which a path stopping at
+/// the part meets there (`passes_parts`: `lamps_past`, `light_past`).
+pub const LAMPS_PASSES_PARTS: u32 = 32;
+/// Some part casts no shadow (`SceneSnapshot::has_shadowless_parts`): a
+/// floor's nearness is measured past it (`nearness_at`).
+pub const LAMPS_SHADOWLESS: u32 = 64;
+/// The lights are not sampled directly (`IntegratorConfig::direct_lighting`
+/// off): no light sample anywhere, and every bounce that meets a light takes
+/// it whole.
+pub const LAMPS_UNSAMPLED: u32 = 128;
+/// The sky's light sample sees past the shadow-catching floors the bounces
+/// pass, and a bounce past one keeps the sky's weight
+/// (`integrator::sky_past_floors`).
+pub const LAMPS_SKY_PAST_FLOORS: u32 = 256;
 
 /// What [`lamp_flags`] and [`lamp_limits`] ask of a scene, read when it is
 /// uploaded, so either can be said once a configuration is known.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LampScene {
     panes: bool,
-    any_lamp: bool,
     /// A lamp a ray can meet that shows in reflections, one of those that
     /// lights nothing diffusely, and one a ray can meet that shows in
     /// reflections or to the camera.
     met_specular: bool,
     met_specular_only: bool,
     met_specular_or_camera: bool,
-    ies: bool,
-    shadow_links: bool,
     shadowless_parts: bool,
     met_past_parts: bool,
-    sky: bool,
+    /// The sky is infinitely far away (no dome of a size).
+    infinite_dome: bool,
 }
 
 impl LampScene {
@@ -347,15 +408,12 @@ impl LampScene {
         let met = |l: &&Light| l.can_be_met();
         LampScene {
             panes: scene.has_panes(),
-            any_lamp: !lights.is_empty(),
             met_specular: lights.iter().filter(met).any(|l| l.visibility.specular),
             met_specular_only: lights.iter().filter(met).any(|l| l.visibility.specular && !l.visibility.diffuse),
             met_specular_or_camera: lights.iter().filter(met).any(|l| l.visibility.specular || l.visibility.camera),
-            ies: lights.iter().any(|l| matches!(l.kind, LightKind::Ies(_))),
-            shadow_links: lights.iter().any(|l| !l.shadow_links.is_all()),
             shadowless_parts: scene.has_shadowless_parts(),
             met_past_parts: lights.iter().filter(met).any(|l| !l.visibility.shadow || !l.shadow_links.is_all()),
-            sky: scene.environment.intensity() > 0.0,
+            infinite_dome: scene.environment.dome().is_infinite(),
         }
     }
 
@@ -365,6 +423,8 @@ impl LampScene {
         let meets_lamps = config.direct_lighting && config.shadows && self.met_specular;
         let for_reflections = meets_lamps && self.met_specular_only;
         let in_mirrors = config.direct_lighting && self.met_specular_or_camera;
+        let passes_parts = config.shadows && (self.shadowless_parts || self.met_past_parts);
+        let sky_past_floors = tequila_render_core::integrator::sky_past_floors_of(config, passes_parts, self.panes, self.infinite_dome);
         let mut flags = 0;
         for (on, flag) in [
             (meets_glass || meets_lamps, LAMPS_SEEN),
@@ -372,6 +432,10 @@ impl LampScene {
             (in_mirrors, LAMPS_IN_MIRRORS),
             (for_reflections, LAMPS_FOR_REFLECTIONS),
             (meets_glass, LAMPS_MEETS_GLASS),
+            (passes_parts, LAMPS_PASSES_PARTS),
+            (self.shadowless_parts, LAMPS_SHADOWLESS),
+            (!config.direct_lighting, LAMPS_UNSAMPLED),
+            (sky_past_floors, LAMPS_SKY_PAST_FLOORS),
         ] {
             if on {
                 flags |= flag;
@@ -380,24 +444,12 @@ impl LampScene {
         flags
     }
 
-    /// [`lamp_limits`] of the scene this was read from.
-    pub fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
-        let mut limits = Vec::new();
-        if self.ies {
-            limits.push("an IES lamp lights nothing");
-        }
-        if config.shadows && self.shadow_links {
-            limits.push("a lamp's shadow links are left out: everything casts its shadow");
-        }
-        // integrator.rs's passes_parts: the light past a part a shadow ray
-        // passes, met where the bounce stops at it (lamps_past, light_past).
-        if config.shadows && (self.shadowless_parts || self.met_past_parts) {
-            limits.push("the light past a part its shadow rays pass is not met by a bounce that stops at the part");
-        }
-        if !config.direct_lighting && (self.any_lamp || self.sky) {
-            limits.push("the lights are sampled directly all the same");
-        }
-        limits
+    /// [`lamp_limits`] of the scene this was read from: nothing now - IES
+    /// lamps, shadow links, the light past a part its shadow rays pass and
+    /// direct lighting off are the processor's on the card too. Kept for the
+    /// renderer and the command line, which say each of the `*_limits`.
+    pub fn limits(&self, _config: &IntegratorConfig) -> Vec<&'static str> {
+        Vec::new()
     }
 }
 

@@ -71,7 +71,7 @@ fn records_have_one_layout_on_both_sides() {
             ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, max_transmission_bounces, shadow_glass,
             glass_flags, row_base, row_stride, background, plate_offset, plate_width, plate_height, camera_flags,
             lens_radius, focus_distance, aperture_blades, aperture_rotation, shift_x, shift_y, filter_width, filter_last,
-            _pad5, dome_radius, dome_height, dome_flatten, _pad6, filter_table,
+            _pad5, dome_radius, dome_height, dome_flatten, spectral_base, filter_table,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });
@@ -84,7 +84,8 @@ fn records_have_one_layout_on_both_sides() {
             base_diffuse_roughness, specular_weight, specular_roughness, specular_roughness_anisotropy, specular_ior,
             coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, specular_rotation, geometry_opacity,
             emission_color, transmission_color, transmission_tint, volume_density, medium_priority, base_ior, glass, pane_weight,
-            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, edge_radius, edge_samples, volume_glow,
+            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, edge_radius, edge_samples, volume_glow, flake_color,
+            flake, flake_normal, film, volume_extinction, volume_albedo, subsurface_color, subsurface_extinction, subsurface_albedo,
         }
     );
     let source = shader::source("lights");
@@ -94,7 +95,7 @@ fn records_have_one_layout_on_both_sides() {
         GpuLight {
             position, half_u, half_v, normal, radiance, rect_x, rect_y, rect_z, rect_origin, kind, flags, tan_half,
             spread_norm, falloff, fade, cos_a, cos_b, exponent, probability, alias_p, alias_alt, leaf, links, link_count,
-            _pad,
+            shadow_link_count,
         }
     );
     layout!(&module, GpuLightNode { centre, axis, cos_o, sin_o, cos_e, distant, left, right, parent, light });

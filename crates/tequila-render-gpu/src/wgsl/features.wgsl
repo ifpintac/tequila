@@ -80,3 +80,34 @@ override FEATURE_ORTHOGRAPHIC: bool = true;
 override FEATURE_EQUIRECTANGULAR: bool = true;
 // A pixel filter other than one pixel's box (a frame's part: the film's).
 override FEATURE_FILTER: bool = true;
+// A part some kind of ray does not see - passed by that ray, and by the
+// camera's coverage - or held out, a hole where the camera sees it.
+override FEATURE_UNSEEN: bool = true;
+// A lamp's shadow links: the parts they leave out let its light by, so its
+// shadow rays walk the parts rather than ask whether any is in the way.
+override FEATURE_SHADOW_LINKS: bool = true;
+// The light past a part its shadow rays pass, met where a path stops at the
+// part (a part that casts no shadow, a lamp that casts none or whose shadow
+// links leave parts out), and a floor's nearness measured past such parts.
+override FEATURE_PASSES_PARTS: bool = true;
+// An IES lamp: its profile read towards the way its light leaves it.
+override FEATURE_IES: bool = true;
+// Metallic paint's flakes: the flake field at a point (flakes.wgsl) and
+// the metal lobe under the coat in the flake's frame (openpbr.wgsl).
+override FEATURE_FLAKES: bool = true;
+// A thin film over the metal and the dielectric interface: the Airy sum in
+// place of their Fresnel (film.wgsl).
+override FEATURE_FILM: bool = true;
+// Glass that disperses light, in an RGB render: a wavelength drawn at the
+// first such glass a path meets, the index at it (dispersion.wgsl).
+override FEATURE_DISPERSION: bool = true;
+// Paths that carry four wavelengths rather than three channels (a frame's
+// part: its spectral mode), every colour read at them by the spectral
+// tables (spectral.wgsl).
+override FEATURE_SPECTRAL: bool = true;
+// A volume that scatters: the random walk through it, and the lights a
+// collision in one whose surface bends nothing samples directly.
+override FEATURE_SCATTERING: bool = true;
+// Subsurface scattering: the walk's doorway in the stack, the random walk
+// under a surface, guided back towards where it came in, and its way out.
+override FEATURE_SUBSURFACE: bool = true;

@@ -402,7 +402,8 @@ fn prog_material_from(f: array<f32, 48>, base: GpuMaterial) -> GpuMaterial {
         vec4<f32>(f[40], f[41], f[42], f[43]),
         vec4<f32>(f[44], f[45], f[46], f[47]), base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
         base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base.edge_radius, base.edge_samples,
-        base.volume_glow,
+        base.volume_glow, base.flake_color, base.flake, base.flake_normal, base.film, base.volume_extinction, base.volume_albedo,
+        base.subsurface_color, base.subsurface_extinction, base.subsurface_albedo,
     );
 }
 
@@ -490,10 +491,11 @@ struct ProgShaded {
 // The material program `p` at `pt`, written over `base` (shade), then with
 // a height bump the bump's program run twice more a step along the surface,
 // forward differences against the height found here (surface_bump.rs
-// bumped_normal: the step a tenth of the footprint, floored; only the
-// position and the UVs move; a normal turned from the geometry is not
-// taken). The three runs are one loop round one call of the interpreter,
-// which a kernel then holds once.
+// bumped_normal: the step a thousandth of the footprint, as #188 has it,
+// but never under PRECISION_STEP of the point's distance from its part's
+// origin, nor 1e-8; only the position and the UVs move; a normal turned
+// from the geometry is not taken). The three runs are one loop round one
+// call of the interpreter, which a kernel then holds once.
 fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -> ProgShaded {
     var shaded = ProgShaded(base, s.normal, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
     if ((p.flags & PROGRAM_RUNS) == 0u) {
@@ -509,7 +511,12 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
         }
     }
     let bitangent = cross(n, tangent);
-    let step = max(s.footprint * pt.scale * 0.1, 1e-6);
+    // Each product rounded as the processor rounds it: Vec3::length's sum of
+    // squares, then the scales.
+    let o = pt.object;
+    let from_origin = cy_sqrt(cy_exact(cy_exact(o.x * o.x) + cy_exact(o.y * o.y)) + cy_exact(o.z * o.z));
+    let finest = cy_exact(cy_exact(from_origin * pt.scale) * 8e-6);
+    let step = max(max(cy_exact(cy_exact(s.footprint * pt.scale) * 0.001), finest), 1e-8);
     let runs = select(1u, 3u, (p.flags & PROGRAM_BUMPS) != 0u);
     prog_constants = p.constants;
     var heights = vec2<f32>(0.0);
@@ -522,7 +529,7 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
             if (run == 2u) {
                 offset = bitangent * step;
             }
-            at.object = pt.object + prog_rows_vector(s.world_to_object, offset);
+            at.object = pt.object + prog_inv_vector(s.world_to_object, offset);
             if (s.has_derivatives) {
                 at.uv = pt.uv + prog_uv_offset(s.dpdu, s.dpdv, offset);
             }
@@ -580,4 +587,16 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
 // Row-major 3 x 4 times a vector (scene.wgsl's rows_vector).
 fn prog_rows_vector(m: array<vec4<f32>, 3>, v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(dot(m[0].xyz, v), dot(m[1].xyz, v), dot(m[2].xyz, v));
+}
+
+// Transform::inv_vector, each row's products rounded and summed in its
+// order, as Mat4::transform_vector has them: the bump's step along the
+// surface is some sixty units in the last place of the point, and an ulp
+// where the moved point rounds moves its slope by a hundredth (#188).
+fn prog_inv_vector(m: array<vec4<f32>, 3>, v: vec3<f32>) -> vec3<f32> {
+    var out = vec3<f32>(0.0);
+    out.x = cy_exact(cy_exact(m[0].x * v.x) + cy_exact(m[0].y * v.y)) + cy_exact(m[0].z * v.z);
+    out.y = cy_exact(cy_exact(m[1].x * v.x) + cy_exact(m[1].y * v.y)) + cy_exact(m[1].z * v.z);
+    out.z = cy_exact(cy_exact(m[2].x * v.x) + cy_exact(m[2].y * v.y)) + cy_exact(m[2].z * v.z);
+    return out;
 }

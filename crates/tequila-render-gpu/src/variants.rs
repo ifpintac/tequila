@@ -46,17 +46,18 @@
 //! first frame that asks for one it left out, building the wider kernel
 //! once and keeping it for the frames after.
 
+use crate::lights::{FLAG_IES, FLAG_SHADOW_LINKS_ALL_BUT, FLAG_SHADOW_LINKS_ONLY};
 use crate::material::GpuMaterial;
 use crate::program::ProgramTable;
-use crate::scene::{GpuInstance, GpuMesh, NO_CATCHER, NO_DATA, NO_LIGHT};
+use crate::scene::{GpuInstance, GpuMesh, INSTANCE_CASTS_SHADOWS, INSTANCE_STAND_IN, INSTANCE_UNSEEN, NO_CATCHER, NO_DATA, NO_LIGHT};
 
 /// The parts of the transport kernel a pipeline keeps: the parts
-/// `features.wgsl` names, one bit each, and which of the interpreter's
-/// instructions it keeps an arm for, a bit each by opcode (its
-/// `FEATURE_OPS`).
+/// `features.wgsl` names, one bit each (more than 32 of them since the
+/// media, so in 64 bits), and which of the interpreter's instructions it
+/// keeps an arm for, a bit each by opcode (its `FEATURE_OPS`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct KernelFeatures {
-    pub parts: u32,
+    pub parts: u64,
     pub ops: u32,
 }
 
@@ -112,9 +113,35 @@ impl KernelFeatures {
     pub const FILTER: KernelFeatures = part(20);
     /// A dome of a size: the sky from where a path is.
     pub const DOME: KernelFeatures = part(21);
+    /// A part some kind of ray does not see, or one held out.
+    pub const UNSEEN: KernelFeatures = part(22);
+    /// A lamp's shadow links.
+    pub const SHADOW_LINKS: KernelFeatures = part(23);
+    /// The light past a part its shadow rays pass.
+    pub const PASSES_PARTS: KernelFeatures = part(24);
+    /// An IES lamp's profile.
+    pub const IES: KernelFeatures = part(25);
+    /// Metallic paint's flakes: the flake field at a point and the metal
+    /// lobe under the coat in the flake's frame.
+    pub const FLAKES: KernelFeatures = part(26);
+    /// A thin film over the metal and the dielectric interface.
+    pub const FILM: KernelFeatures = part(27);
+    /// Glass that disperses light: a wavelength drawn at it, its index at
+    /// that wavelength.
+    pub const DISPERSION: KernelFeatures = part(28);
+    /// Paths that carry four wavelengths (a frame's part: its render's
+    /// spectral mode, `GpuRenderer::frame_features`).
+    pub const SPECTRAL: KernelFeatures = part(29);
+
+    /// A volume that scatters: the random walk through it, and the lights a
+    /// collision in one whose surface bends nothing samples.
+    pub const SCATTERING: KernelFeatures = part(30);
+    /// Subsurface scattering: the walk's doorway, the walk under a surface
+    /// and its way out.
+    pub const SUBSURFACE: KernelFeatures = part(31);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 22] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 32] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -137,6 +164,16 @@ impl KernelFeatures {
         (Self::EQUIRECTANGULAR, "FEATURE_EQUIRECTANGULAR"),
         (Self::FILTER, "FEATURE_FILTER"),
         (Self::DOME, "FEATURE_DOME"),
+        (Self::UNSEEN, "FEATURE_UNSEEN"),
+        (Self::SHADOW_LINKS, "FEATURE_SHADOW_LINKS"),
+        (Self::PASSES_PARTS, "FEATURE_PASSES_PARTS"),
+        (Self::IES, "FEATURE_IES"),
+        (Self::FLAKES, "FEATURE_FLAKES"),
+        (Self::FILM, "FEATURE_FILM"),
+        (Self::DISPERSION, "FEATURE_DISPERSION"),
+        (Self::SPECTRAL, "FEATURE_SPECTRAL"),
+        (Self::SCATTERING, "FEATURE_SCATTERING"),
+        (Self::SUBSURFACE, "FEATURE_SUBSURFACE"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -145,7 +182,7 @@ impl KernelFeatures {
     /// None of them: a grey product under the sky.
     pub const NONE: KernelFeatures = KernelFeatures { parts: 0, ops: 0 };
     /// All of them: the whole kernel, which renders every scene.
-    pub const ALL: KernelFeatures = KernelFeatures { parts: (1 << Self::NAMED.len()) - 1, ops: u32::MAX };
+    pub const ALL: KernelFeatures = KernelFeatures { parts: (1u64 << Self::NAMED.len()) - 1, ops: u32::MAX };
 
     /// The instruction `op`'s arm.
     pub const fn op(op: u32) -> KernelFeatures {
@@ -176,13 +213,13 @@ impl KernelFeatures {
 
     /// What a variant is called in a cache's file names.
     pub fn key(self) -> String {
-        format!("{:04x}-{:08x}", self.parts, self.ops)
+        format!("{:08x}-{:08x}", self.parts, self.ops)
     }
 
     /// The parts a scene's records reach (see the module's notes): each
     /// kept wherever a record the kernel reads could send a path into it.
     pub fn of(r: &SceneRecords) -> KernelFeatures {
-        use crate::material::{GLASS_BOUNDARY, GLASS_PANE};
+        use crate::material::{GLASS_BOUNDARY, GLASS_PANE, GLASS_SCATTERS};
         use crate::program::{PROGRAM_AT_HIT, PROGRAM_CUTS, PROGRAM_NORMAL_PROJECTED, PROGRAM_NORMAL_UV, PROGRAM_RUNS};
         use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_TRANSMITS};
         let mut f = KernelFeatures::NONE;
@@ -248,6 +285,38 @@ impl KernelFeatures {
         keep(r.glass_flags & SCENE_BACKPLATE != 0, Self::BACKPLATE);
         // The dome's lookups (the frame's SCENE_FINITE_DOME).
         keep(r.glass_flags & SCENE_FINITE_DOME != 0, Self::DOME);
+        // A part some ray passes, or held out (an instance's flags).
+        keep(r.instances.iter().any(|i| i.flags & INSTANCE_UNSEEN != 0), Self::UNSEEN);
+        // shadow_through's walk for a lamp's shadow links (a lamp's flags).
+        keep(r.lamp_flags & (FLAG_SHADOW_LINKS_ONLY | FLAG_SHADOW_LINKS_ALL_BUT) != 0, Self::SHADOW_LINKS);
+        // light_past_part and nearness_at (the frame's LAMPS_PASSES_PARTS
+        // and LAMPS_SHADOWLESS): a part that casts no shadow and is no
+        // lamp's stand-in (an instance's flags), or a lamp a ray can meet
+        // that casts no shadow or has shadow links (a lamp's).
+        keep(
+            r.instances.iter().any(|i| i.flags & (INSTANCE_CASTS_SHADOWS | INSTANCE_STAND_IN) == 0) || r.lamps_met_past,
+            Self::PASSES_PARTS,
+        );
+        // lamp_sample's and light_irradiance_bound's IES lamp (a lamp's
+        // flags).
+        keep(r.lamp_flags & FLAG_IES != 0, Self::IES);
+        // The flake field and the flake's lobe (shade_vertex, openpbr_build:
+        // a material record's flake weight, which no program drives).
+        keep(any_material(&|m| m.flake_color[3] > 1e-4), Self::FLAKES);
+        // The film over the metal and the interface (openpbr_build: a
+        // material record's film weight, which no program drives).
+        keep(any_material(&|m| m.film[0] > 1e-4), Self::FILM);
+        // A dispersive surface (shade_vertex: a material record's Abbe
+        // number, which no program drives, whatever its transmission, which
+        // a program may).
+        keep(any_material(&|m| m.film[3] > 0.0), Self::DISPERSION);
+        // A medium the path is in whose material scatters (medium_scatters):
+        // one a crossing, the probe or a medium's surface that is no
+        // interface records, all by a material's record.
+        keep(any_material(&|m| m.glass & GLASS_SCATTERS != 0), Self::SCATTERING);
+        // The subsurface lobe (openpbr_build, a material's subsurface
+        // weight) and the walk it opens.
+        keep(any_material(&|m| m.subsurface_color[3] != 0.0), Self::SUBSURFACE);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
@@ -325,6 +394,10 @@ pub struct SceneRecords<'a> {
     pub meshes: &'a [GpuMesh],
     /// How many lamps (`FrameParams::light_count`).
     pub lamps: u32,
+    /// Every lamp record's flags, or'd (`crate::lights::GpuLight::flags`).
+    pub lamp_flags: u32,
+    /// Whether some lamp a ray can meet casts no shadow or has shadow links.
+    pub lamps_met_past: bool,
     /// Whether the glowing triangles' tree has leaves.
     pub emitters: bool,
     /// `FrameParams::glass_flags` as the scene sets them, whatever the
@@ -471,8 +544,9 @@ mod tests {
         m
     }
 
+    /// A part as the scene uploads one: seen by every ray, casting shadows.
     fn instance() -> GpuInstance {
-        GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, emitter: crate::emitters::EMITTER_NONE, ..GpuInstance::default() }
+        GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, emitter: crate::emitters::EMITTER_NONE, flags: INSTANCE_CASTS_SHADOWS, ..GpuInstance::default() }
     }
 
     fn mesh() -> GpuMesh {
@@ -480,7 +554,7 @@ mod tests {
     }
 
     fn features(materials: &[GpuMaterial], programs: &ProgramTable, instances: &[GpuInstance], meshes: &[GpuMesh], lamps: u32, emitters: bool, glass_flags: u32) -> KernelFeatures {
-        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, emitters, glass_flags })
+        KernelFeatures::of(&SceneRecords { materials, programs, instances, meshes, lamps, lamp_flags: 0, lamps_met_past: false, emitters, glass_flags })
     }
 
     /// A program of one instruction `op` with `operands` operands, writing
@@ -521,6 +595,12 @@ mod tests {
         let mut volume = grey();
         volume.volume_glow = [0.0, 1.0, 0.0, 0.5];
         assert_eq!(one(volume), KernelFeatures::VOLUME_GLOW);
+        let mut scatters = grey();
+        scatters.glass = crate::material::GLASS_SCATTERS;
+        assert_eq!(one(scatters), KernelFeatures::SCATTERING);
+        let mut translucent = grey();
+        translucent.subsurface_color = [0.9, 0.7, 0.6, 1.0];
+        assert_eq!(one(translucent), KernelFeatures::SUBSURFACE);
 
         // The frame's flags, the lamps, the tree, the instances, the meshes.
         use crate::transport::{SCENE_CUTOUTS, SCENE_TRANSMITS};

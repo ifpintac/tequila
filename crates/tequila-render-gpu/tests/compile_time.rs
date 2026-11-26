@@ -199,16 +199,13 @@ fn what_emission_and_cutouts_cost_to_compile() {
     };
     let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
         ("everything", Box::new(|s| s)),
-        ("no light sample of the glowing triangles", Box::new(replace(&[("            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no glow at a hit", Box::new(replace(&[("if (FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
-        ("no cutout at a hit", Box::new(replace(&[("if (FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
-        (
-            "no cutouts in the walks",
-            Box::new(replace(&[
-                ("        } else if (!open) {\n            through *= 1.0 - clamp(crossing_opacity(hit, direction, inst.material), 0.0, 1.0);", "        } else if (!open) {\n            return Visibility(vec3<f32>(0.0), false);"),
-                ("        through = cutout_walk(from_point, normal, aim, -direction);", "        through = 0.0;"),
-            ])),
-        ),
+        ("no light sample of the glowing triangles", Box::new(replace(&[("            if (medium || (frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no glow at a hit", Box::new(replace(&[("if (!colliding && FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
+        ("no cutout at a hit", Box::new(replace(&[("let cutout = !colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999;", "let cutout = false;")]))),
+        // Every walk's cutouts at walk_ray's one place since the kernel's
+        // queries were made there (`r3-queries`): a surface it does not pass
+        // whole stops it.
+        ("no cutouts in the walks", Box::new(replace(&[("            let opacity = crossing_opacity(hit, direction, inst.material);", "            let opacity = 1.0;")]))),
         (
             "no programs at crossings",
             Box::new(replace(&[
@@ -225,9 +222,10 @@ fn what_emission_and_cutouts_cost_to_compile() {
 }
 
 /// What rounded edges cost the kernel's cold compile: the kernel with and
-/// without the bevel's one call site, interleaved so the card's other work
-/// falls on both alike, `TEQUILA_COMPILE_ROUNDS` rounds (3 by default). Run
-/// by hand: `cargo test --test compile_time -- --ignored --nocapture bevel`.
+/// without the bevel's one place (its step, its probes walked at path()'s
+/// one walk), interleaved so the card's other work falls on both alike,
+/// `TEQUILA_COMPILE_ROUNDS` rounds (3 by default). Run by hand: `cargo test
+/// --test compile_time -- --ignored --nocapture bevel`.
 #[test]
 #[ignore]
 fn what_rounded_edges_cost_to_compile() {
@@ -239,13 +237,13 @@ fn what_rounded_edges_cost_to_compile() {
     let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
     let renderer = GpuRenderer::new(gpu, &snapshot);
     let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
-    let call = "seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);";
+    let call = "if (FEATURE_BEVEL && (frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {";
     let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
     for round in 0..rounds {
         for (k, without) in [false, true].into_iter().enumerate() {
             let edit = move |s: String| {
-                assert!(s.contains(call), "no bevel call");
-                if without { s.replace(call, "") } else { s }
+                assert!(s.contains(call), "no bevel step");
+                if without { s.replace(call, "if (false) {") } else { s }
             };
             let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * 2 + k as u32) * 7919), &edit);
             eprintln!("round {round}, {}: {:.2} s", if without { "without rounded edges" } else { "with rounded edges" }, t.as_secs_f64());
@@ -423,9 +421,9 @@ fn what_every_variant_keeps_costs_to_compile() {
         ("no sheen arms", Box::new(arms("0u"))),
         ("no coat arms", Box::new(arms("1u"))),
         ("no metal arms", Box::new(arms("2u"))),
-        ("no sky sample", Box::new(replace(&[("            if (frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no light sample at all", Box::new(replace(&[("        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);", "        let direct = vec3<f32>(0.0);")]))),
-        ("no meeting and escaping", Box::new(replace(&[("                let sky = meet_and_escape(&st, hit);", "                let sky = vec3<f32>(0.0);")]))),
+        ("no sky sample", Box::new(replace(&[("            if (!medium && frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no light sample at all", Box::new(replace(&[("                let direct = direct_light(&s, light);", "                let direct = Direct();")]))),
+        ("no meeting and escaping", Box::new(replace(&[("                    let met = meet_and_escape(&st, hit, at_i, at_step == 1u, found);", "                    var met: Paused;")]))),
         ("no Filter Glossy rebuild", Box::new(replace(&[("        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {", "        if (false) {")]))),
         ("no aiming", Box::new(replace(&[("        bsdf = openpbr_aim(openpbr_build(lobes, roughness_floor, true, from_inside), wo);", "        bsdf = openpbr_build(lobes, roughness_floor, false, from_inside);")]))),
     ];
@@ -561,6 +559,243 @@ fn what_the_camera_costs_to_compile() {
                 s
             }),
         ));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What the scene and light options' port costs the kernel's cold compile
+/// (`docs/07` R3) - parts hidden from some rays and held out, shadow links,
+/// the light past a part its shadow rays pass, IES lamps, the floor's
+/// shadows from the lamps: the kernel as it is, as it was before the port
+/// (the joined source in `TEQUILA_KERNEL_BEFORE`, when given), the grey
+/// product's variant either way, and the whole kernel with each part left
+/// out (its constant written in as false), interleaved so the card's other
+/// work falls on all alike, `TEQUILA_COMPILE_ROUNDS` rounds (3 by default);
+/// the medians at the end. Run by hand: `cargo test --test compile_time --
+/// --ignored --nocapture options`.
+#[test]
+#[ignore]
+fn what_the_options_cost_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let off = |name: &str| (format!("override {name}: bool = true;"), format!("const {name}: bool = false;"));
+    let parts: Vec<(&str, Vec<(String, String)>)> = vec![
+        ("no unseen parts or holdout", vec![off("FEATURE_UNSEEN")]),
+        ("no shadow links", vec![off("FEATURE_SHADOW_LINKS")]),
+        ("no light past parts", vec![off("FEATURE_PASSES_PARTS")]),
+        ("no IES lamps", vec![off("FEATURE_IES")]),
+        ("no lamps on the floor", vec![("    if (FEATURE_LAMPS) {\n        lamps = frame.light_count;".to_string(), "    if (false) {\n        lamps = frame.light_count;".to_string())]),
+    ];
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("before the port".to_string(), KernelFeatures::ALL, Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
+    }
+    for (name, pairs) in parts {
+        cases.push((
+            name.to_string(),
+            KernelFeatures::ALL,
+            Box::new(move |s: String| {
+                let mut s = s.replace("\r\n", "\n");
+                for (from, to) in &pairs {
+                    assert!(s.contains(from.as_str()), "no {from:?}");
+                    s = s.replace(from.as_str(), to);
+                }
+                s
+            }),
+        ));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What the surface layers' port costs the kernel's cold compile (`docs/07`
+/// R3, tier A's flakes and thin film, tier B's spectral mode and
+/// dispersion): the kernel as it is, as it was before the port (the joined
+/// source in `TEQUILA_KERNEL_BEFORE`, when given), the grey product's
+/// variant both ways, and the kernel with each of the port's parts left out
+/// (its constant made a plain false), interleaved, `TEQUILA_COMPILE_ROUNDS`
+/// rounds (3); the medians at the end. Run by hand: `cargo test --test
+/// compile_time -- --ignored --nocapture surface_layers`.
+#[test]
+#[ignore]
+fn what_the_surface_layers_cost_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("before the port".to_string(), KernelFeatures::ALL, Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
+    }
+    for part in ["FEATURE_FLAKES", "FEATURE_FILM", "FEATURE_DISPERSION", "FEATURE_SPECTRAL"] {
+        let from = format!("override {part}: bool = true;");
+        if !tequila_render_gpu::shader::source("transport").contains(&from) {
+            continue;
+        }
+        cases.push((
+            format!("without {}", part.trim_start_matches("FEATURE_").to_ascii_lowercase()),
+            KernelFeatures::ALL,
+            Box::new(move |s: String| s.replace(&from, &format!("const {part}: bool = false;"))),
+        ));
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        for (k, (name, kernel, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919), edit.as_ref(), *kernel).as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What cutting the surface layers' copies saved the kernel's cold compile:
+/// the whole kernel, and the own variants of the scenes that carry the
+/// layers - metallic_paint (glow, lamps, flakes), thin_film (film),
+/// dispersion_spectral (glass, panes, glow, lamps, dispersion, wavelengths)
+/// and spectral_lamps (glow, lamps, wavelengths) - as the kernel is and as
+/// it was (the joined source in `TEQUILA_KERNEL_BEFORE`). Other joined
+/// sources come in `TEQUILA_KERNEL_ALSO` as `name=path` (the whole kernel)
+/// or `name@kernel,kernel=path` (those kernels, by the scene's name or
+/// `whole`), `;` between them. Interleaved, every other round in the
+/// opposite order, `TEQUILA_COMPILE_ROUNDS` rounds (3); the medians at the
+/// end. Run by hand: `cargo test --test compile_time -- --ignored
+/// --nocapture cutting`.
+#[test]
+#[ignore]
+fn what_cutting_the_layers_saves_to_compile() {
+    use KernelFeatures as F;
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let salt = salt();
+    let kernels = [
+        ("whole", F::ALL),
+        ("metallic_paint", F::GLOW | F::LAMPS | F::FLAKES),
+        ("thin_film", F::FILM),
+        ("dispersion_spectral", F::GLASS | F::PANES | F::GLOW | F::LAMPS | F::DISPERSION | F::SPECTRAL),
+        ("spectral_lamps", F::GLOW | F::LAMPS | F::SPECTRAL),
+    ];
+    let mut sources: Vec<(String, Vec<&str>, Option<String>)> = vec![("as it is".to_string(), kernels.iter().map(|k| k.0).collect(), None)];
+    if let Ok(path) = std::env::var("TEQUILA_KERNEL_BEFORE") {
+        let source = std::fs::read_to_string(path).expect("the kernel before reads");
+        sources.push(("before".to_string(), kernels.iter().map(|k| k.0).collect(), Some(source)));
+    }
+    let also = std::env::var("TEQUILA_KERNEL_ALSO").unwrap_or_default();
+    for entry in also.split(';').filter(|e| !e.is_empty()) {
+        let (name, path) = entry.split_once('=').expect("name=path");
+        let (name, which) = name.split_once('@').map_or((name, vec!["whole"]), |(n, w)| (n, w.split(',').collect()));
+        let source = std::fs::read_to_string(path).expect("the other kernel reads");
+        sources.push((name.to_string(), which, Some(source)));
+    }
+    let mut cases: Vec<(String, KernelFeatures, Option<String>)> = Vec::new();
+    for (kernel_name, kernel) in kernels {
+        for (name, which, source) in &sources {
+            if which.contains(&kernel_name) {
+                cases.push((format!("{kernel_name}, {name}"), kernel, source.clone()));
+            }
+        }
+    }
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];
+    for round in 0..rounds {
+        let mut order: Vec<usize> = (0..cases.len()).collect();
+        if round % 2 == 1 {
+            order.reverse();
+        }
+        for k in order {
+            let (name, kernel, source) = &cases[k];
+            let s = salt.wrapping_add((round * cases.len() as u32 + k as u32) * 7919);
+            let t = match source {
+                Some(source) => {
+                    let source = source.clone();
+                    cold_compile_time_edited_of(&renderer, s, &move |_| source.clone(), *kernel)
+                }
+                None => cold_compile_time_edited_of(&renderer, s, &|s| s, *kernel),
+            }
+            .as_secs_f64();
+            eprintln!("round {round}, {name}: {t:.2} s");
+            times[k].push(t);
+        }
+    }
+    for ((name, _, _), mut t) in cases.iter().zip(times) {
+        t.sort_by(f64::total_cmp);
+        eprintln!("{name}: median {:.2} s of {:?}", t[t.len() / 2], t.iter().map(|v| format!("{v:.1}")).collect::<Vec<_>>());
+    }
+}
+
+/// What the media's port costs the kernel's cold compile (`docs/07` R3) -
+/// volumes that scatter and subsurface scattering, the walk through both:
+/// the whole kernel as it is and as it was before the port (the joined
+/// source in `TEQUILA_KERNEL_BEFORE`, when given), the grey product's
+/// variant both ways, the whole kernel with each part left out, and the
+/// variants of `subsurface_product` and `scattering_volumes`; interleaved so
+/// the card's other work falls on all alike, `TEQUILA_COMPILE_ROUNDS` rounds
+/// (3 by default), the medians at the end. Run by hand: `cargo test --test
+/// compile_time -- --ignored --nocapture media`.
+#[test]
+#[ignore]
+fn what_the_media_cost_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let variant_of = |name: &str| renderer_for(name).map(|r| r.features).unwrap_or(KernelFeatures::ALL);
+    let subsurface = variant_of("subsurface_product");
+    let volumes = variant_of("scattering_volumes");
+    let salt = salt();
+    let before = std::env::var("TEQUILA_KERNEL_BEFORE").ok().map(|path| std::fs::read_to_string(path).expect("the kernel before the port reads"));
+    let mut cases: Vec<(String, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("the whole kernel as it is".to_string(), KernelFeatures::ALL, Box::new(|s| s)),
+        ("the grey product's variant as it is".to_string(), KernelFeatures::NONE, Box::new(|s| s)),
+        ("the whole kernel without scattering volumes".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING), Box::new(|s| s)),
+        ("the whole kernel without subsurface".to_string(), KernelFeatures::ALL.without(KernelFeatures::SUBSURFACE), Box::new(|s| s)),
+        ("the whole kernel without either".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING | KernelFeatures::SUBSURFACE), Box::new(|s| s)),
+        (format!("subsurface_product's variant ({})", subsurface.names()), subsurface, Box::new(|s| s)),
+        (format!("scattering_volumes' variant ({})", volumes.names()), volumes, Box::new(|s| s)),
+    ];
+    if let Some(before) = before {
+        let again = before.clone();
+        cases.push(("the whole kernel before the port".to_string(), KernelFeatures::ALL.without(KernelFeatures::SCATTERING | KernelFeatures::SUBSURFACE), Box::new(move |_| before.clone())));
+        cases.push(("the grey product's variant before the port".to_string(), KernelFeatures::NONE, Box::new(move |_| again.clone())));
     }
     let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
     let mut times: Vec<Vec<f64>> = vec![Vec::new(); cases.len()];

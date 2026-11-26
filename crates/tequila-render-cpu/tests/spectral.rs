@@ -256,6 +256,34 @@ fn every_material_keeps_its_colour_spectrally() {
     assert!(worst.0 < 1.5, "{:?} renders dE {:.2} apart spectrally", worst.1, worst.0);
 }
 
+/// Clear glass of a colour is that colour spectrally as in RGB. In a white
+/// world the middle of a smooth garnet ball passes what its face reflects
+/// plus the colour on the rest, F0 + c (1 - F0): in at the front and out at
+/// the back is the colour once, as every way out after reflections inside
+/// is. The lobe tints by the colour's square root at each crossing; its weight,
+/// read as a spectrum whole, passed more red than the colour on every pass,
+/// so a garnet - spectral whenever it disperses - read 0.47 red where RGB
+/// reads 0.41. With its dispersion too, which bends each wavelength its own
+/// way but in a white world passes the same light.
+#[test]
+fn clear_glass_keeps_its_colour_spectrally() {
+    let colour = Spectrum { r: 0.3575, g: 0.0854, b: 0.0777 };
+    let garnet = |abbe: f32| Material { specular_ior: 1.79, transmission_color: colour, transmission_dispersion_abbe: abbe, ..MaterialType::Gem.defaults() };
+    let deep = |spectral| IntegratorConfig { max_bounces: 64, max_transmission_bounces: 64, regularization_roughness: 0.0, ..with(spectral) };
+    let ball = |abbe: f32, spectral| centre(&render(sphere_scene(garnet(abbe), Environment::uniform(Spectrum::ONE)), deep(spectral), 512, 0));
+    let rgb = ball(0.0, SpectralMode::Off);
+    let f0 = ((1.79f32 - 1.0) / 2.79).powi(2);
+    println!("a tinted ball's middle head on: {:.4?}", colour.to_array().map(|c| f0 + c * (1.0 - f0)));
+    println!("RGB {:.4?}", rgb.to_array());
+    for (label, image) in [("spectral", ball(0.0, SpectralMode::On)), ("dispersed", ball(56.0, SpectralMode::Auto))] {
+        println!("{label} {:.4?}", image.to_array());
+        for (c, channel) in ["red", "green", "blue"].iter().enumerate() {
+            let (want, got) = (rgb.to_array()[c], image.to_array()[c]);
+            assert!((got - want).abs() < 0.025 * want + 0.003, "a {label} garnet passes {got:.4} {channel} where RGB passes {want:.4}");
+        }
+    }
+}
+
 /// The three-point studio, whose softboxes a glass ball both reflects and
 /// bends.
 fn studio() -> Environment {

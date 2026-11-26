@@ -302,7 +302,13 @@ fn material_from_words() -> String {
     // The edges' radius and the probes' count (a word).
     parts.push(at(62));
     parts.push("inp(63u)".into());
-    parts.push(format!("vec4<f32>({}, {}, {}, {})", at(64), at(65), at(66), at(67)));
+    // The glow behind, then the flakes: colour and weight, size, spread,
+    // roughness and coverage, normal; then the film and the dispersion;
+    // then a scattering volume's extinction and albedo; the subsurface
+    // colour, and a walk's extinction and albedo.
+    for v in [64, 68, 72, 76, 80, 84, 88, 92, 96, 100] {
+        parts.push(format!("vec4<f32>({}, {}, {}, {})", at(v), at(v + 1), at(v + 2), at(v + 3)));
+    }
     format!("GpuMaterial({})", parts.join(", "))
 }
 
@@ -327,13 +333,14 @@ fn build(m: &Material, floor: f32, aimed: bool, inside: bool, wo: Vec3) -> OpenP
 /// The stack's words: eval rgb, pdf, the sample's eleven, the reflection's
 /// roughness (-1 for none), albedo rgb; `pdf_reflection` at the
 /// integrator's seeing share, `eval_selective` diffuse alone and the rest
-/// alone, and whether the stack has a mirror-smooth lobe and transmits.
+/// alone, whether the stack has a mirror-smooth lobe and transmits, and
+/// whether the sample crosses into a walk (`BsdfFlags::SUBSURFACE`).
 fn stack_words() -> Vec<Word> {
     let mut words = sample_words();
     words.push(w(Kind::Value, true));
     words.extend((0..3).map(|_| w(Kind::Value, false)));
     words.extend((0..7).map(|_| w(Kind::Value, false)));
-    words.extend([w(Kind::Flag, false), w(Kind::Flag, false)]);
+    words.extend([w(Kind::Flag, false), w(Kind::Flag, false), w(Kind::Flag, true)]);
     words
 }
 
@@ -343,13 +350,59 @@ fn seeing_share(roughness: f32) -> f32 {
 }
 
 fn the_glass_stack(seed: u64, aimed: bool) {
+    the_stack_of(seed, aimed, glass, if aimed { "OpenPbrBsdf with glass, aimed" } else { "OpenPbrBsdf with glass" });
+}
+
+/// A material that scatters under its surface: glass's ranges, mostly
+/// opaque, its subsurface weight anywhere from nought to one (often one),
+/// its colour any, thin-walled now and then (the sheet's light through it
+/// rather than a walk's doorway), and now and then the sixth lobe dropped.
+fn translucent(rng: &mut Pcg32) -> Material {
+    let mut m = glass(rng);
+    if rng.next_f32() < 0.7 {
+        m.transmission_weight = 0.0;
+    }
+    if rng.next_f32() < 0.5 {
+        m.base_metalness = 0.0;
+    }
+    m.subsurface_weight = match rng.next_f32() {
+        x if x < 0.05 => 0.0,
+        x if x < 0.5 => 1.0,
+        x if x < 0.55 => rng.next_f32() * 2e-4,
+        _ => rng.next_f32(),
+    };
+    m.subsurface_color = colour(rng);
+    // Not an index of exactly 1: there the card's Fresnel is a hair over
+    // nought where the processor's is nought, and a stack whose only
+    // reflection is that interface gives a sample of next to nothing where
+    // the processor gives none - the interface's, with or without the walk.
+    if m.specular_ior == 1.0 {
+        m.specular_ior = 1.0 + 1e-3 * (1.0 + rng.next_f32());
+    }
+    m.subsurface_radius = Spectrum { r: 0.001 + rng.next_f32() * 0.1, g: 0.001 + rng.next_f32() * 0.1, b: 0.001 + rng.next_f32() * 0.1 };
+    m
+}
+
+/// The stack with the subsurface lobe beside the diffuse: its doorway, or
+/// a thin sheet's light through it.
+#[test]
+fn the_subsurface_stack_is_the_processors() {
+    the_stack_of(53, false, translucent, "OpenPbrBsdf with subsurface");
+}
+
+#[test]
+fn the_aimed_subsurface_stack_is_the_processors() {
+    the_stack_of(54, true, translucent, "OpenPbrBsdf with subsurface, aimed");
+}
+
+fn the_stack_of(seed: u64, aimed: bool, make: fn(&mut Pcg32) -> Material, name: &str) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 68);
+    assert_eq!(MATERIAL_WORDS, 104);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
-    let (mut through, mut deltas, mut misses, mut dropped, mut inside_count) = (0, 0, 0, 0, 0);
+    let (mut through, mut deltas, mut misses, mut dropped, mut inside_count, mut walks) = (0, 0, 0, 0, 0, 0);
     for _ in 0..N {
-        let m = glass(&mut rng);
+        let m = make(&mut rng);
         let floor = if rng.next_f32() < 0.6 { 0.0 } else { rng.next_f32() * 0.5 };
         let inside = rng.next_f32() < 0.4;
         let (wo, wi) = (direction(&mut rng, 0.03), direction(&mut rng, 0.5));
@@ -373,6 +426,8 @@ fn the_glass_stack(seed: u64, aimed: bool) {
         e.extend([diffuse.r, diffuse.g, diffuse.b, glossy.r, glossy.g, glossy.b]);
         e.push(bsdf.flags().contains(BsdfFlags::DELTA) as u8 as f32);
         e.push(bsdf.flags().contains(BsdfFlags::TRANSMISSION) as u8 as f32);
+        e.push(reflection.is_some_and(|(s, _)| s.flags.contains(BsdfFlags::SUBSURFACE)) as u8 as f32);
+        walks += reflection.is_some_and(|(s, _)| s.flags.contains(BsdfFlags::SUBSURFACE)) as usize;
         want.push(e);
         through += reflection.is_some_and(|(s, _)| s.is_transmission) as usize;
         deltas += reflection.is_some_and(|(s, _)| s.is_delta) as usize;
@@ -414,7 +469,8 @@ fn the_glass_stack(seed: u64, aimed: bool) {
          let g = openpbr_eval_selective(b, wo, wi, false, true);
          outf(23u, g.x); outf(24u, g.y); outf(25u, g.z);
          outf(26u, select(0.0, 1.0, openpbr_has_delta(b)));
-         outf(27u, select(0.0, 1.0, openpbr_transmits(b)));",
+         outf(27u, select(0.0, 1.0, openpbr_transmits(b)));
+         outf(28u, select(0.0, 1.0, s.ok && r.slot == LOBE_SUBSURFACE && b.subsurface_walk));",
         base + 1,
         base + 2,
         base + 3,
@@ -427,7 +483,6 @@ fn the_glass_stack(seed: u64, aimed: bool) {
         base + 9,
         material = material_from_words(),
     );
-    let name = if aimed { "OpenPbrBsdf with glass, aimed" } else { "OpenPbrBsdf with glass" };
     let words = stack_words();
     let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 11, words.len());
     // The processor's roughness word for no sample is 0 here too.
@@ -441,7 +496,7 @@ fn the_glass_stack(seed: u64, aimed: bool) {
         })
         .collect();
     println!(
-        "{name}: {through} samples through, {deltas} delta, {misses} without a sample, {inside_count} from inside, {dropped} stacks dropping the diffuse"
+        "{name}: {through} samples through ({walks} into a walk), {deltas} delta, {misses} without a sample, {inside_count} from inside, {dropped} stacks dropping the diffuse"
     );
     compare(name, &out, &want, &words, 4, &cases);
 }

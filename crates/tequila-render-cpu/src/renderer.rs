@@ -515,7 +515,11 @@ fn ambient_occlusion(
     // reach the whole scene turns a contact mask into a second, wrong shadow.
     let reach = radius.max(1e-4);
     let target = result.position + direction * reach;
-    if intersector.occluded(result.position, normal, target, -direction) {
+    // Off the surface first: a shadow ray starts where it is put. The pass
+    // keeps the first hit's place, not what it was worked out from, so the
+    // step is the one for its coordinates.
+    let from = tequila_core::math::offset_ray_origin(result.position, normal);
+    if intersector.occluded(from, normal, target, -direction) {
         1.0
     } else {
         0.0

@@ -124,7 +124,9 @@ struct FrameParams {
     dome_radius: f32,
     dome_height: f32,
     dome_flatten: u32,
-    _pad6: u32,
+    // Where the spectral tables start in the pictures' texels, under
+    // MODE_SPECTRAL.
+    spectral_base: u32,
     filter_table: array<vec4<f32>, 256>,
 };
 
@@ -171,6 +173,16 @@ const LAMPS_FOR_REFLECTIONS: u32 = 8u;
 // Shadow rays pass all clear glass and there is some, so a bounce that sees
 // meets glass that bends light as glass (the integrator's meets_glass).
 const LAMPS_MEETS_GLASS: u32 = 16u;
+// Some light passes a part its shadow rays pass, which a path stopping at
+// the part meets there (the integrator's passes_parts); some part casts no
+// shadow (SceneSnapshot::has_shadowless_parts); the lights are not sampled
+// directly (IntegratorConfig::direct_lighting off).
+const LAMPS_PASSES_PARTS: u32 = 32u;
+const LAMPS_SHADOWLESS: u32 = 64u;
+const LAMPS_UNSAMPLED: u32 = 128u;
+// The sky's light sample sees past the shadow-catching floors the bounces
+// pass, and a bounce past one keeps the sky's weight (sky_past_floors).
+const LAMPS_SKY_PAST_FLOORS: u32 = 256u;
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;
 // Two vec4s a sample: radiance (and in w, 1 if the camera ray met
@@ -193,6 +205,11 @@ struct PixelSums {
 
 @group(3) @binding(2) var<storage, read_write> frame_pixels: array<PixelSums>;
 
+// FrameParams::mode: the paths carry four wavelengths; and each its hero
+// alone from the start (transport.rs's MODE_SPECTRAL and MODE_ALONE).
+const MODE_SPECTRAL: u32 = 4u;
+const MODE_ALONE: u32 = 8u;
+
 fn luminance(c: vec3<f32>) -> f32 {
     return 0.2722287 * c.x + 0.6740818 * c.y + 0.0536895 * c.z;
 }
@@ -200,12 +217,20 @@ fn luminance(c: vec3<f32>) -> f32 {
 // Pixel::accumulate_with for a sample with no hue, no wavelength and no
 // clamp: firefly rejection (k = 8 deviations, from the 16th sample on)
 // judging only what the path found beyond the background.
-fn accumulate(pixel: u32, radiance_in: vec3<f32>, background: vec3<f32>, coverage: f32) {
+fn accumulate(pixel: u32, radiance_in: vec3<f32>, background: vec3<f32>, coverage: f32, hue: f32, signed: bool) {
     var p = frame_pixels[pixel];
     var radiance = radiance_in;
     if ((frame.mode & 2u) != 0u && p.samples >= 16u) {
-        let sampled = max(radiance - background, vec3<f32>(0.0));
-        let lum = luminance(sampled);
+        // A spectral sample's kept signed (`signed`): its wavelengths can
+        // register a little below nought in a channel.
+        var sampled = max(radiance - background, vec3<f32>(0.0));
+        if (signed) {
+            sampled = radiance - background;
+        }
+        // Judged by the light it carries, not its colour's luminance: a
+        // path carrying one wavelength over that wavelength's (hue, 1 for
+        // any other path).
+        let lum = luminance(sampled) / hue;
         let n = f32(p.samples);
         let mean = luminance(p.sum.xyz * (1.0 / n));
         // Kahan's compensation is what the sum is over by.

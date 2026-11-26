@@ -224,19 +224,27 @@ const MAX_ENCLOSURE_CROSSINGS: u32 = 32;
 
 /// The media a path starts inside, if it starts inside any.
 ///
-/// Decided by counting crossings along the ray rather than by reading a
-/// normal: an odd number of surfaces of one instance between the origin and
+/// Decided by counting crossings along a line rather than by reading a
+/// normal: an odd number of surfaces of one solid between the origin and
 /// infinity means the origin is within it. That is true of any closed mesh
 /// however it is wound, which is the whole point — the winding is the thing
-/// that cannot be trusted here.
+/// that cannot be trusted here. A solid modelled as several open parts is
+/// counted as the one it is ([`SceneSnapshot::solid`]).
 ///
 /// Only the boundaries of media are counted. An opaque object the camera has
 /// been pushed inside of has no interface to get the wrong way round, and
 /// counting it would cost every scene the probe for nothing.
 ///
-/// Costs nothing in the ordinary case: the first hit of a camera ray outside
-/// everything is a front face of an opaque surface, and the walk stops at the
-/// first surface that is not transmissive.
+/// The line runs back from the ray's origin, away from where it looks, not
+/// on ahead. Any line out to infinity will do, and the one behind a camera
+/// usually meets nothing, where the one ahead crosses everything in view:
+/// each part one more step past a surface, and a step past one of two
+/// surfaces lying in one plane passes the other unseen. A frosted label laid
+/// flat on the palma P8's back shell did that: counted from the front, the
+/// shell was crossed once, and the screen in front of the label showed
+/// through a dark patch of the shell's volume.
+///
+/// [`SceneSnapshot::solid`]: crate::scene::SceneSnapshot::solid
 fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
     let scene = intersector.scene();
     let mut media = MediumStack::default();
@@ -248,7 +256,7 @@ fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
     let mut counts: [(InstanceId, tequila_core::ids::MaterialId, u32); MAX_MEDIA] =
         [(InstanceId(u32::MAX), tequila_core::ids::MaterialId(0), 0); MAX_MEDIA];
     let mut used = 0usize;
-    let mut probe = *ray;
+    let mut probe = Ray { direction: -ray.direction, ..*ray };
     for _ in 0..MAX_ENCLOSURE_CROSSINGS {
         let Some(hit) = intersector.intersect(&probe) else {
             break;
@@ -256,13 +264,14 @@ fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
         // Only what has an inside: a thin-walled shell is a surface with no
         // medium behind it, whatever its mesh encloses.
         if is_boundary(scene.material(hit.material)) {
-            match counts[..used].iter_mut().find(|(i, _, _)| *i == hit.instance) {
+            let solid = scene.solid(hit.instance);
+            match counts[..used].iter_mut().find(|(i, _, _)| *i == solid) {
                 Some((_, _, n)) => *n += 1,
                 // More than a handful of media along one ray is past what the
                 // stack holds; stop counting rather than grow, and let the
                 // extra ones read as outside.
                 None if used < MAX_MEDIA => {
-                    counts[used] = (hit.instance, hit.material, 1);
+                    counts[used] = (solid, hit.material, 1);
                     used += 1;
                 }
                 None => {}
@@ -745,6 +754,48 @@ fn unmet() -> PathResult {
     }
 }
 
+/// Whether some light passes a part its shadow rays pass where the path
+/// stops at that part (`lamps_past`, `light_past`): a part that casts no
+/// shadow, a lamp whose shadows leave some parts out, or that casts none.
+pub fn passes_parts(scene: &crate::scene::SceneSnapshot, config: &IntegratorConfig) -> bool {
+    config.shadows
+        && (scene.has_shadowless_parts()
+            || scene.lights.lights().iter().any(|light| light.can_be_met() && (!light.visibility.shadow || !light.shadow_links.is_all())))
+}
+
+/// Whether the sky's light sample sees past the shadow-catching floors the
+/// bounces pass ([`SceneSnapshot::floor_passes`](crate::scene::SceneSnapshot::floor_passes)),
+/// as those bounces do.
+///
+/// A bounce that meets such a floor goes straight on through it to the sky
+/// below the horizon. Where the light sample's shadow ray stopped at the
+/// floor, that light was found by the bounces alone, at full weight: a
+/// bright light reaching below the horizon - a tall strip, a softbox low
+/// down - was found by the odd bounce, as fireflies, where the light sample
+/// would have found it every time. Where this holds, the sky's shadow rays
+/// pass those floors, and a bounce that passes one keeps the sky's MIS
+/// weight it had: the same light, found both ways. The lamps' and the
+/// glowing parts' shadow rays still stop at the floor, and a bounce past it
+/// meets them at full weight as before (`docs/07` R3, the Headphones' rim).
+///
+/// Held to where the sky's weighting past the floor is the plain MIS weight
+/// on either side: shadows on (without them nothing stops the light sample
+/// at all), the floor not shaded as a surface (ground illumination), no
+/// light past parts that cast no shadow ([`passes_parts`]), no glass a
+/// shadow ray lets by (which a bounce past the floor would meet as glass
+/// passed), and a sky infinitely far away (a dome of a size weighs a
+/// direction by where it is seen from, which the floor moves).
+pub fn sky_past_floors(scene: &crate::scene::SceneSnapshot, config: &IntegratorConfig) -> bool {
+    sky_past_floors_of(config, passes_parts(scene, config), scene.has_panes(), scene.environment.dome().is_infinite())
+}
+
+/// [`sky_past_floors`] from what it reads of the scene: whether light passes
+/// parts ([`passes_parts`]), whether there is clear glass a shadow ray can
+/// pass, and whether the sky is infinitely far away.
+pub fn sky_past_floors_of(config: &IntegratorConfig, passes_parts: bool, panes: bool, infinite_dome: bool) -> bool {
+    config.shadows && !config.ground_illumination && !passes_parts && !(config.shadow_glass() != ShadowGlass::Solid && panes) && infinite_dome
+}
+
 /// One path, in whatever its colour is carried as.
 ///
 /// Every colour the scene describes enters the path through `colour`: a
@@ -793,13 +844,21 @@ fn trace<C: PathColour>(
     }
     let mut bounce = 0u32;
     let mut transmission_bounces = 0u32;
-    // Light that went on through a fibre (§4.4's Fuzz) rather than back off
-    // it: counted as a transmission and not against the bounces, as Cycles
-    // counts its hair's. A felt is many fibres deep, and its colour is the
-    // light that wanders through them; at the bounces a surface needs, the
-    // pile of a felt ball came out 4% darker and a tenth less red than in
-    // Cycles, and with them counted apart the two agree to 2%.
-    let mut fibre_passes = 0u32;
+    // Passes through glass, and through fibres, counted against the
+    // transmission limit and not against the bounces (`docs/01` §11). Glass
+    // needs many crossings and few bounces: a bottle is four crossings
+    // straight through and a part seen through a clear case four more, and
+    // counted as bounces they ate the Product preset's six, so its eight
+    // through glass were never reached and the light past a second wall was
+    // cut off. A fibre (§4.4's Fuzz) the light went on through rather than
+    // back off is counted so, as Cycles counts its hair's: a felt is many
+    // fibres deep, and its colour is the light that wanders through them; at
+    // the bounces a surface needs, the pile of a felt ball came out 4% darker
+    // and a tenth less red than in Cycles, and with them counted apart the
+    // two agree to 2%. Not such passes: the way into a subsurface walk and a
+    // thin sheet's diffuse light through it, which scatter as a bounce does
+    // and are counted as bounces, as Cycles counts them.
+    let mut glass_crossings = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth
     // budget, or a row of chain-link fences would go black. Counted only so
@@ -956,9 +1015,10 @@ fn trace<C: PathColour>(
     // Whether some light passes a part its shadow rays pass where the path
     // stops at that part (`lamps_past`, `light_past`): a part that casts no
     // shadow, a lamp whose shadows leave some parts out, or that casts none.
-    let passes_parts = config.shadows
-        && (scene.has_shadowless_parts()
-            || scene.lights.lights().iter().any(|light| light.can_be_met() && (!light.visibility.shadow || !light.shadow_links.is_all())));
+    let passes_parts = passes_parts(scene, config);
+    // Whether the sky's light sample sees past the shadow-catching floors
+    // the bounces pass (`sky_past_floors`).
+    let sky_past_floors = sky_past_floors(scene, config);
     // Whether the surface the path last scattered off took a manifold sample
     // (`manifold`), and the path has gone on through glass that bends light
     // alone since. A lamp's light along the way it is going is that
@@ -1336,11 +1396,11 @@ fn trace<C: PathColour>(
         // The density with which a lit medium's last event sent the path
         // here, if it did: what the sky past a part that casts no shadow is
         // weighed by (`light_past`).
-        let from_medium = lit_from_medium.filter(|m| *m != hit.instance).map(|_| lit_phase_pdf);
+        let from_medium = lit_from_medium.filter(|m| *m != scene.solid(hit.instance)).map(|_| lit_phase_pdf);
         // Anything but the lit medium's own surface is a new event, which
         // the direct sample did not see past. A light's stand-in, passed
         // below, it did see past: it casts no shadow.
-        if lit_from_medium.is_some_and(|m| m != hit.instance)
+        if lit_from_medium.is_some_and(|m| m != scene.solid(hit.instance))
             && (stand_in_shows || !is_light_proxy(scene, hit.instance))
         {
             lit_from_medium = None;
@@ -1432,7 +1492,7 @@ fn trace<C: PathColour>(
                         } else {
                             -hit.geometric_normal
                         };
-                        behind * manifold::on_catcher(intersector, config, &hit, facing, &media, bounce, sampler)
+                        behind * manifold::on_catcher(intersector, config, &hit, facing, &media, bounce - glass_crossings, sampler)
                     }
                     Some(map) if catcher.shadows => {
                         let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 {
@@ -1483,9 +1543,12 @@ fn trace<C: PathColour>(
             // blocked the light below it, so turning shadows on changed how
             // the product was lit.
             //
-            // Light sampling does not see through it (a shadow ray stops at
-            // the floor), so what lies beyond is found by this path alone and
-            // takes full weight.
+            // The lamps' and the glowing parts' light samples do not see
+            // through it (their shadow rays stop at the floor), so what of
+            // them lies beyond is found by this path alone and takes full
+            // weight. The sky's does where `sky_past_floors` holds, and the
+            // sky beyond keeps the weight the bounce had; elsewhere the sky
+            // too is this path's alone.
             //
             // A floor with a bounce glows for everything but the camera -
             // the studio's white sweep the product's reflections see - and
@@ -1516,7 +1579,11 @@ fn trace<C: PathColour>(
                 crossings += 1;
                 let (geometric, _) = hit.facing_forward(ray.direction);
                 ray = Ray::new(hit.offset(-geometric), ray.direction);
-                prev_pdf_solid_angle = f32::INFINITY;
+                if sky_past_floors && catcher.bounce.is_none() {
+                    emitters_from = None;
+                } else {
+                    prev_pdf_solid_angle = f32::INFINITY;
+                }
                 through_glass = ShadowGlass::Solid;
                 seen_from = None;
                 after_manifold = false;
@@ -1592,12 +1659,15 @@ fn trace<C: PathColour>(
             out.fine = fibre.is_some();
         }
         let boundary = is_boundary(base) && fibre.is_none();
+        // The medium this surface bounds, which is the part's own unless
+        // the part is one piece of a solid modelled as several.
+        let solid = if boundary { scene.solid(hit.instance) } else { hit.instance };
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
-            && media.beyond(hit.instance, base.medium_priority) == media.top(None).map(|m| m.instance)
+            && media.beyond(solid, base.medium_priority) == media.top(None).map(|m| m.instance)
         {
             crossings += 1;
-            media.cross_with(hit.instance, base, scene.density(hit.instance));
+            media.cross_with(solid, base, scene.density(hit.instance));
             let (geometric, _) = hit.facing_forward(ray.direction);
             ray = Ray::new(hit.offset(-geometric), ray.direction);
             continue;
@@ -1712,6 +1782,18 @@ fn trace<C: PathColour>(
                 bump_scratch.get_or_insert_with(Default::default),
             ),
             _ => shading_normal,
+        };
+        // Turned again, now it is bent: Cycles makes its reflection valid on
+        // the normal the BSDF is given, which is the bumped one. Turned only
+        // before the bump, a steep relief - a 3D print's layer grooves, a
+        // hammered finish - sent much of its mirror reflection into the
+        // surface, where the leak guard below ends the path: the highlight
+        // went and the part darkened, a translucent print by half. One that
+        // already reflects above the surface is left exactly as it was.
+        let shading_normal = if scene.bump(hit.material).is_some() || material.edge_radius > 0.0 {
+            valid_for_reflection(geometric_normal, wo_world, shading_normal)
+        } else {
+            shading_normal
         };
 
         // ---- Cutout ------------------------------------------------------
@@ -1864,7 +1946,7 @@ fn trace<C: PathColour>(
             aovs.contribute(colour.rgb(contribution), group);
         }
 
-        if bounce - fibre_passes >= config.max_bounces {
+        if bounce - glass_crossings >= config.max_bounces {
             break;
         }
 
@@ -1952,7 +2034,7 @@ fn trace<C: PathColour>(
         let shaded = material;
         let (from_inside, relative_ior) = if boundary {
             let here = media.top(None).map(|m| m.instance);
-            let there = media.beyond(hit.instance, base.medium_priority);
+            let there = media.beyond(solid, base.medium_priority);
             let n_here = media.ior_of(here, None);
             let n_there = media.ior_of(there, Some(shaded));
             if n_there >= n_here {
@@ -2098,6 +2180,7 @@ fn trace<C: PathColour>(
                 colour.rgb(throughput),
                 passes,
                 seen,
+                sky_past_floors,
             );
             let (analytic_direct, layer) = if bent {
                 (Lit::default(), 0)
@@ -2164,7 +2247,7 @@ fn trace<C: PathColour>(
                     wo,
                     geometric_normal,
                     &media,
-                    bounce,
+                    bounce - glass_crossings,
                     transmission_bounces,
                     sampler,
                     passes,
@@ -2357,7 +2440,11 @@ fn trace<C: PathColour>(
             break;
         }
 
-        throughput *= colour.reflectance(sample.throughput_weight());
+        let weight = sample.throughput_weight();
+        throughput *= match C::SPECTRAL.then(|| glass_pass(material, &sample, weight)).flatten() {
+            Some((tint, scale)) => colour.reflectance(tint) * scale,
+            None => colour.reflectance(weight),
+        };
         // Through a dispersive surface each wavelength leaves by a direction
         // of its own, and this path has only its hero's: the other three end
         // here, and the hero carries on for all four, as Wilkie et al. do at
@@ -2372,8 +2459,8 @@ fn trace<C: PathColour>(
             Some(_) => sample.flags.contains(BsdfFlags::TRANSMISSION),
             None => sample.is_transmission,
         };
-        if fibre.is_some() && through {
-            fibre_passes += 1;
+        if through && (fibre.is_some() || !sample.flags.contains(BsdfFlags::DIFFUSE)) {
+            glass_crossings += 1;
         }
         if through {
             transmission_bounces += 1;
@@ -2399,7 +2486,7 @@ fn trace<C: PathColour>(
                     .filter(|m| m.doorway && m.instance == hit.instance)
                     .and_then(|m| WalkGuide::new(hit.instance, hit.position, geometric_normal, &m.scattering?));
             } else if boundary {
-                media.cross_with(hit.instance, shaded, scene.density(hit.instance));
+                media.cross_with(solid, shaded, scene.density(hit.instance));
             }
         }
         if !throughput.is_finite() || throughput.is_black() {
@@ -3289,10 +3376,78 @@ fn nearness_at(intersector: &dyn Intersector, hit: &Hit, normal: Vec3, radius: f
 /// specific to keep going; only a shadow ray, whose two ends are already
 /// known, can take the average instead of a sample.
 ///
+/// `from` is already stepped off the surface it leaves, on the side
+/// `from_normal` points to (`Hit::offset`), and is not stepped again
+/// ([`crate::intersect::shadow_ray`]).
+///
 /// `blockers` are the parts that cast this light's shadow (shadow linking);
 /// the rest let it by. Every part, for a light without shadow links, takes
 /// the one `occluded` as before.
 ///
+/// A pass through clear glass as a spectral path takes it: its weight's
+/// tint and the number that scales it, apart, the tint the crossing tint
+/// ([`crate::spectral::crossing_tint`]) of the glass's colour. `None` for
+/// anything else, which the path reads by its weight as it is.
+///
+/// The lobe tints a crossing by the square root of the colour, and its
+/// weight is that root times its Fresnel share and the odds of choosing it.
+/// Read as one, that weight is often over one, a colour no surface reflects,
+/// and its spectrum is an unbounded colour's, of another shape than the
+/// root's; and the root's own spectrum, crossed twice, is not the colour's.
+/// Between them a garnet's middle in a white world read 0.47 red, against
+/// the 0.41 a tinted ball passes and the RGB render gives. Its tint read as
+/// the crossing tint and its number as a number, two crossings are the
+/// colour on either path. A weight that is not the root scaled - glass under
+/// a coloured coat - is read as it was.
+fn glass_pass(material: &crate::material::Material, sample: &tequila_materials::bsdf::BsdfSample, weight: Spectrum) -> Option<(Spectrum, f32)> {
+    if !sample.is_transmission || sample.flags.intersects(BsdfFlags::DIFFUSE | BsdfFlags::SUBSURFACE) {
+        return None;
+    }
+    let has_depth = !material.geometry_thin_walled && material.transmission_depth > 0.0;
+    let colour = if has_depth { material.transmission_tint } else { material.transmission_color * material.transmission_tint };
+    if colour.r == colour.g && colour.g == colour.b {
+        return None;
+    }
+    let root = colour.to_array().map(|c| c.max(0.0).sqrt());
+    let weight = weight.to_array();
+    // The number the root is scaled by, the same in every channel the root
+    // has, or this is not a pass of this glass alone.
+    let channels: Vec<f32> = (0..3).filter(|&c| root[c] > 1e-4).map(|c| weight[c] / root[c]).collect();
+    let scale = *channels.first()?;
+    if !(scale.is_finite() && scale > 0.0) || channels.iter().any(|&k| (k - scale).abs() > 1e-3 * scale) {
+        return None;
+    }
+    if (0..3).any(|c| root[c] <= 1e-4 && weight[c] > 1e-6) {
+        return None;
+    }
+    Some((crossing_tint(colour), scale))
+}
+
+/// [`crate::spectral::crossing_tint`], remembered for the colours this
+/// thread has met: a constant glass is one colour, and the tint takes a few
+/// integrations of a spectrum to find. A textured colour can be many, so
+/// past a few hundred a new one is worked out each time and not kept.
+fn crossing_tint(colour: Spectrum) -> Spectrum {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    const KEPT: usize = 512;
+    thread_local! {
+        static TINTS: RefCell<HashMap<[u32; 3], Spectrum>> = RefCell::new(HashMap::new());
+    }
+    let key = colour.to_array().map(f32::to_bits);
+    TINTS.with(|tints| {
+        if let Some(tint) = tints.borrow().get(&key) {
+            return *tint;
+        }
+        let tint = crate::spectral::crossing_tint(colour);
+        let mut tints = tints.borrow_mut();
+        if tints.len() < KEPT {
+            tints.insert(key, tint);
+        }
+        tint
+    })
+}
+
 /// Clear glass `glass` takes in ([`IntegratorConfig::shadow_glass`]) lets
 /// the light by as well, tinted by its colour and less what it reflects
 /// ([`crate::scene::Pane`]), which is why the answer is a colour.
@@ -3305,12 +3460,16 @@ fn shadow_transmittance(
     to_normal: Vec3,
     blockers: &LightLinks,
 ) -> Spectrum {
-    shadow_transmittance_through(intersector, glass, from, from_normal, to, to_normal, blockers).0
+    shadow_transmittance_through(intersector, glass, from, from_normal, to, to_normal, blockers, false).0
 }
 
 /// [`shadow_transmittance`], and whether the light came through glass that
 /// bends light ([`crate::scene::Pane::bends`]) on the way: straight on, as
 /// a shadow ray takes it, where the light really took a bent path.
+///
+/// `past_floors`: the shadow-catching floors the bounces pass are passed too
+/// (the sky's light sample where [`sky_past_floors`] holds).
+#[allow(clippy::too_many_arguments)]
 fn shadow_transmittance_through(
     intersector: &dyn Intersector,
     glass: ShadowGlass,
@@ -3319,17 +3478,19 @@ fn shadow_transmittance_through(
     to: Vec3,
     to_normal: Vec3,
     blockers: &LightLinks,
+    past_floors: bool,
 ) -> (Spectrum, bool) {
     let scene = intersector.scene();
     let glass = if scene.has_panes() { glass } else { ShadowGlass::Solid };
     if !scene.has_cutouts() && glass == ShadowGlass::Solid && blockers.is_all() {
-        return if intersector.occluded(from, from_normal, to, to_normal) {
-            (Spectrum::ZERO, false)
+        let blocked = if past_floors {
+            intersector.occluded_past_floors(from, from_normal, to, to_normal)
         } else {
-            (Spectrum::ONE, false)
+            intersector.occluded(from, from_normal, to, to_normal)
         };
+        return if blocked { (Spectrum::ZERO, false) } else { (Spectrum::ONE, false) };
     }
-    cutout_transmittance(intersector, glass, from, from_normal, to, to_normal, blockers)
+    cutout_transmittance(intersector, glass, from, from_normal, to, to_normal, blockers, past_floors)
 }
 
 /// [`shadow_transmittance`] in a scene with cutouts or glass: every surface
@@ -3339,6 +3500,7 @@ fn shadow_transmittance_through(
 /// Out of line so the walk's size never decides whether the common case —
 /// one `occluded` — is inlined into the callers that make it per pixel.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn cutout_transmittance(
     intersector: &dyn Intersector,
     glass: ShadowGlass,
@@ -3347,6 +3509,7 @@ fn cutout_transmittance(
     to: Vec3,
     to_normal: Vec3,
     blockers: &LightLinks,
+    past_floors: bool,
 ) -> (Spectrum, bool) {
     let scene = intersector.scene();
     let ray = crate::intersect::shadow_ray(from, from_normal, to, to_normal);
@@ -3376,16 +3539,18 @@ fn cutout_transmittance(
 
         // A part that casts no shadow is open to a shadow ray whatever its
         // opacity, as it is to `occluded` on the way in - and so is one
-        // this light's shadow links leave out.
-        let open = !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0);
+        // this light's shadow links leave out, and a floor the bounces pass
+        // where this ray passes them too.
+        let open = !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) || (past_floors && scene.floor_passes(hit.instance));
         let at = along + hit.t;
         if let Some(pane) = scene.pane(hit.material).filter(|pane| pane.passes(glass) && !open) {
             through *= pane.crossing(ray.direction.dot(hit.geometric_normal));
             bent |= pane.bends();
             if pane.has_volume() {
+                let solid = scene.solid(hit.instance);
                 match inside {
-                    None => inside = Some((hit.instance, at)),
-                    Some((instance, since)) if instance == hit.instance => {
+                    None => inside = Some((solid, at)),
+                    Some((instance, since)) if instance == solid => {
                         through *= pane.inside(at - since);
                         inside = None;
                     }
@@ -4273,8 +4438,8 @@ fn medium_transmittance(
             None => return through,
             // The medium's own surface, and anything that casts no shadow,
             // are passed; anything else is in the way.
-            Some(hit) if hit.instance == instance || !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => {
-                if hit.instance == instance {
+            Some(hit) if scene.solid(hit.instance) == instance || !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => {
+                if scene.solid(hit.instance) == instance {
                     inside = !inside;
                 }
                 remaining -= hit.t;
@@ -4289,7 +4454,9 @@ fn medium_transmittance(
     Spectrum::ZERO
 }
 
-/// One next-event-estimation sample against the environment light.
+/// One next-event-estimation sample against the environment light; its
+/// shadow ray passes the floors the bounces pass where `past_floors`
+/// ([`sky_past_floors`]).
 ///
 /// Returns the contribution *before* the path throughput is applied.
 #[allow(clippy::too_many_arguments)]
@@ -4307,6 +4474,7 @@ fn sample_environment_light(
     throughput: Spectrum,
     passes: bool,
     seen: Option<&dyn Fn(Vec3) -> f32>,
+    past_floors: bool,
 ) -> Lit {
     let scene = intersector.scene();
     // An environment turned down to nothing lights nothing, wherever the
@@ -4409,6 +4577,7 @@ fn sample_environment_light(
             target,
             -light.direction,
             &LightLinks::All,
+            past_floors,
         );
         if visibility.is_black() {
             return Lit::default();
@@ -4541,6 +4710,7 @@ fn sample_emissive_surfaces(
             light.position,
             light.normal,
             &LightLinks::All,
+            false,
         );
         if visibility.is_black() {
             return Lit::default();
@@ -4754,6 +4924,98 @@ pub fn supports_next_event_estimation(flags: BsdfFlags) -> bool {
     !flags.is_pure_delta()
 }
 
+/// The random walk's pieces as they stand, for the graphics card's
+/// differential tests (`docs/07` R3, `tequila-render-gpu`'s
+/// `tests/media.rs`): each the integrator's own function, called as the
+/// walk calls it, so the card's ports are held to what the processor does.
+/// Nothing here is used by the renderer.
+#[doc(hidden)]
+pub mod walk_twins {
+    use super::*;
+    pub use tequila_materials::openpbr::SubsurfaceMedium;
+
+    /// `henyey_greenstein`.
+    pub fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
+        super::henyey_greenstein(cos_theta, g)
+    }
+
+    /// `walk_flight` on an RGB path: each channel's chance, and the optical
+    /// depth flown.
+    pub fn walk_flight(throughput: Spectrum, albedo: Spectrum, sigma: Spectrum, stretch: f32, draws: (f32, f32)) -> (Spectrum, f32) {
+        super::walk_flight(throughput, albedo, sigma, stretch, draws)
+    }
+
+    /// A walk's guide (`WalkGuide`), held to the card's.
+    #[derive(Clone, Copy, Debug)]
+    pub struct Guide(WalkGuide);
+
+    impl Guide {
+        /// `WalkGuide::new`, the instance by its index.
+        pub fn new(instance: u32, entry: Vec3, normal: Vec3, walk: &SubsurfaceMedium) -> Option<Guide> {
+            WalkGuide::new(InstanceId(instance), entry, normal, walk).map(Guide)
+        }
+
+        /// `WalkGuide::look`.
+        pub fn look(sigma: Spectrum) -> f32 {
+            WalkGuide::look(sigma)
+        }
+
+        /// `WalkGuide::stretch`.
+        pub fn stretch(&self) -> f32 {
+            self.0.stretch()
+        }
+
+        /// Its Dwivedi diffusion length, the logarithm with it, and the
+        /// share of turns guided.
+        pub fn parts(&self) -> (f32, f32, f32) {
+            (self.0.diffusion, self.0.phase_log, self.0.share)
+        }
+
+        /// What the first flight saw of the surface opposite, as the walk
+        /// sets it.
+        pub fn set_opposite(&mut self, opposite: Option<f32>) {
+            self.0.opposite = opposite;
+        }
+
+        /// `WalkGuide::turn`.
+        pub fn turn(&mut self, at: Vec3, forward: Vec3, g: f32, sampler: &mut Sampler) -> Vec3 {
+            self.0.turn(at, forward, g, sampler)
+        }
+
+        /// `GuidedTurn::density` of the turn last taken; none before one.
+        pub fn density(&self, chance: Spectrum, sigma: Spectrum, t: f32, collided: bool) -> Option<f32> {
+            self.0.turn.map(|turn| turn.density(chance, sigma, t, collided))
+        }
+
+        /// The turn last taken: guided, backward, its backward fraction, the
+        /// factors and the stretches out and across.
+        pub fn last_turn(&self) -> Option<(bool, bool, f32, f32, f32, f32, f32)> {
+            self.0.turn.map(|t| (t.guided, t.backward, t.backward_fraction, t.forward_factor, t.backward_factor, t.forward_stretch, t.backward_stretch))
+        }
+    }
+
+    /// `medium_transmittance` through a uniform medium inside `instance`,
+    /// every part a blocker.
+    pub fn medium_transmittance(intersector: &dyn Intersector, from: Vec3, direction: Vec3, reach: f32, instance: u32, walk: &SubsurfaceMedium, sampler: &mut Sampler) -> Spectrum {
+        super::medium_transmittance(intersector, from, direction, reach, InstanceId(instance), walk, None, sampler, &LightLinks::All)
+    }
+
+    /// `medium_direct_light` in a uniform medium inside `instance`: the
+    /// sky's share and the lamps', before the path's throughput.
+    pub fn medium_direct_light(
+        intersector: &dyn Intersector,
+        config: &IntegratorConfig,
+        at: Vec3,
+        forward: Vec3,
+        walk: &SubsurfaceMedium,
+        instance: u32,
+        sampler: &mut Sampler,
+    ) -> (Spectrum, Spectrum) {
+        let (sky, lights, _) = super::medium_direct_light(intersector, config, at, forward, walk, None, InstanceId(instance), sampler);
+        (sky, lights)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4894,6 +5156,57 @@ mod tests {
             }
         }
         assert!(tilted > 5, "only {tilted} of 20 points on the slopes were bumped");
+    }
+
+    #[test]
+    fn a_steep_bump_still_reflects_above_the_surface() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+        use tequila_materials::material_type::{MaterialType, Param};
+        use tequila_texture::procedural::{Axis, Procedural};
+
+        // Grooves a tenth of their spacing deep, as a print's layers are:
+        // slopes steep enough to tip the mirror reflection of a view from
+        // 60 degrees into the surface, unless the normal is turned after
+        // the bump.
+        let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+        let lines = graph.add_node(Node::new(NodeKind::Procedural {
+            procedural: Box::new(Procedural::Contour { axis: Axis::X, frequency: 50.0, width: 0.5, softness: 1.0, distortion: 0.0 }),
+            seed: 0,
+        }));
+        let bump = graph.add_node(Node::new(NodeKind::Bump { depth: 0.01 }));
+        graph.connect(lines, bump, Socket::Input(0));
+        let output = graph.output();
+        graph.connect(bump, output, Socket::Param(Param::Bump));
+        let program = graph.compile().expect("compiles");
+        let quad = crate::scene::Mesh::new(vec![vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)], vec![0, 1, 2]);
+        let scene = SceneSnapshot::new(
+            vec![Arc::new(quad)],
+            vec![crate::scene::Instance::new(tequila_core::ids::InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))],
+            vec![Material::diffuse(Spectrum::splat(0.5))],
+            Arc::new(Environment::uniform(Spectrum::ONE)),
+        )
+        .with_programs(vec![Some(Arc::new(program))], Arc::new(Default::default()));
+        let intersector = AnalyticIntersector::new(scene).with_plane(Plane::new(Vec3::ZERO, Vec3::Z, tequila_core::ids::MaterialId(0)));
+        // Seen from 60 degrees off the normal, across the grooves.
+        let direction = vec3(60f32.to_radians().sin(), 0.0, -60f32.to_radians().cos());
+        let wo = -direction;
+        let (mut steep, mut tilted) = (0, 0);
+        for i in 0..200 {
+            let x = 0.3 + i as f32 * 0.00037;
+            let ray = Ray::new(vec3(x, 0.3, 0.0) - direction * 2.0, direction);
+            let mut sampler = Sampler::new(0, 0, 0, 3);
+            let n = trace_path(&intersector, &IntegratorConfig::default(), ray, Vec2::ZERO, &mut sampler).normal;
+            let mirrored = n * (2.0 * n.dot(wo)) - wo;
+            assert!(mirrored.z > 0.0, "at x {x} the reflection about {n:?} goes into the surface: {mirrored:?}");
+            if (n - Vec3::Z).length() > 0.05 {
+                tilted += 1;
+            }
+            if n.x.abs() > 0.4 {
+                steep += 1;
+            }
+        }
+        assert!(tilted > 50, "only {tilted} of 200 points were bumped");
+        assert!(steep > 0, "no slope was steep enough to test the turn");
     }
 
     fn average_radiance(
@@ -5876,8 +6189,10 @@ mod tests {
     /// everything a catcher reports, this is the number it is estimating.
     fn blocked_share(intersector: &AnalyticIntersector) -> f32 {
         let scene = intersector.scene();
+        // A step off the floor, as a shadow ray from a hit there starts.
+        let floor = tequila_core::math::offset_ray_origin(Vec3::ZERO, Vec3::Y);
         let blocked_towards =
-            |direction: Vec3, distance: f32| intersector.occluded(Vec3::ZERO, Vec3::Y, direction * distance, -direction);
+            |direction: Vec3, distance: f32| intersector.occluded(floor, Vec3::Y, direction * distance, -direction);
         let (mut blocked, mut total) = (0.0f64, 0.0f64);
         let (columns, rows) = (1440, 360);
         for row in 0..rows {
@@ -6272,6 +6587,56 @@ mod tests {
         println!("the floor in the open {open:.4}, under a part casting no shadow {passed:.4}, under one casting it {shadowed:.4}");
         assert!(shadowed < 0.5 * open, "the part's shadow is missing: {shadowed:.4} against {open:.4}");
         assert!((passed / open - 1.0).abs() < 0.02, "under a part that casts no shadow the floor is {passed:.4}, in the open {open:.4}");
+    }
+
+    /// A ball over a shadow-catching floor, lit by a bright band of sky
+    /// below the horizon, is lit as it is with no floor - the same light,
+    /// found as often. The floor is no surface to its bounces, which go
+    /// straight on through it to the sky below; its light sample's shadow
+    /// ray stopped at the floor, so only the odd bounce found the band, at
+    /// full weight: unbiased, but fireflies. The sky's shadow rays pass such
+    /// floors now (`sky_past_floors`), and a bounce past one keeps its MIS
+    /// weight.
+    #[test]
+    fn the_sky_below_a_floor_lights_a_ball_as_with_no_floor() {
+        let (width, height) = (128usize, 64usize);
+        let mut data = vec![0.02f32; width * height * 3];
+        // A band 22 to 34 degrees below the horizon, all the way round.
+        for y in 40..46 {
+            data[y * width * 3..(y + 1) * width * 3].fill(30.0);
+        }
+        let image = tequila_texture::Image { width, height, channels: 3, data, color_space: tequila_texture::ColorSpace::LinearSrgb };
+        let environment = Arc::new(Environment::new(Arc::new(image), 1.0));
+        let size = crate::scene::Mesh::new(vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)], vec![0, 1, 2]);
+        let centre = vec3(0.0, 1.0, 0.0);
+        let lit = |floor: bool, config: &IntegratorConfig| {
+            let mut instances = vec![crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))];
+            if floor {
+                instances.push(
+                    crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))
+                        .with_shadow_catcher(ShadowCatcher::default()),
+                );
+            }
+            let scene = SceneSnapshot::new(vec![Arc::new(size.clone())], instances, vec![Material::diffuse(Spectrum::splat(0.5))], environment.clone());
+            let mut intersector = AnalyticIntersector::new(scene).with_sphere(Sphere::new(centre, 0.5, tequila_core::ids::MaterialId(0)));
+            if floor {
+                intersector = intersector.with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            }
+            // Up at the ball's underside, which faces the band.
+            let eye = vec3(0.0, 0.3, 5.0);
+            let normal = vec3(0.0, -0.6, 0.8);
+            let ray = Ray::new(eye, (centre + normal * 0.5 - eye).normalize());
+            seen_along(&intersector, config, ray, 40_000)
+        };
+        let config = IntegratorConfig::product();
+        assert!(sky_past_floors(&SceneSnapshot::new(Vec::new(), Vec::new(), Vec::new(), environment.clone()), &config));
+        let ((open, open_spread), (floored, floored_spread)) = (lit(false, &config), lit(true, &config));
+        println!("the ball's underside with no floor {open:.4} (spread {open_spread:.4}), over the floor {floored:.4} (spread {floored_spread:.4})");
+        assert!(open > 0.05, "the band lights the ball too little to compare: {open:.4}");
+        // Three standard errors of the two means.
+        let tolerance = 3.0 * (open_spread.powi(2) + floored_spread.powi(2)).sqrt() / 40_000f32.sqrt();
+        assert!((floored - open).abs() < tolerance, "over the floor the ball is {floored:.4}, with none {open:.4} (tolerance {tolerance:.4})");
+        assert!(floored_spread < 1.15 * open_spread, "over the floor the ball's samples spread {floored_spread:.4}, with none {open_spread:.4}");
     }
 
     /// A glossy floor mirrors a lamp past a part that casts no shadow, or

@@ -376,11 +376,15 @@ fn trace_photon(
 
         let base = scene.material(hit.material);
         let boundary = is_boundary(base);
+        // The medium this surface bounds, keyed by solid as the camera's
+        // paths key it (`SceneSnapshot::solid`): a photon through a shell
+        // split by material leaves its volume where the shell ends.
+        let solid = if boundary { scene.solid(hit.instance) } else { hit.instance };
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
-            && media.beyond(hit.instance, base.medium_priority) == media.top(None).map(|m| m.instance)
+            && media.beyond(solid, base.medium_priority) == media.top(None).map(|m| m.instance)
         {
-            media.cross_with(hit.instance, base, scene.density(hit.instance));
+            media.cross_with(solid, base, scene.density(hit.instance));
             ray = through(&ray, &mut crossings);
             continue;
         }
@@ -446,7 +450,7 @@ fn trace_photon(
         let shaded = material;
         let (from_inside, relative_ior) = if boundary {
             let here = media.top(None).map(|m| m.instance);
-            let there = media.beyond(hit.instance, base.medium_priority);
+            let there = media.beyond(solid, base.medium_priority);
             let n_here = media.ior_of(here, None);
             let n_there = media.ior_of(there, Some(shaded));
             if n_there >= n_here {
@@ -501,7 +505,7 @@ fn trace_photon(
                 return;
             }
             if boundary {
-                media.cross_with(hit.instance, shaded, scene.density(hit.instance));
+                media.cross_with(solid, shaded, scene.density(hit.instance));
             }
         }
         power *= weight;

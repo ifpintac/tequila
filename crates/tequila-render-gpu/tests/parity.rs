@@ -301,6 +301,164 @@ fn a_dome_of_a_size_is_the_processors_picture() {
     same_picture("finite_dome");
 }
 
+/// Parts hidden from some rays, and one held out: passed by those rays and
+/// by the camera's coverage, a hole where the camera sees the held-out one.
+#[test]
+fn hidden_parts_are_the_processors_picture() {
+    same_picture("hidden_parts");
+}
+
+/// Shadow links: a lamp's shadow cast by the parts its links name, or all
+/// but those; a panel met past a part its shadow rays pass.
+#[test]
+fn shadow_links_are_the_processors_picture() {
+    same_picture("shadow_links");
+}
+
+/// Parts that cast no shadow, and a lamp that casts none: the light past
+/// them met where a bounce stops at them; a floor's nearness past them.
+#[test]
+fn parts_that_cast_no_shadow_are_the_processors_picture() {
+    same_picture("shadowless_parts");
+}
+
+/// The floor's shadows from lamps of every kind.
+#[test]
+fn the_floors_shadows_from_lamps_are_the_processors_picture() {
+    same_picture("floor_lamps");
+}
+
+/// IES lamps: three profiles on a point, a spot and a panel.
+#[test]
+fn ies_lamps_are_the_processors_picture() {
+    same_picture("ies_lamps");
+}
+
+/// Direct lighting off: lights found by bounces alone, weighed whole.
+#[test]
+fn direct_lighting_off_is_the_processors_picture() {
+    same_picture("direct_off");
+}
+
+/// Metallic paints: flakes under a coat, mirror flakes with none, flakes
+/// over a half metal under a fuzz.
+#[test]
+fn metallic_paint_is_the_processors_picture() {
+    same_picture("metallic_paint");
+}
+
+/// Thin films over a rough and a smooth dielectric, a rough and a smooth
+/// metal, a half metal under a coat.
+#[test]
+fn thin_films_are_the_processors_picture() {
+    same_picture("thin_film");
+}
+
+/// Dispersive glass in an RGB render: a wavelength drawn at the first such
+/// glass a path meets, the index at it from there on.
+#[test]
+fn dispersion_in_rgb_is_the_processors_picture() {
+    same_picture("dispersion_rgb");
+}
+
+/// Dispersive glass rendered by wavelength, as Auto renders it: four
+/// wavelengths a path, the hero alone through the glass.
+#[test]
+fn dispersion_by_wavelength_is_the_processors_picture() {
+    same_picture("dispersion_spectral");
+}
+
+/// A floor, the sky, the split at plain glass, all by wavelength.
+#[test]
+fn a_spectral_floor_is_the_processors_picture() {
+    same_picture("spectral_floor");
+}
+
+/// A render by wavelength of a scene that disperses nothing: the spectral
+/// tables put on the card at the first frame that asks for them.
+#[test]
+fn spectral_lamps_are_the_processors_picture() {
+    same_picture("spectral_lamps");
+}
+
+/// Spectral On with the options: the light past parts that cast no shadow,
+/// the floor's nearness past them, an IES downlight over the floor, a part
+/// the camera does not see and one held out, all read at the wavelengths.
+#[test]
+fn the_options_by_wavelength_are_the_processors_picture() {
+    same_picture("spectral_options");
+}
+
+/// The library's presets of glass that disperses light, every one of them,
+/// on the Headphones' parts, rendered by wavelength as Auto renders them.
+#[test]
+fn a_wall_of_dispersive_presets_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let dispersive: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.transmission_weight > 0.0
+                && m.transmission_dispersion_abbe > 0.0
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(!dispersive.is_empty() && dispersive.len() <= keys.len(), "{} dispersive presets for {} parts", dispersive.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &dispersive[j % dispersive.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("dispersive wall ({} presets): {}", dispersive.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "dispersive_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// The library's presets with metallic flakes (`flakes.rs`) on the
+/// Headphones' parts, every one of them, as the presets have them - their
+/// programs' bumps and rounded edges kept: the flake field in each part's
+/// object space, at flakes far smaller than a pixel here, and the flake's
+/// lobe under the coat.
+#[test]
+fn a_wall_of_flake_presets_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let flaked: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.flake_weight > 1e-4
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(flaked.len() <= keys.len(), "{} flake presets, more than the {} parts one wall wears", flaked.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &flaked[j % flaked.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("flake wall ({} presets): {}", flaked.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "flake_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// Glass whose transmission a program drives: a frosted film in front of
 /// the product, a checker drawing how much light it lets through.
 #[test]
@@ -310,9 +468,10 @@ fn a_film_a_program_drives_is_the_processors_picture() {
 
 /// The library's presets whose programs drive their transmission, on the
 /// Headphones' parts in turn, the other parts as the sample has them. Each
-/// is a film with a share of subsurface scattering, which the card does not
-/// do yet (`glass_limits`): it is taken off, as the first walls took off
-/// rounded edges before the card had them. So is each one's bump, a grid
+/// is a film with a share of subsurface scattering, which the card did not
+/// do when this wall was built: it is taken off, as the first walls took off
+/// rounded edges before the card had them (the subsurface walls wear them
+/// whole). So is each one's bump, a grid
 /// of filaments far finer than a pixel here, which puts 0.13% of the
 /// pixels more than 0.02 apart with or without the transmission a program
 /// drives (0 without the bump): the forward differences of a pattern that
@@ -343,6 +502,127 @@ fn a_wall_of_driven_transmission_is_the_processors_picture() {
     eprintln!("driven transmission wall ({} presets): {}", driven.len(), names.join(", "));
     let camera = document.cameras.active().camera;
     same_shot(Shot { name: "driven_transmission_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// A volume that scatters: a cloudy liquid in a glass, walked through,
+/// refracting where it meets the glass.
+#[test]
+fn milk_in_glass_is_the_processors_picture() {
+    same_picture("milk_in_glass");
+}
+
+/// Volumes whose surfaces bend nothing: a haze and a wax, walked through,
+/// the lights sampled directly at each collision.
+#[test]
+fn scattering_volumes_are_the_processors_picture() {
+    same_picture("scattering_volumes");
+}
+
+/// The library's presets whose volumes scatter (milk, orange juice,
+/// coffee, translucent prints), on every other part of the Headphones, the
+/// other parts as the sample has them.
+#[test]
+fn a_wall_of_scattering_volumes_is_the_processors_picture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let scattering: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| entry.graph.compile().is_ok_and(|p| p.constants.transmission_weight > 0.0 && p.constants.volume_scattering().is_some()))
+        .collect();
+    assert!(!scattering.is_empty(), "no preset's volume scatters");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate().filter(|(j, _)| j % 2 == 0) {
+        let entry = &scattering[(j / 2) % scattering.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("scattering wall ({} presets): {}", scattering.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "scattering_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// Subsurface scattering: a translucent body walked under, guided back out.
+#[test]
+fn the_subsurface_product_is_the_processors_picture() {
+    same_picture("subsurface_product");
+}
+
+/// Subsurface scattering lit from behind: a slab's walks guided across, a
+/// thin sheet's light through it.
+#[test]
+fn backlit_translucency_is_the_processors_picture() {
+    same_picture("backlit_translucency");
+}
+
+/// A clear shell split by material into two open parts that close each
+/// other (the processor's #169): one solid, its volume left where a path
+/// leaves through either part.
+#[test]
+fn a_shell_split_by_material_is_the_processors_picture() {
+    same_picture("split_shell");
+}
+
+/// The presets of the standard library with subsurface scattering that the
+/// card renders whole (their programs lowered with their pictures none
+/// loaded, as no preset of these has one; their surfaces on the card's
+/// stack; no fibres, no flakes, no dispersion; their colour their own, not
+/// a program's), the Headphones' parts and
+/// camera as the other walls have them: wall `variant` of
+/// [`SUBSURFACE_WALLS`], which between them wear every one.
+fn subsurface_wall(variant: usize) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    let runnable: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.subsurface_weight > 0.0
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+                && m.flake_weight <= 1e-4
+                // Its colour its constants' (the card refuses a program
+                // that drives it: the walk follows the colour to the bit,
+                // and the interpreter's is not, docs/07).
+                && !program.driven.iter().any(|(param, _)| *param == tequila_materials::material_type::Param::SubsurfaceColor)
+        })
+        .collect();
+    assert!(!runnable.is_empty(), "no preset scatters under its surface");
+    let keys: Vec<_> = document.materials.keys().collect();
+    assert!(SUBSURFACE_WALLS * keys.len() >= runnable.len(), "{} presets, more than {SUBSURFACE_WALLS} walls of {} wear", runnable.len(), keys.len());
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &runnable[(SUBSURFACE_WALLS * j + variant) % runnable.len()];
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("subsurface wall {variant} (of {} presets): {}", runnable.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: format!("subsurface_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// How many walls the presets with subsurface scattering are spread over.
+const SUBSURFACE_WALLS: usize = 3;
+
+#[test]
+fn a_subsurface_wall_is_the_processors_picture() {
+    subsurface_wall(0);
+}
+
+#[test]
+fn another_subsurface_wall_is_the_processors_picture() {
+    subsurface_wall(1);
+}
+
+#[test]
+fn a_third_subsurface_wall_is_the_processors_picture() {
+    subsurface_wall(2);
 }
 
 /// A picture to render on both: a scene, the camera it is seen from, and
@@ -614,6 +894,9 @@ fn preset_wall(variant: usize) {
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 // Opaque, as the walls were before the card took glass.
                 && m.transmission_weight == 0.0
+                // Nor walked under, as the walls were before the card took
+                // subsurface: the subsurface walls wear those.
+                && m.subsurface_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
@@ -739,9 +1022,16 @@ fn rounding_presets() -> Vec<tequila_format::library::LibraryEntry> {
                 && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 && m.fuzz_density <= 0.0
-                // Nor flakes, which the processor puts wherever the weight
-                // is over 1e-4 and the card leaves out.
+                // Nor flakes, which the card left out when these walls
+                // were chosen: kept out, so the walls keep their members
+                // (the flake presets have a wall of their own).
                 && m.flake_weight <= 1e-4
+                // Nor glass that disperses light, for the same reason.
+                && !(m.transmission_weight > 0.0 && m.transmission_dispersion_abbe > 0.0)
+                // Nor walked in or under, as the walls were before the card
+                // took media: the subsurface and scattering walls wear those.
+                && m.subsurface_weight == 0.0
+                && !(m.transmission_weight > 0.0 && m.volume_scattering().is_some())
         })
         .collect()
 }
@@ -941,6 +1231,9 @@ fn the_preset_walls_one_by_one() {
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
                 // Opaque, as the walls were before the card took glass.
                 && m.transmission_weight == 0.0
+                // Nor walked under, as the walls were before the card took
+                // subsurface: the subsurface walls wear those.
+                && m.subsurface_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
