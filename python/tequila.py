@@ -406,7 +406,8 @@ class Client:
         providers), frame (the render's shape in the viewport), self_test
         (Help > Test this computer, started), selection_outline and gizmo
         (the selection's outline and gizmo, shown or hidden, keeping the
-        selection) (bools), tab='material', graph=<material> or
+        selection), light_outlines (every light's shape and size over the
+        view, for the session) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
         'meadow'|'rose', studio_drag=[studio, slot] (a Studio held part-way

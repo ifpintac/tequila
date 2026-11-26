@@ -46,6 +46,7 @@ mod plugins_ui;
 mod library_dialogs;
 mod library_tab;
 mod mac;
+mod light_outlines;
 mod lighting_tab;
 mod material_tab;
 mod measure_tool;
@@ -2422,6 +2423,7 @@ impl TequilaApp {
         let presenting = self.presenting.is_some();
         if !presenting {
             cutaway_panel::draw_outlines(ui, rect, &self.camera.camera, &self.project);
+            self.draw_light_outlines(ui, rect);
             self.measure.draw(ui, rect, &self.camera.camera, &self.project);
             if self.show_gizmo || self.gizmo.is_dragging() {
                 self.gizmo.draw(ui, rect, &self.camera.camera);
@@ -3708,6 +3710,7 @@ impl TequilaApp {
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
                         .on_hover_text("Draw the parts' edges in Solid and Material Preview: a CAD part's own B-rep edges, or a mesh's creases and borders");
+                    self.light_outlines_menu_item(ui);
                     let aspect = self.render_aspect();
                     ui.menu_button("Composition guides", |ui| {
                         ui.set_min_width(230.0);
@@ -4221,6 +4224,7 @@ impl TequilaApp {
         if changed {
             self.guides_changed();
         }
+        self.light_outlines_button(ui, next(&mut x));
         icons::divider(&painter, egui::pos2(x + gap * 0.5, island.top() + 9.0), egui::pos2(x + gap * 0.5, island.bottom() - 9.0));
         x += gap;
         for mode in view_mode::ViewMode::ALL {
@@ -7379,9 +7383,9 @@ fn frame_pause(since_last: Option<std::time::Duration>) -> Option<std::time::Dur
     since_last.and_then(|since| SHORTEST_FRAME.checked_sub(since)).filter(|pause| !pause.is_zero())
 }
 
-/// The width of the island of tools at the top right of the viewport: ten
+/// The width of the island of tools at the top right of the viewport: eleven
 /// tools, three dividers and its padding.
-const SHADING_ISLAND: f32 = 4.0 * 2.0 + TOOL * 10.0 + 9.0 * 3.0;
+const SHADING_ISLAND: f32 = 4.0 * 2.0 + TOOL * 11.0 + 9.0 * 3.0;
 
 /// Whether the viewport's chip has room for its second half - what lights
 /// the view, or the engine - beside the island of tools at the other end,
