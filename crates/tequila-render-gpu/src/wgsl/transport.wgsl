@@ -666,10 +666,13 @@ const WALK_PAST: u32 = 1u;
 // surface past the first cutout the camera sees, of opacity `first`; a
 // shadow catcher ends it, and a part the camera does not see is passed.
 const WALK_COVERAGE: u32 = 2u;
-// WALK_MEDIA: enclosing_media (ic:240-286), the media a path starts inside,
-// by counting along its first ray, through everything - opaque surfaces too
-// - up to 32 surfaces, the crossings of each medium's boundary: an odd
-// count of one solid's is inside it.
+// WALK_MEDIA: enclosing_media (ic:248-296), the media a path starts inside,
+// by counting along the line back from its first ray's origin, away from
+// where it looks (#169: that line usually meets nothing, where the one ahead
+// crosses everything in view), through everything - opaque surfaces too -
+// up to 32 surfaces, the crossings of each medium's boundary: an odd count
+// of one solid's (GpuInstance::solid, a shell split by material one) is
+// inside it.
 const WALK_MEDIA: u32 = 3u;
 // WALK_GLOW: SeenFrom::weight_of_glow's walk (ic:2730), the first surface
 // past what a shadow ray passes - a part that casts no shadow, clear glass,
@@ -2680,8 +2683,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     // stack's interface and transmission read that index.
     let boundary = FEATURE_GLASS && (material.glass & GLASS_BOUNDARY) != 0u;
     // A walk that reaches its own part's surface from inside leaves through
-    // it, spread over the hemisphere outside (ic:1975).
-    let exiting_walk = FEATURE_SUBSURFACE && media_walking_in((*st).media, inst.solid);
+    // it, spread over the hemisphere outside (ic:1975). A walk is keyed by
+    // the part, a medium's boundary by its solid (GpuInstance::solid).
+    let exiting_walk = FEATURE_SUBSURFACE && media_walking_in((*st).media, inst.instance);
     var from_inside = false;
     var relative = material.specular_ior;
     if (boundary) {
@@ -2878,12 +2882,12 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             // Through a local: naga's SPIR-V writer cannot pass a pointer
             // to a member.
             var media = (*st).media;
-            media_cross_walk(&media, inst.solid, material.medium_priority, material.specular_ior, inst.material, walking, albedo);
+            media_cross_walk(&media, select(inst.solid, inst.instance, walking), material.medium_priority, material.specular_ior, inst.material, walking, albedo);
             (*st).media = media;
             if (walking) {
                 (*st).guide = md_no_guide();
-                if (media_walking_in(media, inst.solid)) {
-                    (*st).guide = md_guide_new(inst.solid, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
+                if (media_walking_in(media, inst.instance)) {
+                    (*st).guide = md_guide_new(inst.instance, surf.position, exact_geometric(hit, (*st).direction), albedo, material.subsurface_extinction.w);
                 }
             }
         }
@@ -3632,11 +3636,12 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             // ---- The segment sets out ----
             if (phase == PH_START) {
                 // Asked once where a path sets out: by a walk where anything
-                // transmits, none where nothing does.
+                // transmits, none where nothing does; along the line behind
+                // it.
                 if (st.fresh) {
                     st.fresh = false;
                     if (FEATURE_GLASS && (frame.glass_flags & SCENE_TRANSMITS) != 0u) {
-                        w = walk_new(WALK_MEDIA, st.origin, st.direction, 3.0e38);
+                        w = walk_new(WALK_MEDIA, st.origin, -st.direction, 3.0e38);
                         walking = true;
                         phase = PH_MEDIA;
                     } else {
@@ -3804,7 +3809,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         if (guiding) {
                             if (!st.guide.flown) {
                                 var opposite = -1.0;
-                                if (!open && scene_instances[hit.instance_custom_data].solid == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
+                                if (!open && scene_instances[hit.instance_custom_data].instance == st.guide.solid && hit.t <= md_guide_look(walk.sigma)) {
                                     let d = md_dot(raw.position - st.guide.entry, -st.guide.normal);
                                     if (d > 0.0) {
                                         opposite = d;

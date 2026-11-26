@@ -63,7 +63,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And only a scene with a volume that scatters keeps the walk.
     for (name, features) in &chosen {
-        assert_eq!(features.contains(F::SCATTERING), ["milk_in_glass", "scattering_volumes"].contains(name), "{name}: {}", features.names());
+        assert_eq!(features.contains(F::SCATTERING), ["milk_in_glass", "scattering_volumes", "split_shell"].contains(name), "{name}: {}", features.names());
     }
     // And only a scene with subsurface scattering keeps the walk under a
     // surface.
@@ -117,7 +117,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
     }
     // And no scene that is not glass keeps glass.
     for (name, features) in &chosen {
-        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral", "scattering"].iter().any(|g| name.contains(g)) {
+        if !["glass", "liquid", "pane", "cut_glass", "glow_under_glass", "glowing_volume", "film", "transmission", "background", "backplate", "all_round", "dome", "hidden", "dispersion", "spectral", "scattering", "shell"].iter().any(|g| name.contains(g)) {
             assert!(!features.contains(F::GLASS), "{name} keeps glass");
         }
     }
