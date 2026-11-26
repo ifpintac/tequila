@@ -3599,8 +3599,11 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var seg_raw: Surface;
         var seg_surf: Surface;
         // The shading normal at the segment's hit with its edges rounded
-        // (bevel_normal), what its bump bends.
+        // (bevel_normal), what its bump bends; and whether the normal the
+        // material leaves is to be turned again so its mirror reflection
+        // stays above the surface, once, as the hit is taken up (#170).
         var seg_rounded: vec3<f32>;
+        var seg_turn = false;
         var material: ProgShaded;
         let programs_cut = FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
         loop {
@@ -4223,6 +4226,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 }
                 material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
                 let program = scene_programs[inst.material];
+                // A bumped surface's normal, and a rounded one, turned again
+                // once bent (ic:1773-1784), as Cycles makes its reflection
+                // valid on the normal the BSDF is given.
+                seg_turn = (FEATURE_PROGRAMS && (program.flags & (PROGRAM_BUMPS | PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) || (FEATURE_BEVEL && base.edge_radius > 0.0);
                 if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
                     want = WANT_MAIN;
                 }
@@ -4244,6 +4251,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             let cutout = !colliding && FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999;
             let covers = cutout && st.bounce == 0u && !st.reflected && !mirror && settled < 0.0;
             if (phase == PH_HIT) {
+                if (seg_turn) {
+                    material.normal = valid_for_reflection(seg_surf.geometric, -st.direction, material.normal);
+                    seg_turn = false;
+                }
                 if (covers) {
                     w = coverage_walk(offset_at(seg_raw.position, -seg_surf.geometric, seg_raw.magnitude), st.direction, material.material.geometry_opacity);
                     walking = true;
