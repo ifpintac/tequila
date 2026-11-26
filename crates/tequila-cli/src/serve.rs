@@ -644,6 +644,10 @@ impl Session {
     fn look(&mut self, look: &tequila_scripting::protocol::Look) -> Reply {
         use tequila_core::math::Vec3;
         let to_vec = |v: [f32; 3]| Vec3 { x: v[0], y: v[1], z: v[2] };
+        let focus = match look.focus_point(&self.document) {
+            Ok(point) => point,
+            Err(why) => return Reply::Failed(why),
+        };
         let mut orbit = self.camera;
         if let Some(name) = &look.view {
             match OrbitCamera::view_named(name) {
@@ -681,6 +685,12 @@ impl Session {
                     *focal_length_mm = focal;
                 }
                 _ => return Reply::Failed("this camera is orthographic or 360°, which have no focal length".into()),
+            }
+        }
+        // Focused from where the camera ends up, as the application's is.
+        if let Some(point) = focus {
+            if let Err(why) = tequila_scene::focus::focus_on(&mut orbit.camera, point) {
+                return Reply::Failed(why.message().into());
             }
         }
         self.camera = orbit;
@@ -1077,6 +1087,18 @@ mod tests {
         assert_ne!(s.document.cameras.active().camera, framed, "the look did not reach the document");
         value(&mut s, r#"{"op":"undo"}"#);
         assert_eq!(s.document.cameras.active().camera, framed, "undo did not take the look back");
+
+        // Focused on the first body, as Pick focus would: its middle's depth
+        // along the view axis, the blur on, one step to undo.
+        let part = s.document.tree.iter().find(|n| n.mesh().is_some()).map(|n| n.id).expect("a body");
+        let focused = value(&mut s, &format!(r#"{{"op":"look","focus_part":{}}}"#, part.0));
+        let middle = tequila_scene::gizmo::selection_bounds(&s.document, &[part]).unwrap().center();
+        let camera = s.document.cameras.active().camera;
+        let depth = tequila_scene::focus::focus_depth(&camera, middle).unwrap();
+        assert!((camera.focus_distance - depth).abs() < 1e-5, "focused at {}, not {depth}", camera.focus_distance);
+        assert!(camera.f_number.is_finite() && focused.get("blur").and_then(Value::as_bool) == Some(true), "{focused:?}");
+        value(&mut s, r#"{"op":"undo"}"#);
+        assert_eq!(s.document.cameras.active().camera, framed, "undo did not take the focus back");
     }
 
     #[test]

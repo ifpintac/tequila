@@ -368,10 +368,12 @@ class Client:
         """
         return Batch(self, atomic)
 
-    def look(self, *, view=None, at=None, yaw=None, pitch=None, distance=None, frm=None, focal_length=None):
+    def look(self, *, view=None, at=None, yaw=None, pitch=None, distance=None, frm=None, focal_length=None, focus=None, focus_part=None):
         """Place the camera: a standard view, orbit angles in degrees around `at`,
-        or an exact eye position `frm` looking at `at`. Undoable."""
-        return self.request('look', **_look_fields(view, at, yaw, pitch, distance, frm, focal_length))
+        or an exact eye position `frm` looking at `at`. `focus` (a point) or
+        `focus_part` (a part's id) sets the focus there, as the Camera tab's
+        Pick focus does, turning the blur on. Undoable."""
+        return self.request('look', **_look_fields(view, at, yaw, pitch, distance, frm, focal_length, focus, focus_part))
 
     def preferences(self, reset=None, **settings):
         """Tequila's own settings (Edit > Preferences), kept between
@@ -598,8 +600,8 @@ def _connect(path, timeout):
     raise TequilaError('No running Tequila answered; is it open?')
 
 
-def _look_fields(view, at, yaw, pitch, distance, frm, focal_length):
-    fields = dict(view=view, at=at, yaw=yaw, pitch=pitch, distance=distance, focal_length=focal_length)
+def _look_fields(view, at, yaw, pitch, distance, frm, focal_length, focus=None, focus_part=None):
+    fields = dict(view=view, at=at, yaw=yaw, pitch=pitch, distance=distance, focal_length=focal_length, focus=focus, focus_part=focus_part)
     fields['from'] = frm
     return {k: (list(v) if isinstance(v, tuple) else v) for k, v in fields.items() if v is not None}
 
@@ -1119,8 +1121,8 @@ class Batch:
     def frame(self, *, all=True):
         return self.add('frame', all=all)
 
-    def look(self, *, view=None, at=None, yaw=None, pitch=None, distance=None, frm=None, focal_length=None):
-        return self.add('look', **_look_fields(view, at, yaw, pitch, distance, frm, focal_length))
+    def look(self, *, view=None, at=None, yaw=None, pitch=None, distance=None, frm=None, focal_length=None, focus=None, focus_part=None):
+        return self.add('look', **_look_fields(view, at, yaw, pitch, distance, frm, focal_length, focus, focus_part))
 
     def ui(self, **changes):
         return self.add('ui', **changes)
