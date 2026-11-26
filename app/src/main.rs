@@ -39,6 +39,7 @@ mod graph_editor;
 mod view_mode;
 mod grid;
 mod image_tab;
+mod image_size;
 mod library_actions;
 mod plugins;
 mod previews;
@@ -2449,7 +2450,7 @@ impl TequilaApp {
         }
 
         if rect != area {
-            render_frame::draw(ui.painter(), area, rect, self.project.render_settings());
+            render_frame::draw(ui.painter(), area, rect);
         }
 
         if self.show_axis_legend {
@@ -2461,6 +2462,7 @@ impl TequilaApp {
 
         if !presenting {
             self.viewport_overlays(ui, area);
+            self.size_chip(ui, area);
             if self.show_hud {
                 self.hud(ui, area);
             }
@@ -3703,7 +3705,7 @@ impl TequilaApp {
                     ui.add(crate::field::Checkbox::new(&mut self.show_gizmo, "Gizmo"))
                         .on_hover_text(format!("{}. The move, turn and scale handles on the selection", self.key_text(shortcuts::Action::Gizmo)));
                     ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
-                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
+                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size with the chip in the view's bottom-right corner, or in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
