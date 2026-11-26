@@ -183,6 +183,9 @@ pub struct GraphEditor {
     scripted: Option<browser::Act>,
     /// The small pictures beside the browser's rows.
     thumbs: thumbs::Thumbs,
+    /// The layout shown of a graph nobody laid out, kept while the graph is
+    /// the one it was made from (`tidy::shown`).
+    arranged: Option<tidy::Arranged>,
 }
 
 /// The minimap's place on screen and its scale: a canvas point `p` is at
@@ -244,6 +247,7 @@ impl Default for GraphEditor {
             browser_holding: false,
             scripted: None,
             thumbs: thumbs::Thumbs::default(),
+            arranged: None,
         }
     }
 }
@@ -323,6 +327,7 @@ impl GraphEditor {
         self.active = None;
         self.selected_frame = None;
         self.previews.clear();
+        self.arranged = None;
     }
 
     /// The material the editor was last opened on.
@@ -377,18 +382,14 @@ impl GraphEditor {
         let title = format!("Material graph — {}", definition.name);
         let name = definition.name.clone();
         let exposed = definition.material_type.exposed();
-        let original = definition.graph.clone();
         // A graph nobody laid out is shown laid out, but not changed for
         // being looked at: the positions are saved with the first real edit.
-        // (Not while a node is being moved: it may pass exactly over
-        // another on its way, and is stepped off one it is let go on.)
-        let baseline = if self.drag.is_none() && self.grab.is_none() && tidy::unplaced(&original) {
-            let mut arranged = original.clone();
-            tidy::arrange(&mut arranged, &exposed);
-            arranged
-        } else {
-            original
-        };
+        // The layout is kept while the graph is unchanged, through a pan or
+        // a drag. (None is made while nodes are being moved: one may pass
+        // exactly over another on its way, and is stepped off one it is let
+        // go on.)
+        let moving = self.grab.is_some() || matches!(self.drag, Some(Drag::Move { .. } | Drag::Frame { .. }));
+        let baseline = tidy::shown(&mut self.arranged, key, definition.graph.clone(), &exposed, moving);
         let mut graph = baseline.clone();
         if self.zoom <= 0.0 {
             self.zoom = 1.0;
@@ -3164,6 +3165,8 @@ mod tests {
         /// The material library the browser lists: none, unless a test
         /// puts some in.
         library: Vec<tequila_format::library::LibraryEntry>,
+        /// What the last frame drew.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl Harness {
@@ -3185,7 +3188,7 @@ mod tests {
             let mut editor = GraphEditor::default();
             editor.show_browser = browser;
             editor.open_for(key);
-            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0, library: Vec::new() };
+            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0, library: Vec::new(), shapes: Vec::new() };
             h.frame(Vec::new());
             h.frame(Vec::new());
             h
@@ -3209,7 +3212,40 @@ mod tests {
             };
             let (editor, project) = (&mut self.editor, &mut self.project);
             let library = Library { entries: &self.library, picture: &|_| None };
-            let _ = self.ctx.run(input, |ctx| editor.show(ctx, project, &library));
+            self.shapes = self.ctx.run(input, |ctx| editor.show(ctx, project, &library)).shapes;
+        }
+
+        /// The editor on a material whose graph is `graph`, the view fitted
+        /// to it.
+        fn showing(graph: MaterialGraph) -> Harness {
+            let mut h = Harness::new();
+            h.project.apply(Command::SetGraph { material: h.key, graph: Box::new(graph) }).expect("a graph");
+            h.project.end_interaction();
+            h.editor.frame_pending = true;
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            h
+        }
+
+        /// Where each node title in `names` was drawn on the canvas last
+        /// frame: what a person sees of where the nodes are.
+        fn titles(&self, names: &[&str]) -> Vec<egui::Pos2> {
+            let canvas = self.editor.canvas_rect;
+            names
+                .iter()
+                .map(|name| {
+                    let at: Vec<egui::Pos2> = self
+                        .shapes
+                        .iter()
+                        .filter_map(|clipped| match &clipped.shape {
+                            egui::Shape::Text(text) if text.galley.text() == *name && canvas.contains(text.pos) => Some(text.pos),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(at.len(), 1, "{name} was drawn on the canvas {} times", at.len());
+                    at[0]
+                })
+                .collect()
         }
 
         fn graph(&self) -> MaterialGraph {
@@ -3884,6 +3920,112 @@ mod tests {
         assert_eq!(h.graph().len(), 4, "the copy is there");
         assert_eq!((position(&h, a), position(&h, b), position(&h, surface)), was, "the others moved");
         assert!(!tidy::unplaced(&h.graph()), "no two nodes are at one place");
+    }
+
+    /// A library material's graph as the library keeps it - every node at
+    /// one place, for the editor to lay out - with a title for each node.
+    fn as_the_library_keeps_it() -> MaterialGraph {
+        let mut graph = MaterialGraph::from_material(tequila_render_core::material::Material::plastic(Spectrum::splat(0.5), 0.3));
+        let surface = graph.output();
+        let noise = graph.add_node(Node::new(NodeKind::Node(ShaderNode::noise())));
+        let range = graph.add_node(Node::new(NodeKind::Node(ShaderNode::from_key("map_range").unwrap())));
+        let cells = graph.add_node(Node::new(NodeKind::Node(ShaderNode::voronoi())));
+        // Named: "Bump" is also one of the surface's rows.
+        let mut lines = Node::new(NodeKind::Bump { depth: 1.5e-5 });
+        lines.label = Some("Hairlines".into());
+        let bump = graph.add_node(lines);
+        graph.connect(noise, range, Socket::Input(0));
+        graph.connect(range, surface, Socket::Param(Param::SpecularRoughness));
+        graph.connect(cells, bump, Socket::Input(0));
+        graph.connect(bump, surface, Socket::Param(Param::Bump));
+        graph.compile().expect("compiles");
+        assert!(tidy::unplaced(&graph));
+        graph
+    }
+
+    const LIBRARY_TITLES: [&str; 4] = ["Noise Texture", "Map Range", "Voronoi Texture", "Hairlines"];
+
+    fn moved_by(before: &[egui::Pos2], after: &[egui::Pos2], by: egui::Vec2, within: f32) -> bool {
+        before.iter().zip(after).all(|(b, a)| (*a - (*b + by)).length() <= within)
+    }
+
+    /// Panning a graph nobody laid out moves the nodes as they are shown,
+    /// laid out, all together with the pointer. While the middle button was
+    /// held they went back to where the library keeps them, every one on
+    /// one spot, until an edit saved the layout (a community report: "node
+    /// jumbled when navigating").
+    #[test]
+    fn a_pan_keeps_a_graph_nobody_laid_out_laid_out() {
+        let stacked = as_the_library_keeps_it();
+        let mut h = Harness::showing(stacked.clone());
+        let before = h.titles(&LIBRARY_TITLES);
+        for (i, a) in before.iter().enumerate() {
+            assert!(before[i + 1..].iter().all(|b| (*a - *b).length() > 20.0), "shown laid out to begin with: {before:?}");
+        }
+        let start = h.editor.canvas_rect.center();
+        h.move_to(start);
+        h.button(egui::PointerButton::Middle, true, egui::Modifiers::NONE);
+        for i in 1..=5 {
+            h.move_to(start + egui::vec2(12.0, 8.0) * i as f32);
+        }
+        // Still held, a frame after the last move: the nodes are drawn
+        // before a frame's pan is taken, so they show it on the next.
+        h.frame(Vec::new());
+        let held = h.titles(&LIBRARY_TITLES);
+        assert!(moved_by(&before, &held, egui::vec2(60.0, 40.0), 1.0), "the nodes did not move with the pan: {before:?} to {held:?}");
+        h.button(egui::PointerButton::Middle, false, egui::Modifiers::NONE);
+        h.frame(Vec::new());
+        assert!(moved_by(&before, &h.titles(&LIBRARY_TITLES), egui::vec2(60.0, 40.0), 1.0));
+        // Alt and the left button pan too.
+        h.drag(start, start - egui::vec2(60.0, 40.0), egui::PointerButton::Primary, egui::Modifiers::ALT);
+        assert!(moved_by(&before, &h.titles(&LIBRARY_TITLES), egui::Vec2::ZERO, 1.0));
+        assert_eq!(h.graph(), stacked, "looking changed the graph");
+    }
+
+    /// A box drawn round a node of a graph nobody laid out selects that
+    /// node, where it is shown. It selected what was where the library
+    /// keeps the nodes.
+    #[test]
+    fn a_box_selects_what_it_is_drawn_round_in_a_graph_nobody_laid_out() {
+        let mut h = Harness::showing(as_the_library_keeps_it());
+        let cells = h.graph().nodes().find(|(_, n)| matches!(&n.kind, NodeKind::Node(s) if s.label() == "Voronoi Texture")).map(|(id, _)| id).unwrap();
+        let titles = h.titles(&LIBRARY_TITLES);
+        let title = titles[2];
+        // From left of the node's edge, in the gap left of its column, to
+        // inside its header.
+        let z = h.editor.zoom;
+        let from = title - egui::vec2(20.0 * z + 16.0, 0.0);
+        assert!(titles.iter().filter(|t| **t != title).all(|t| (*t - from).length() > 60.0), "the box starts on another node");
+        h.drag(from, title + egui::vec2(30.0, 6.0), egui::PointerButton::Primary, egui::Modifiers::NONE);
+        assert_eq!(h.editor.selected, BTreeSet::from([cells]), "the box selected the wrong nodes");
+    }
+
+    /// A node of a graph nobody laid out, dragged by its header, goes where
+    /// it is put while the others stay laid out, and the layout is saved
+    /// with the move. The others went to the library's one spot while it was
+    /// held, and it sprang back into the layout when let go.
+    #[test]
+    fn a_node_moved_in_a_graph_nobody_laid_out_stays_where_it_is_put() {
+        let mut h = Harness::showing(as_the_library_keeps_it());
+        let before = h.titles(&LIBRARY_TITLES);
+        let grip = before[3] + egui::vec2(4.0, 4.0);
+        let down = egui::vec2(0.0, 120.0);
+        h.move_to(grip);
+        h.button(egui::PointerButton::Primary, true, egui::Modifiers::NONE);
+        for i in 1..=6 {
+            h.move_to(grip + down * (i as f32 / 6.0));
+        }
+        let held = h.titles(&LIBRARY_TITLES);
+        assert!(moved_by(&before[..3], &held[..3], egui::Vec2::ZERO, 1.0), "the other nodes moved while one was held: {before:?} to {held:?}");
+        h.button(egui::PointerButton::Primary, false, egui::Modifiers::NONE);
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let after = h.titles(&LIBRARY_TITLES);
+        // Within a grid step: it is snapped to the grid.
+        let step = GRID * h.editor.zoom;
+        assert!(moved_by(&before[3..], &after[3..], down, step), "the node is not where it was put: {:?} to {:?}", before[3], after[3]);
+        assert!(moved_by(&before[..3], &after[..3], egui::Vec2::ZERO, 1.0), "the other nodes moved: {before:?} to {after:?}");
+        assert!(!tidy::unplaced(&h.graph()), "the layout was not saved with the move");
     }
     /// A setup is several nodes added wired: the blend's coats each on the
     /// Layer of the one under it with the stack's factors, the two-sided's
