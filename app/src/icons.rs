@@ -208,6 +208,8 @@ pub enum Icon {
     Symmetrize,
     OneSide,
     MirrorPick,
+    /// The Camera tab's Pick focus: a point clicked in the view.
+    Crosshair,
 }
 
 impl Icon {
@@ -357,6 +359,7 @@ impl Icon {
             Icon::Symmetrize => 0xe3b9,
             Icon::OneSide => 0xe12d,
             Icon::MirrorPick => 0xe249,
+            Icon::Crosshair => 0xe0b0,
         };
         char::from_u32(code)
     }
@@ -1154,6 +1157,13 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             poly(&[(5.0, 5.5), (2.5, 8.0), (5.0, 10.5)]);
             poly(&[(11.0, 5.5), (13.5, 8.0), (11.0, 10.5)]);
         }
+        Icon::Crosshair => {
+            circle(8.0, 8.0, 6.0);
+            line((8.0, 1.5), (8.0, 4.5));
+            line((8.0, 11.5), (8.0, 14.5));
+            line((1.5, 8.0), (4.5, 8.0));
+            line((11.5, 8.0), (14.5, 8.0));
+        }
     }
 }
 
@@ -1727,7 +1737,7 @@ mod tests {
             Icon::SelectMenu, Icon::Pipette, Icon::Checker,
             Icon::StraightLine, Icon::QuadGrid, Icon::Rectangle, Icon::ProjectFaces,
             Icon::Relax, Icon::Circle, Icon::Grow, Icon::Shrink, Icon::Weld, Icon::MatchSeams, Icon::CutAngle,
-            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick,
+            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick, Icon::Crosshair,
         ]
     }
 
