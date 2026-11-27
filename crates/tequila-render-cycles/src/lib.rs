@@ -652,6 +652,11 @@ impl Session {
     /// cost to the render. Pictures come at most once a second, on Cycles'
     /// own thread, as `progress` does; from a session that does not hand
     /// them out, none come.
+    ///
+    /// `progress` may keep that thread waiting, which holds the render
+    /// between stretches of samples with nothing lost: how a final render
+    /// is paused, since a session made for one ignores
+    /// [`Session::set_paused`]. Cycles' own clock, for a time limit, goes on.
     #[allow(clippy::too_many_arguments)]
     pub fn render_watched(
         &mut self,
@@ -688,13 +693,15 @@ impl Session {
         }
         // Progress is reported from Cycles' own thread, which is also the
         // one place that can notice the flag while the render runs, and
-        // hear of a new picture.
+        // hear of a new picture. `progress` may hold that thread for a
+        // while - a pause, between stretches of samples - so the flag is
+        // looked at after it, and a stop asked meanwhile is heard at once.
         let mut progress = move |fraction: f32| {
+            let done = unsafe { (api.fsc_rendered_samples)(raw as *mut ffi::Session) };
+            progress(fraction, done.max(0) as u32);
             if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
                 unsafe { (api.fsc_cancel)(raw as *mut ffi::Session) };
             }
-            let done = unsafe { (api.fsc_rendered_samples)(raw as *mut ffi::Session) };
-            progress(fraction, done.max(0) as u32);
             if let (Some(ask), Some((fit, picture))) = (ask, watch.as_mut()) {
                 let (w, h) = fit();
                 pixels.resize(w * h * 4, 0.0);

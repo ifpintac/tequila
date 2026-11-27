@@ -32,6 +32,7 @@ mod scripting_tab;
 mod batch;
 mod camera_tab;
 mod environment_tab;
+mod focus_pick;
 mod gizmo_ui;
 mod label_gizmo;
 mod mapping_gizmo;
@@ -67,11 +68,13 @@ mod sky_panel;
 mod orchestrator;
 mod orient;
 mod pattern_panel;
+mod part_material;
 mod profile;
 mod project;
 mod readout;
 mod recent;
 mod render_frame;
+mod render_view;
 mod render_window;
 mod scene_tab;
 mod sections;
@@ -383,6 +386,8 @@ struct TequilaApp {
     toasts: toast::Toasts,
     /// The node a right-click landed on, or `None` for empty space.
     context_target: Option<tequila_scene::tree::NodeId>,
+    /// What Copy material kept (`part_material`).
+    material_clipboard: part_material::Clipboard,
     /// The parts a material being dragged would land on, outlined live.
     ///
     /// §3.1 step 2 asks for the part under the cursor to be highlighted during
@@ -540,6 +545,8 @@ struct TequilaApp {
     mapping_gizmo: mapping_gizmo::MappingGizmo,
     pin_gizmo: pin_gizmo::PinGizmo,
     measure: measure_tool::MeasureTool,
+    /// The Camera tab's Pick focus, armed: a click on the model focuses there.
+    focus_pick: focus_pick::FocusPick,
     studio_tab: studio_tab::StudioTab,
     templates_panel: templates_panel::TemplatesPanel,
     /// A 3D mouse, and its preferences (`spacemouse`).
@@ -1114,6 +1121,7 @@ impl TequilaApp {
             spin_pending: Vec::new(),
             toasts: toast::Toasts::default(),
             context_target: None,
+            material_clipboard: Default::default(),
             drag_highlight: Vec::new(),
             project_tab: ProjectTab::Scene,
             pending_unit: None,
@@ -1178,6 +1186,7 @@ impl TequilaApp {
             mapping_gizmo: mapping_gizmo::MappingGizmo::default(),
             pin_gizmo: pin_gizmo::PinGizmo::default(),
             measure: measure_tool::MeasureTool::default(),
+            focus_pick: focus_pick::FocusPick::default(),
             studio_tab: studio_tab::StudioTab::default(),
             templates_panel: templates_panel::TemplatesPanel::default(),
             spacemouse: spacemouse::SpaceMouse::default(),
@@ -1941,11 +1950,9 @@ impl eframe::App for TequilaApp {
         self.improve_model_window(ctx);
         profile::time("ui: queue", || self.pump_queue(ctx));
         let mut window = std::mem::take(&mut self.render_window);
-        window.rendering = self.batch.is_running();
+        window.follow(&self.batch);
         profile::time("ui: render window", || window.show(ctx, &mut self.project));
-        if std::mem::take(&mut window.cancel_requested) {
-            self.batch.cancel();
-        }
+        window.act_on(&self.batch);
         let frames = window.frames_requested.take();
         self.render_window = window;
         if let Some((first, last)) = frames {
@@ -2130,6 +2137,13 @@ impl TequilaApp {
         );
         self.measure = measure;
 
+        // Picking a focus point (the Camera tab's Pick focus) takes clicks
+        // only, as measuring does. Armed, the gizmo takes nothing: a press
+        // on a handle turns the view rather than moving the part.
+        let picking_focus = self.focus_pick.armed();
+        let blur_shown = self.view_mode == view_mode::ViewMode::Rendered;
+        let focused = self.focus_pick.interact(ui, rect, &mut self.camera, &mut self.project, &self.orchestrator, &response, &mut self.toasts, blur_shown);
+
         let mut label_gizmo = std::mem::take(&mut self.label_gizmo);
         let placing_label = label_gizmo.interact(
             ui,
@@ -2145,12 +2159,13 @@ impl TequilaApp {
         self.mapping_gizmo = mapping_gizmo;
 
         let mut gizmo = std::mem::take(&mut self.gizmo);
-        let taken = placing_label || placing_mapping || aiming_pin || measuring;
+        let taken = placing_label || placing_mapping || aiming_pin || measuring || focused;
         // Hidden (Shift+G), the gizmo takes no drag either: a click where
         // a handle would be selects or turns the view, as anywhere else. A
         // drag under way as it was hidden is let finish.
         let gizmo_shown = self.show_gizmo || gizmo.is_dragging();
         let over_gizmo = taken
+            || picking_focus
             || (gizmo_shown && gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &response));
         let gizmo_dragging = taken || gizmo.is_dragging();
         self.gizmo = gizmo;
@@ -2431,6 +2446,7 @@ impl TequilaApp {
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.mapping_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
+            self.focus_pick.draw(ui, rect, &self.camera.camera);
             // What the UV editor points at, lit on the part; what the part
             // itself or another part hides found again only when that or
             // the view changes.
@@ -2555,6 +2571,17 @@ impl TequilaApp {
             ui.separator();
         }
 
+        // Edit, Copy and Paste material, and Unlink (`part_material`): the
+        // Scene tree's menu has the same.
+        if let Some(node) = self.context_target {
+            let offer = self.material_offer();
+            if let Some(action) = part_material::menu_items(ui, self.project.document(), &self.project.selection, &offer, node) {
+                self.part_material(action);
+                ui.close_menu();
+            }
+            ui.separator();
+        }
+
         // The group it is in: a CAD body that came as a piece per face
         // colour, or a sub-assembly, to take a material or a move as one.
         let document = self.project.document();
@@ -2626,13 +2653,6 @@ impl TequilaApp {
             self.project_tab = ProjectTab::Scene;
             self.show_project = true;
             self.toasts.info("Press F2 in the Scene tree to rename");
-            ui.close_menu();
-        }
-        if ui.button("Unlink material").clicked() {
-            if let Some(node) = self.context_target {
-                let _ = self.project.apply(Command::UnlinkMaterial { node });
-                self.toasts.info("Material unlinked");
-            }
             ui.close_menu();
         }
         if ui.button("Set pivot here").clicked() {
@@ -3637,6 +3657,8 @@ impl TequilaApp {
                         }
                     }
                     ui.separator();
+                    self.material_menu_items(ui);
+                    ui.separator();
                     for (label, action, enabled) in [
                         ("Select all", shortcuts::Action::SelectAll, true),
                         ("Deselect all", shortcuts::Action::DeselectAll, any),
@@ -3990,6 +4012,7 @@ impl TequilaApp {
             .find(|j| j.state == tequila_scene::render::JobState::Rendering)
             .map(render_window::progress);
         let label = match progress {
+            Some(done) if self.batch.is_paused() => format!("Paused {:.0}%", done * 100.0),
             Some(done) => format!("Rendering {:.0}%", done * 100.0),
             None => "Render".to_string(),
         };
@@ -4846,6 +4869,8 @@ impl TequilaApp {
             }
             Key::DeselectAll => self.project.selection.clear(),
             Key::Duplicate => self.duplicate_selection(),
+            Key::CopyMaterial => self.copy_selected_material(),
+            Key::PasteMaterial => self.paste_onto_selection(),
             Key::Group => {
                 let nodes: Vec<_> = self.project.selection.nodes().collect();
                 if nodes.len() >= 2 {
@@ -6313,6 +6338,7 @@ impl TequilaApp {
             }
             ProjectTab::Scene => {
                 let mut tab = std::mem::take(&mut self.scene_tab);
+                tab.material_offer = self.material_offer();
                 tab.show(ui, &mut self.project);
                 let selected = self.project.selection.active();
                 if selected.is_none() {
@@ -6367,7 +6393,11 @@ impl TequilaApp {
                 let retessellate = tab.retessellate_request.take();
                 let units = tab.units_request.take();
                 let improve = tab.improve_request.take();
+                let material = tab.material_request.take();
                 self.scene_tab = tab;
+                if let Some(action) = material {
+                    self.part_material(action);
+                }
                 if let Some(node) = improve {
                     self.improve_model = improve_model::ImproveModel::new(self.project.document(), node);
                     if self.improve_model.is_none() {
@@ -6468,9 +6498,13 @@ impl TequilaApp {
             ProjectTab::Camera => {
                 let aspect = self.aspect();
                 let mut tab = std::mem::take(&mut self.camera_tab);
+                tab.picking_focus = self.focus_pick.armed();
                 if tab.show(ui, &mut self.project, &mut self.camera, aspect) {
                     self.camera.adopt(self.project.camera());
                     resubmit = true;
+                }
+                if std::mem::take(&mut tab.pick_focus_request) {
+                    focus_pick::toggle(self);
                 }
                 self.camera_tab = tab;
             }
@@ -6577,8 +6611,7 @@ impl TequilaApp {
                             egui::TextureOptions::LINEAR,
                         )
                     });
-                    self.render_window.preview_job = Some(id);
-                    self.render_window.preview = texture.clone();
+                    self.render_window.keep_pixels(&path, width, height, preview);
                     self.render_window.add(render_window::GalleryEntry {
                         name,
                         path,

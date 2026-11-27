@@ -275,6 +275,9 @@ pub fn encode(command: &Command) -> String {
         Command::UnlinkMaterial { node } => {
             out.set("node", node.0);
         }
+        Command::PasteMaterial { material, nodes } => {
+            out.set("material", material.0).set("nodes", ids(nodes));
+        }
         Command::SetMaterialParameter {
             material,
             parameter,
@@ -773,6 +776,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
         },
         "material.unlink" => Command::UnlinkMaterial {
             node: node("node")?,
+        },
+        "material.paste" => Command::PasteMaterial {
+            material: material("material")?,
+            nodes: node_list("nodes"),
         },
         "material.set_parameter" => {
             let named = value.get("parameter").and_then(|v| v.as_str());

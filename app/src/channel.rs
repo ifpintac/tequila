@@ -757,6 +757,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         }
         None => None,
     };
+    if change.pick_focus == Some(true) && !tequila_scene::focus::can_focus(&app.camera.camera.projection) {
+        return Reply::Failed(tequila_scene::focus::CannotFocus::NoBlur.message().into());
+    }
     // `configurator` is the Snapshots tab, scrolled to it.
     let reveal = change.tab.as_deref().is_some_and(|t| t.trim().eq_ignore_ascii_case("configurator"));
     let tab = match &change.tab {
@@ -898,6 +901,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if reveal {
         app.reveal_configurator();
     }
+    if let Some(on) = change.pick_focus {
+        crate::focus_pick::set(app, on);
+    }
     match &change.place_texture {
         Some(Some((material, param))) => {
             let Some(param) = tequila_materials::material_type::Param::from_key(param) else {
@@ -1018,6 +1024,11 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
             return Reply::Failed(error);
         }
     }
+    if let Some(view) = &change.render_view {
+        if let Err(error) = app.render_window.script(view, &app.batch, &app.project) {
+            return Reply::Failed(error);
+        }
+    }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }
@@ -1132,6 +1143,18 @@ fn section_page(page: &str) -> &str {
 fn ui_state(app: &TequilaApp) -> Value {
     let mut out = Object::new();
     out.set("render_window", app.render_window.open)
+        // The Render window's stage: its zoom ("fit", or screen pixels to a
+        // pixel of the render), the point of the picture at its middle, and
+        // the render in progress paused, and held yet.
+        .set("render_view", {
+            let (zoom, [x, y]) = app.render_window.view_state();
+            let mut view = Object::new();
+            view.set("zoom", zoom.map_or(Value::String("fit".into()), |zoom| Value::Number(zoom as f64)))
+                .set("at", vec![Value::Number(x as f64), Value::Number(y as f64)])
+                .set("paused", app.batch.is_paused())
+                .set("held", app.batch.is_held());
+            view.build()
+        })
         .set("console", app.console.open)
         .set("inspector", app.show_project)
         .set("tab", app.project_tab.label().to_ascii_lowercase())
@@ -1154,6 +1177,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("selection_outline", app.show_selection_outline)
         .set("gizmo", app.show_gizmo)
         .set("light_outlines", app.prefs.show_light_outlines)
+        .set("pick_focus", app.focus_pick.armed())
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
@@ -1599,6 +1623,10 @@ fn camera_state(app: &TequilaApp) -> Value {
 /// Put the camera somewhere. See [`Operation::Look`].
 fn look(app: &mut TequilaApp, look: &tequila_scripting::protocol::Look) -> Reply {
     let to_vec = |v: [f32; 3]| Vec3 { x: v[0], y: v[1], z: v[2] };
+    let focus = match look.focus_point(app.project.document()) {
+        Ok(point) => point,
+        Err(why) => return Reply::Failed(why),
+    };
     let mut orbit = app.camera;
     if let Some(name) = &look.view {
         match crate::orbit::OrbitCamera::view_named(name) {
@@ -1647,6 +1675,12 @@ fn look(app: &mut TequilaApp, look: &tequila_scripting::protocol::Look) -> Reply
                     "this camera is orthographic or 360°, which have no focal length".into(),
                 )
             }
+        }
+    }
+    // Focused from where the camera ends up, as Pick focus is from the view.
+    if let Some(point) = focus {
+        if let Err(why) = tequila_scene::focus::focus_on(&mut orbit.camera, point) {
+            return Reply::Failed(why.message().into());
         }
     }
     app.camera = orbit;
@@ -3096,6 +3130,25 @@ mod handler_tests {
         value(&mut app, r#"{"op":"undo"}"#);
     }
 
+    /// A script zooms the Render window's stage and says where it looks,
+    /// as the toolbar does, and `query ui` reads it back; Pause is refused
+    /// with nothing rendering to pause.
+    #[test]
+    fn a_script_zooms_the_render_window_and_pauses_only_a_render() {
+        let mut app = TequilaApp::for_tests();
+        let view = |app: &mut TequilaApp| value(app, r#"{"op":"query","what":"ui"}"#).get("render_view").cloned().expect("query ui says how the stage is");
+        assert_eq!(view(&mut app).get("zoom").and_then(Value::as_str), Some("fit"));
+        let zoomed = value(&mut app, r#"{"op":"ui","render_view":{"zoom":"200%","at":[0.25,0.75]}}"#);
+        let stage = zoomed.get("render_view").unwrap();
+        assert_eq!(stage.get("zoom").and_then(Value::as_f64), Some(2.0));
+        assert_eq!(stage.get("at").unwrap().as_array().iter().filter_map(Value::as_f64).collect::<Vec<_>>(), [0.25, 0.75]);
+        assert!(app.render_window.open, "zoomed, the window shows");
+        value(&mut app, r#"{"op":"ui","render_view":{"zoom":"fit"}}"#);
+        assert_eq!(view(&mut app).get("zoom").and_then(Value::as_str), Some("fit"));
+        assert!(failure(&mut app, r#"{"op":"ui","render_view":{"pause":true}}"#).contains("nothing is rendering"));
+        assert_eq!(view(&mut app).get("paused").and_then(Value::as_bool), Some(false));
+    }
+
     /// A turntable's frames are queued over the channel, one job a frame,
     /// and a queue is emptied by one request: the job named, or all.
     #[test]
@@ -3778,6 +3831,61 @@ mod handler_tests {
 
         assert!(failure(&mut app, r#"{"op":"look","from":[0,1,0],"at":[0,1,0]}"#).contains("standing on"));
         assert!(failure(&mut app, r#"{"op":"look","view":"sideways"}"#).contains("front"));
+    }
+
+    /// `look` focuses on a part or a point as Pick focus does: the focus
+    /// distance the point's depth along the view axis, the blur on, one step
+    /// to undo. What it cannot focus on is refused and changes nothing.
+    #[test]
+    fn look_focuses_on_a_part_or_a_point() {
+        let mut app = TequilaApp::for_tests();
+        app.sync_viewport_camera();
+        app.project.end_interaction();
+        let (part, _) = two_parts(&mut app);
+        let before = app.project.camera().clone();
+        assert!(!before.camera.f_number.is_finite(), "the demo camera starts sharp all through");
+
+        let reply = value(&mut app, &format!(r#"{{"op":"look","focus_part":{part}}}"#));
+        let middle = tequila_scene::gizmo::selection_bounds(app.project.document(), &[NodeId(part)]).unwrap().center();
+        let camera = app.project.camera().camera;
+        let depth = tequila_scene::focus::focus_depth(&camera, middle).unwrap();
+        assert!((camera.focus_distance - depth).abs() < 1e-5, "focused at {}, the part's middle is {depth} deep", camera.focus_distance);
+        assert_eq!(camera.f_number, tequila_scene::focus::BLUR_F_NUMBER, "the blur came on");
+        assert_eq!(reply.get("blur").and_then(Value::as_bool), Some(true), "the reply says the blur is on");
+        assert!((reply.get("focus_distance").and_then(Value::as_f64).unwrap() as f32 - depth).abs() < 1e-5);
+        assert_eq!(app.camera.camera, camera, "the view's camera is the document's");
+        value(&mut app, r#"{"op":"undo"}"#);
+        assert_eq!(*app.project.camera(), before, "one undo puts it back");
+
+        // The target is on the axis, so its depth is the camera's distance to it.
+        let target = app.camera.target;
+        value(&mut app, &format!(r#"{{"op":"look","focus":[{},{},{}]}}"#, target.x, target.y, target.z));
+        assert!((app.project.camera().camera.focus_distance - app.camera.distance).abs() < 1e-4 * app.camera.distance);
+
+        let focused = app.project.camera().clone();
+        assert!(failure(&mut app, &format!(r#"{{"op":"look","focus":[0,0,0],"focus_part":{part}}}"#)).contains("not both"));
+        assert!(failure(&mut app, r#"{"op":"look","focus_part":987654}"#).contains("no part 987654"));
+        let behind = app.camera.camera.position() - app.camera.camera.forward();
+        assert!(failure(&mut app, &format!(r#"{{"op":"look","focus":[{},{},{}]}}"#, behind.x, behind.y, behind.z)).contains("behind"));
+        assert!(failure(&mut app, r#"{"op":"look","view":"top","focus":[0,1000,0]}"#).contains("behind"), "a refused focus does not move the camera either");
+        assert_eq!(*app.project.camera(), focused, "a refusal changed the camera");
+    }
+
+    /// `ui` turns the viewport's Pick focus on and off, as the Camera tab's
+    /// button does, and `query ui` says whether it is on.
+    #[test]
+    fn a_script_turns_pick_focus_on_and_off() {
+        let mut app = TequilaApp::for_tests();
+        app.measure.toggle();
+        let state = value(&mut app, r#"{"op":"ui","pick_focus":true}"#);
+        assert_eq!(state.get("pick_focus").and_then(Value::as_bool), Some(true));
+        assert!(!app.measure.active(), "measuring was not put away");
+        let state = value(&mut app, r#"{"op":"ui","pick_focus":false}"#);
+        assert_eq!(state.get("pick_focus").and_then(Value::as_bool), Some(false));
+
+        app.camera.camera.projection = tequila_render_core::camera::Projection::Orthographic { scale: 1.0 };
+        assert!(failure(&mut app, r#"{"op":"ui","pick_focus":true}"#).contains("orthographic"));
+        assert!(!app.focus_pick.armed());
     }
 
     /// Nothing a script does to a material moves the view: a library preset

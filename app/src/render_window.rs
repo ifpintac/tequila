@@ -27,8 +27,10 @@ use tequila_scene::render::{
 };
 use tequila_scene::Command;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::project::Project;
+use crate::render_view::{self, Ask, Picture, Placed, StageView};
 
 pub fn progress(job: &RenderJob) -> f32 {
     if job.state == JobState::Done { return 1.0; }
@@ -169,6 +171,12 @@ pub fn preview_image(width: usize, height: usize, rgba: &[u8]) -> egui::ColorIma
 /// and for an EXR or a 32-bit TIFF a straight clamp that shows the render
 /// roughly as the viewport would, not graded.
 fn load_preview(path: &str) -> Option<egui::ColorImage> {
+    decode(path).map(|(width, height, rgba)| preview_image(width, height, &rgba))
+}
+
+/// A render's file read back as eight-bit RGBA, every pixel: its width,
+/// height and pixels.
+fn decode(path: &str) -> Option<(usize, usize, Vec<u8>)> {
     let lower = path.to_ascii_lowercase();
     let (width, height, rgba) = if lower.ends_with(".png") {
         let mut decoder = png::Decoder::new(std::fs::File::open(path).ok()?);
@@ -210,7 +218,31 @@ fn load_preview(path: &str) -> Option<egui::ColorImage> {
     } else {
         return None;
     };
-    Some(preview_image(width, height, &rgba))
+    Some((width, height, rgba))
+}
+
+/// How much of this session's renders' developed pixels is kept, every
+/// pixel, to look at them closely without reading their files back: eight
+/// 4K renders. Read back, an EXR's or a 16-bit file's pixels are a straight
+/// clamp of what was written, not the picture as developed.
+const DEVELOPED_BUDGET: usize = 256 << 20;
+
+/// The longest side of a render in progress shown pixel for pixel: past
+/// it, a picture of every pixel each second would cost the render more
+/// than it is worth, and the zoomed picture is enlarged until the render
+/// is done.
+const LIVE_LONGEST: usize = 4096;
+
+/// The size of picture of a render in progress the stage wants, for a
+/// render of `image` pixels shown at `scale`: as many pixels as it shows of
+/// it, and every one zoomed in, within [`LIVE_LONGEST`] and what one
+/// texture can be.
+fn live_size(image: [usize; 2], scale: f32, max_side: usize) -> (usize, usize) {
+    let [width, height] = image.map(|side| side.max(1));
+    let longest = LIVE_LONGEST.min(max_side).max(1) as f32;
+    let scale = scale.min(1.0).min(longest / width.max(height) as f32).max(0.0);
+    let side = |length: usize| ((length as f32 * scale).ceil() as usize).clamp(1, length);
+    (side(width), side(height))
 }
 
 /// Sizes people actually ask for, by the name they ask for them by.
@@ -342,11 +374,33 @@ pub struct RenderWindow {
     pub frames_requested: Option<(u32, u32)>,
     /// The frame range shown, until the animation changes; `None`, all.
     frames: Option<(u32, u32)>,
-    pub preview_job: Option<u64>,
-    pub preview: Option<egui::TextureHandle>,
-    /// The stage's size in pixels, as last drawn: what a render in progress
-    /// is shown at.
+    /// Whether the render in progress has been paused, and whether it is
+    /// held yet: it finishes the pass it is on first ([`RenderWindow::follow`]).
+    paused: bool,
+    held: bool,
+    /// Pause (`true`) or Resume, asked this frame, for the application to
+    /// hand the renderer ([`RenderWindow::act_on`]), as Stop is.
+    pause_requested: Option<bool>,
+    /// What the stage is zoomed to, and where (`render_view`).
+    view: StageView,
+    /// The picture of the render in progress, and its job.
+    live: Option<(u64, Picture)>,
+    /// The stage's size in pixels, as last drawn.
     stage_pixels: Option<(usize, usize)>,
+    /// The size a render in progress is wanted at: the stage's, or every
+    /// pixel while the stage is zoomed in.
+    wanted: Option<(usize, usize)>,
+    /// Every pixel of a render or two from the filmstrip, by path, read for
+    /// a zoom past their thumbnails; two, for an A/B compare.
+    zoomed: Vec<(String, Picture)>,
+    /// Those being read, by path.
+    zoom_loading: Vec<(String, std::thread::JoinHandle<Option<egui::ColorImage>>)>,
+    /// The developed pixels of this session's newest renders, by path, as
+    /// they finished, within [`DEVELOPED_BUDGET`]: width, height, RGBA.
+    developed: Vec<(String, usize, usize, Arc<Vec<u8>>)>,
+    /// Renders with no more pixels to read than their thumbnails: their
+    /// file unreadable, or relit since and not saved.
+    no_full: std::collections::HashSet<String>,
     /// Where past renders are remembered between sessions, once known.
     history_file: Option<PathBuf>,
     /// Previews being read back from disk, by path.
@@ -397,9 +451,17 @@ impl Default for RenderWindow {
             cancel_requested: false,
             frames_requested: None,
             frames: None,
-            preview_job: None,
-            preview: None,
+            paused: false,
+            held: false,
+            pause_requested: None,
+            view: StageView::default(),
+            live: None,
             stage_pixels: None,
+            wanted: None,
+            zoomed: Vec::new(),
+            zoom_loading: Vec::new(),
+            developed: Vec::new(),
+            no_full: Default::default(),
             history_file: None,
             loading: Vec::new(),
             unreadable: Default::default(),
@@ -587,6 +649,71 @@ impl RenderWindow {
         if !self.loading.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
+
+        // Every pixel of a render being looked at closely.
+        let (done, still): (Vec<_>, Vec<_>) = std::mem::take(&mut self.zoom_loading).into_iter().partition(|(_, handle)| handle.is_finished());
+        self.zoom_loading = still;
+        for (path, handle) in done {
+            match handle.join().ok().flatten() {
+                Some(image) => {
+                    let picture = Picture::new(ctx, &format!("render-zoomed-{path}"), image, self.view.crisp());
+                    self.zoomed.retain(|(kept, _)| *kept != path);
+                    self.zoomed.push((path, picture));
+                    if self.zoomed.len() > 2 {
+                        self.zoomed.remove(0);
+                    }
+                }
+                None => {
+                    self.no_full.insert(path);
+                }
+            }
+        }
+        if !self.zoom_loading.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Keep a finished render's developed pixels, every one, to look at it
+    /// closely: the newest within [`DEVELOPED_BUDGET`], the oldest let go.
+    pub fn keep_pixels(&mut self, path: &str, width: usize, height: usize, rgba: Vec<u8>) {
+        // Its pictures as it rendered are done with: the stage shows the
+        // finished render now.
+        self.live = None;
+        if rgba.len() < width * height * 4 || rgba.len() > DEVELOPED_BUDGET {
+            return;
+        }
+        self.developed.retain(|(kept, ..)| kept != path);
+        self.zoomed.retain(|(kept, _)| kept != path);
+        self.no_full.remove(path);
+        self.developed.push((path.to_string(), width, height, Arc::new(rgba)));
+        while self.developed.iter().map(|(_, _, _, rgba)| rgba.len()).sum::<usize>() > DEVELOPED_BUDGET {
+            self.developed.remove(0);
+        }
+    }
+
+    /// Start reading every pixel of the render at `index`, from those kept
+    /// or from its file, unless they are on hand or being read.
+    fn want_full(&mut self, index: usize) {
+        let Some(entry) = self.gallery.get(index) else { return };
+        let path = entry.path.clone();
+        if self.zoomed.iter().any(|(kept, _)| *kept == path)
+            || self.zoom_loading.iter().any(|(reading, _)| *reading == path)
+            || self.no_full.contains(&path)
+        {
+            return;
+        }
+        let kept = self.developed.iter().find(|(kept, ..)| *kept == path).map(|(_, width, height, rgba)| (*width, *height, rgba.clone()));
+        let reading = path.clone();
+        let read = move || match kept {
+            Some((width, height, rgba)) => Some(egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba[..width * height * 4])),
+            None => decode(&reading).map(|(width, height, rgba)| egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba)),
+        };
+        if let Ok(handle) = std::thread::Builder::new().name("render-zoom".into()).spawn(read) {
+            self.zoom_loading.push((path, handle));
+            if self.zoom_loading.len() > 2 {
+                self.zoom_loading.remove(0);
+            }
+        }
     }
 }
 
@@ -599,15 +726,82 @@ impl RenderWindow {
     }
 
     /// How large a render in progress is shown, in pixels: the stage, while
-    /// the window is open; `None` while it is closed, when nobody sees it.
+    /// the window is open, or every pixel while it is zoomed in; `None`
+    /// while it is closed, when nobody sees it.
     pub fn preview_fit(&self) -> Option<(usize, usize)> {
-        self.open.then(|| self.stage_pixels.unwrap_or((1280, 720)))
+        self.open.then(|| self.wanted.or(self.stage_pixels).unwrap_or((1280, 720)))
     }
 
     pub fn set_preview(&mut self, ctx: &egui::Context, id: u64, width: usize, height: usize, rgba: &[u8]) {
-        self.preview_job = Some(id);
-        self.preview = Some(ctx.load_texture(format!("render-preview-{id}"),
-            egui::ColorImage::from_rgba_unmultiplied([width, height], rgba), egui::TextureOptions::LINEAR));
+        let image = egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
+        self.live = Some((id, Picture::new(ctx, &format!("render-preview-{id}"), image, self.view.crisp())));
+    }
+
+    /// The background renderer as it is now: rendering or not, paused or
+    /// not. Each frame, before the window is shown.
+    pub fn follow(&mut self, batch: &crate::batch::BatchRenderer) {
+        self.rendering = batch.is_running();
+        self.paused = batch.is_paused();
+        self.held = batch.is_held();
+    }
+
+    /// Hand the renderer what the window asked of it: Stop, Pause, Resume.
+    /// Each frame, after the window is shown.
+    pub fn act_on(&mut self, batch: &crate::batch::BatchRenderer) {
+        if std::mem::take(&mut self.cancel_requested) {
+            batch.cancel();
+        }
+        if let Some(paused) = self.pause_requested.take() {
+            batch.pause(paused);
+        }
+    }
+
+    /// The stage as a script sets it (`ui` with `render_view`): its zoom,
+    /// where it looks, and the render in progress paused or let go. A zoom
+    /// opens the window, to show it.
+    pub fn script(&mut self, change: &tequila_scripting::protocol::RenderViewChange, batch: &crate::batch::BatchRenderer, project: &Project) -> Result<(), String> {
+        if let Some(pause) = change.pause {
+            if !batch.is_running() {
+                return Err("nothing is rendering in the background, so there is nothing to pause".into());
+            }
+            if let Some(why) = self.unpausable(project).filter(|_| pause) {
+                return Err(why.to_string());
+            }
+            batch.pause(pause);
+        }
+        if let Some(zoom) = change.zoom {
+            self.view.set_zoom(zoom);
+        }
+        if let Some([x, y]) = change.at {
+            self.view.look_at(egui::vec2(x, y));
+        }
+        if change.zoom.is_some() || change.at.is_some() {
+            self.open = true;
+        }
+        Ok(())
+    }
+
+    /// The stage's zoom (`None` fitted) and the point of the picture at its
+    /// middle, for `query ui`.
+    pub fn view_state(&self) -> (Option<f32>, [f32; 2]) {
+        let centre = self.view.centre();
+        (self.view.zoom(), [centre.x, centre.y])
+    }
+
+    /// Why the render in progress cannot be paused, when it cannot.
+    fn unpausable(&self, project: &Project) -> Option<&'static str> {
+        let job = project.queue().jobs().iter().find(|job| job.state == JobState::Rendering)?;
+        crate::batch::pausable(&job.settings).err()
+    }
+
+    /// Carry out a zoom, Pause or Stop, asked for over a picture of `image`
+    /// pixels on the stage `area`.
+    fn ask(&mut self, ask: Ask, area: egui::Rect, image: [usize; 2], pixels_per_point: f32) {
+        match ask {
+            Ask::Pause(paused) => self.pause_requested = Some(paused),
+            Ask::Stop => self.cancel_requested = true,
+            other => render_view::apply(&mut self.view, other, area, image, pixels_per_point),
+        }
     }
 
     pub fn show(&mut self, ctx: &egui::Context, project: &mut Project) {
@@ -694,7 +888,7 @@ impl RenderWindow {
     /// path of the file this will write, resolved, not the template.
     fn footer(&mut self, ui: &mut egui::Ui, project: &mut Project, settings: &RenderSettings) {
         let path = self.planned_path(project, settings);
-        let actions_width = if self.rendering { 470.0 } else { 330.0 };
+        let actions_width = 330.0;
         ui.horizontal(|ui| {
             let left = (ui.available_width() - actions_width).max(160.0);
             ui.allocate_ui(egui::vec2(left, 40.0), |ui| {
@@ -816,12 +1010,8 @@ impl RenderWindow {
                     ui.label(egui::RichText::new("Frames").color(crate::theme::dim()));
                     self.frames = Some((first.min(last), final_frame.min(last)));
                 }
-                if self.rendering {
-                    // Stop, not abandon: the job writes whatever it has reached.
-                    if ui.button("Stop & save").on_hover_text("Stop the current render and save the image as it is now").clicked() {
-                        self.cancel_requested = true;
-                    }
-                }
+                // Pause and Stop are over the picture, on its toolbar
+                // (`render_view::toolbar`): Stop is what Stop & save was.
             });
         });
     }
@@ -903,9 +1093,14 @@ impl RenderWindow {
             // is being adjusted; the file on disk is untouched until saved.
             let texture = ui.ctx().load_texture("relit-preview", image, egui::TextureOptions::LINEAR);
             if let Some(entry) = self.gallery.iter_mut().find(|e| e.path == path) {
-                entry.texture = Some(texture.clone());
+                entry.texture = Some(texture);
             }
-            self.preview = Some(texture);
+            // Its pixels as rendered are not the picture now, and the file
+            // is not relit until saved: zoomed in, the relit preview is
+            // enlarged.
+            self.developed.retain(|(kept, ..)| *kept != path);
+            self.zoomed.retain(|(kept, _)| *kept != path);
+            self.no_full.insert(path);
         }
     }
 
@@ -1037,9 +1232,18 @@ impl RenderWindow {
             Showing::Live(id) => {
                 let Some(job) = project.queue().get(id) else { return };
                 let stage = if job.message.is_empty() { job.state.label() } else { job.message.as_str() };
+                // Paused at once, held once the pass it is on is done; and
+                // carrying on at once, before the renderer says so.
+                let stage = match (self.paused, self.held) {
+                    (true, true) => crate::batch::PAUSED,
+                    (true, false) => "Pausing after this pass…",
+                    (false, _) if stage == crate::batch::PAUSED => "Rendering",
+                    _ => stage,
+                };
+                let colour = if self.paused { crate::theme::p().busy } else { crate::theme::p().accent };
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(&job.name).strong());
-                    ui.label(egui::RichText::new(stage).color(crate::theme::p().accent));
+                    ui.label(egui::RichText::new(stage).color(colour));
                     ui.label(egui::RichText::new(format!("{} / {} samples", job.samples, job.settings.max_samples)).color(crate::theme::dim()));
                     ui.label(egui::RichText::new(duration(job.seconds)).color(crate::theme::dim()));
                     if job.samples > 0 && stage == "Rendering" {
@@ -1049,7 +1253,7 @@ impl RenderWindow {
                             .on_hover_text("An estimate. Adaptive sampling and the final denoise can change it.");
                     }
                 });
-                ui.add(egui::ProgressBar::new(progress(job)).desired_height(6.0).animate(true));
+                ui.add(egui::ProgressBar::new(progress(job)).desired_height(6.0).animate(!self.paused));
             }
             Showing::Image(index) => {
                 let Some(entry) = self.gallery.get(index) else { return };
@@ -1117,27 +1321,54 @@ impl RenderWindow {
 
     fn stage(&mut self, ui: &mut egui::Ui, project: &Project, settings: &RenderSettings, showing: &Showing) {
         let area = ui.available_rect_before_wrap();
-        ui.allocate_rect(area, egui::Sense::hover());
-        let pixels = area.size() * ui.ctx().pixels_per_point();
+        // The stage's own response, under the toolbar's buttons: the wheel
+        // and drags over the picture.
+        let response = ui.allocate_rect(area, egui::Sense::click_and_drag());
+        let ppp = ui.ctx().pixels_per_point();
+        let pixels = area.size() * ppp;
         self.stage_pixels = Some(((pixels.x as usize).max(64), (pixels.y as usize).max(64)));
+        self.wanted = self.stage_pixels;
+        // The size of the picture showing, which the view zooms: the
+        // render's own, whatever size its preview is.
+        let image = match *showing {
+            Showing::Live(id) => project.queue().get(id).map(|job| [job.settings.width, job.settings.height]),
+            Showing::Image(index) | Showing::Compare(index, _) => self.gallery.get(index).map(|entry| [entry.width, entry.height]),
+            Showing::Nothing => None,
+        }
+        .filter(|[width, height]| *width > 0 && *height > 0);
+        let comparing = matches!(showing, Showing::Compare(..));
+        if let Some(image) = image {
+            if render_view::mouse(&mut self.view, ui, &response, area, image, comparing) {
+                ui.ctx().request_repaint();
+            }
+            if let Some(ask) = render_view::keys(ui, response.hovered()) {
+                self.ask(ask, area, image, ppp);
+                ui.ctx().request_repaint();
+            }
+        }
+        let painter = ui.painter_at(area);
         match *showing {
             Showing::Live(id) => {
-                let texture = self.preview.as_ref().filter(|_| self.preview_job == Some(id));
-                match texture {
-                    Some(texture) => {
-                        let size = texture.size();
-                        let rect = fit(area, size[0], size[1]);
-                        ui.painter().image(texture.id(), rect, full_uv(), egui::Color32::WHITE);
+                let size = image.unwrap_or([settings.width, settings.height]);
+                let placed = self.view.place(area, size, ppp);
+                let max_side = ui.ctx().input(|i| i.max_texture_side);
+                self.wanted = Some(live_size(size, placed.scale, max_side));
+                let crisp = self.view.crisp();
+                match self.live.as_mut().filter(|(job, _)| *job == id) {
+                    Some((_, picture)) => {
+                        // Crisp only once it has every pixel: a smaller
+                        // picture, not yet replaced, is enlarged smoothly.
+                        picture.set_crisp(crisp && picture.size() == size);
+                        picture.paint(&painter, placed.rect, render_view::whole());
                     }
                     None => {
                         // The frame of the job's own picture, which is not
                         // always the size the window is set to now.
-                        let (width, height) = project.queue().get(id).map_or((settings.width, settings.height), |job| (job.settings.width, job.settings.height));
-                        let frame = fit(area, width, height);
-                        ui.painter().rect_stroke(frame, 2.0, egui::Stroke::new(1.0_f32, crate::theme::p().line_strong));
+                        let frame = fit(area, size[0], size[1]);
+                        painter.rect_stroke(frame, 2.0, egui::Stroke::new(1.0_f32, crate::theme::p().line_strong));
                         let spinner = egui::Rect::from_center_size(frame.center() - egui::vec2(0.0, 14.0), egui::vec2(22.0, 22.0));
                         ui.put(spinner, egui::Spinner::new());
-                        ui.painter().text(
+                        painter.text(
                             frame.center() + egui::vec2(0.0, 16.0),
                             egui::Align2::CENTER_CENTER,
                             "Preparing the first preview…",
@@ -1148,24 +1379,16 @@ impl RenderWindow {
                 }
             }
             Showing::Image(index) => {
-                if let Some(entry) = self.gallery.get(index) {
-                    let rect = fit(area, entry.width, entry.height);
-                    match &entry.texture {
-                        Some(texture) => {
-                            ui.painter().image(texture.id(), rect, full_uv(), egui::Color32::WHITE);
-                        }
-                        None => {
-                            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, &entry.path, egui::FontId::proportional(13.0), crate::theme::dim());
-                        }
-                    }
+                if let Some(size) = image {
+                    let placed = self.view.place(area, size, ppp);
+                    self.paint_entry(ui, area, index, placed, render_view::whole());
                 }
             }
-            Showing::Compare(a, b) => self.draw_wipe(ui, area, a, b),
+            Showing::Compare(a, b) => self.draw_wipe(ui, area, &response, a, b),
             Showing::Nothing => {
                 // The frame the render will fill, at its real shape, so the
                 // size settings can be judged before anything is spent on them.
                 let frame = fit(area, settings.width, settings.height);
-                let painter = ui.painter();
                 painter.rect_filled(frame, 2.0, crate::theme::p().field);
                 painter.rect_stroke(frame, 2.0, egui::Stroke::new(1.0_f32, crate::theme::p().line_strong));
                 if let Some(region) = &settings.region {
@@ -1194,6 +1417,53 @@ impl RenderWindow {
                 );
             }
         }
+
+        // Over the picture: "Paused" while the render showing is held, and
+        // the toolbar - zoom for a picture, Pause and Stop while a render
+        // runs, whichever picture is showing.
+        if self.paused && matches!(showing, Showing::Live(_)) {
+            render_view::paused_badge(ui, area, self.held);
+        }
+        let zoom = image.map(|image| render_view::Zoom {
+            scale: self.view.scale(area, image, ppp),
+            fitted: self.view.fitted(),
+            actual: !self.view.fitted() && self.view.at_actual_size(area, image, ppp),
+        });
+        let transport = self.rendering.then(|| render_view::Transport { paused: self.paused, unpausable: self.unpausable(project) });
+        if let Some(ask) = render_view::toolbar(ui, area, zoom, transport) {
+            self.ask(ask, area, image.unwrap_or([settings.width, settings.height]), ppp);
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// The render at `index` in the filmstrip, `part` of it (fractions of
+    /// its width and height), where that part falls when the whole is at
+    /// `placed`. Zoomed in past its thumbnail, every pixel of it once they
+    /// are read; the thumbnail, enlarged, until then.
+    fn paint_entry(&mut self, ui: &egui::Ui, area: egui::Rect, index: usize, placed: Placed, part: egui::Rect) {
+        let Some(entry) = self.gallery.get(index) else { return };
+        let thumbnail = entry.texture.as_ref().map_or(0.0, |texture| texture.size()[0] as f32 / entry.width.max(1) as f32);
+        let closer = !self.view.fitted() && placed.scale > thumbnail * 1.01;
+        if closer {
+            self.want_full(index);
+        }
+        let crisp = self.view.crisp();
+        let Some(entry) = self.gallery.get(index) else { return };
+        let painter = ui.painter_at(area);
+        let zoomed = self.zoomed.iter_mut().find(|(path, _)| closer && *path == entry.path);
+        match (zoomed, &entry.texture) {
+            (Some((_, picture)), _) => {
+                picture.set_crisp(crisp);
+                picture.paint(&painter, placed.rect, part);
+            }
+            (None, Some(texture)) => {
+                let rect = egui::Rect::from_min_max(placed.rect.lerp_inside(part.min.to_vec2()), placed.rect.lerp_inside(part.max.to_vec2()));
+                painter.image(texture.id(), rect, part, egui::Color32::WHITE);
+            }
+            (None, None) => {
+                painter.text(placed.rect.center(), egui::Align2::CENTER_CENTER, &entry.path, egui::FontId::proportional(13.0), crate::theme::dim());
+            }
+        }
     }
 
     /// The A/B wipe: both images in the same rectangle, split at the wipe.
@@ -1201,35 +1471,34 @@ impl RenderWindow {
     /// Both at the *same* size and position, rather than side by side. A
     /// difference of a few per cent in a highlight is invisible when the two
     /// images are apart and obvious across a seam, and seeing that difference
-    /// is the entire reason to keep old renders.
-    fn draw_wipe(&mut self, ui: &mut egui::Ui, area: egui::Rect, a: usize, b: usize) {
+    /// is the entire reason to keep old renders. Zoomed, both are; the left
+    /// button moves the split, and the middle one looks around.
+    fn draw_wipe(&mut self, ui: &mut egui::Ui, area: egui::Rect, response: &egui::Response, a: usize, b: usize) {
         let (width, height) = match self.gallery.get(a) {
             Some(entry) => (entry.width, entry.height),
             None => return,
         };
-        let rect = fit(area, width, height);
-        let response = ui.interact(rect, ui.id().with("wipe"), egui::Sense::click_and_drag());
-        if response.dragged() || response.clicked() {
+        let placed = self.view.place(area, [width, height], ui.ctx().pixels_per_point());
+        let rect = placed.rect;
+        if response.dragged_by(egui::PointerButton::Primary) || response.clicked_by(egui::PointerButton::Primary) {
             if let Some(pointer) = response.interact_pointer_pos() {
                 self.wipe = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
             }
         }
-        if response.hovered() {
+        if response.hovered() && !response.dragged_by(egui::PointerButton::Middle) {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
-        let (Some(first), Some(second)) = (self.gallery.get(a), self.gallery.get(b)) else { return };
+        if a >= self.gallery.len() || b >= self.gallery.len() {
+            return;
+        }
         let split = rect.left() + rect.width() * self.wipe;
-        let painter = ui.painter_at(rect);
-        if let Some(texture) = &first.texture {
-            let left = egui::Rect::from_min_max(rect.min, egui::pos2(split, rect.max.y));
-            painter.image(texture.id(), left, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(self.wipe, 1.0)), egui::Color32::WHITE);
-        }
-        if let Some(texture) = &second.texture {
-            let right = egui::Rect::from_min_max(egui::pos2(split, rect.min.y), rect.max);
-            painter.image(texture.id(), right, egui::Rect::from_min_max(egui::pos2(self.wipe, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-        }
+        self.paint_entry(ui, area, a, placed, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(self.wipe, 1.0)));
+        self.paint_entry(ui, area, b, placed, egui::Rect::from_min_max(egui::pos2(self.wipe, 0.0), egui::pos2(1.0, 1.0)));
+        let painter = ui.painter_at(area);
+        // The part of the pictures on the stage, which the tags sit in.
+        let shown = rect.intersect(area);
         painter.line_segment(
-            [egui::pos2(split, rect.top()), egui::pos2(split, rect.bottom())],
+            [egui::pos2(split, shown.top()), egui::pos2(split, shown.bottom())],
             egui::Stroke::new(2.0_f32, egui::Color32::from_white_alpha(200)),
         );
         let tag = |at: egui::Pos2, align, text: &str| {
@@ -1238,8 +1507,8 @@ impl RenderWindow {
             painter.rect_filled(bg, 3.0, egui::Color32::from_black_alpha(150));
             painter.galley(bg.min + egui::vec2(4.0, 4.0), galley, egui::Color32::WHITE);
         };
-        tag(rect.left_top() + egui::vec2(10.0, 10.0), egui::Align2::LEFT_TOP, &format!("A  {}", self.described(a)));
-        tag(rect.right_top() + egui::vec2(-10.0, 10.0), egui::Align2::RIGHT_TOP, &format!("B  {}", self.described(b)));
+        tag(shown.left_top() + egui::vec2(10.0, 10.0), egui::Align2::LEFT_TOP, &format!("A  {}", self.described(a)));
+        tag(shown.right_top() + egui::vec2(-10.0, 10.0), egui::Align2::RIGHT_TOP, &format!("B  {}", self.described(b)));
     }
 
     // ---- the filmstrip --------------------------------------------------------
@@ -1249,7 +1518,7 @@ impl RenderWindow {
         let (waiting, running, _) = project.queue().counts();
         ui.horizontal(|ui| {
             let mut words = Vec::new();
-            if running > 0 { words.push("1 rendering".to_string()); }
+            if running > 0 { words.push(if self.paused { "1 paused" } else { "1 rendering" }.to_string()); }
             if waiting > 0 { words.push(format!("{waiting} waiting")); }
             words.push(match self.gallery.len() {
                 1 => "1 render".to_string(),
@@ -1385,6 +1654,7 @@ impl RenderWindow {
             painter.rect_stroke(rect, 4.0, egui::Stroke::new(if live { 2.0_f32 } else { 1.0 }, if live { crate::theme::p().accent } else { crate::theme::p().line_strong }));
         }
         let (state, colour) = match job.state {
+            JobState::Rendering if self.paused => (crate::batch::PAUSED.to_string(), crate::theme::p().busy),
             JobState::Rendering => (job.state.label().to_string(), crate::theme::p().accent),
             JobState::Failed => ("Failed".to_string(), failed()),
             JobState::Held => ("Held".to_string(), crate::theme::dim()),
@@ -2271,6 +2541,74 @@ mod tests {
         let tall = fit(bounds, 1080, 1920);
         assert!((tall.height() - 500.0).abs() < 1e-3, "a tall image fills the height");
         assert!((tall.center().x - 500.0).abs() < 1e-3, "and is centred");
+    }
+
+    /// A render in progress is asked for at the size the stage shows it:
+    /// as many pixels as it fits, every one zoomed in, and no more than a
+    /// texture holds or a picture a second is worth.
+    #[test]
+    fn a_live_render_is_asked_for_at_the_size_shown() {
+        assert_eq!(live_size([1920, 1080], 0.5, 16384), (960, 540), "fitted at half size");
+        assert_eq!(live_size([1920, 1080], 1.0, 16384), (1920, 1080), "every pixel at 100%");
+        assert_eq!(live_size([1920, 1080], 4.0, 16384), (1920, 1080), "and no more past it");
+        assert_eq!(live_size([8000, 4000], 1.0, 16384), (4096, 2048), "a poster held to LIVE_LONGEST");
+        assert_eq!(live_size([3000, 3000], 1.0, 2048), (2048, 2048), "and to what a texture holds");
+    }
+
+    /// Stop, Pause and Resume asked of the window go to the renderer, once.
+    #[test]
+    fn stop_and_pause_reach_the_renderer() {
+        let batch = crate::batch::BatchRenderer::new();
+        let mut window = RenderWindow::default();
+        let area = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 450.0));
+        window.ask(Ask::Pause(true), area, [1920, 1080], 1.0);
+        window.ask(Ask::Stop, area, [1920, 1080], 1.0);
+        assert_eq!(window.pause_requested, Some(true));
+        assert!(window.cancel_requested);
+        window.act_on(&batch);
+        assert!(window.pause_requested.is_none() && !window.cancel_requested, "handed over, once");
+        // Nothing is running, so nothing reads as paused, though it was asked.
+        window.follow(&batch);
+        assert!(!window.paused && !window.rendering);
+        // Zooms are the window's own.
+        window.ask(Ask::ActualSize, area, [1920, 1080], 1.0);
+        assert!(window.view.at_actual_size(area, [1920, 1080], 1.0));
+        window.ask(Ask::Fit, area, [1920, 1080], 1.0);
+        assert!(window.view.fitted());
+    }
+
+    /// A finished render's developed pixels are kept, newest first within
+    /// their budget, and are what a zoom past its thumbnail shows: every
+    /// pixel, without reading the file back.
+    #[test]
+    fn a_zoomed_render_shows_every_pixel_it_had() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |_| {});
+        let mut window = RenderWindow::default();
+        let (w, h) = (2400, 1200);
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [(i % w % 256) as u8, 0, 0, 255]).collect();
+        window.keep_pixels("C:/nowhere/hero.png", w, h, rgba);
+        window.gallery.push(GalleryEntry { texture: None, ..entry("Hero", "C:/nowhere/hero.png") });
+        window.gallery[0].width = w;
+        window.gallery[0].height = h;
+        window.want_full(0);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while window.zoomed.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "the pixels were never read");
+            window.load_previews(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (path, picture) = &window.zoomed[0];
+        assert_eq!(path, "C:/nowhere/hero.png");
+        assert_eq!(picture.size(), [w, h], "every pixel, from those kept: there is no file");
+        // The budget keeps the newest.
+        let big = DEVELOPED_BUDGET / (4 * 1000);
+        for i in 0..3 {
+            window.keep_pixels(&format!("{i}.png"), 1000, big / 2, vec![0; 1000 * (big / 2) * 4]);
+        }
+        let kept: Vec<&str> = window.developed.iter().map(|(path, ..)| path.as_str()).collect();
+        assert_eq!(kept, ["1.png", "2.png"], "the oldest let go");
+        assert!(window.developed.iter().map(|(.., rgba)| rgba.len()).sum::<usize>() <= DEVELOPED_BUDGET);
     }
 
     #[test]
