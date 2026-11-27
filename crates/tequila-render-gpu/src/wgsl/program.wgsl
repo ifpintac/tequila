@@ -132,7 +132,7 @@ fn prog_value(operand: u32) -> vec4<f32> {
         v = prog_regs[index];
     }
     switch (operand >> 13u) & 7u {
-        case 1u: { return vec4<f32>(0.2722287 * v.x + 0.6740818 * v.y + 0.0536895 * v.z); }
+        case 1u: { return vec4<f32>(cy_exact(0.2722287 * v.x) + cy_exact(0.6740818 * v.y) + cy_exact(0.0536895 * v.z)); }
         case 2u: { return vec4<f32>(v.x); }
         case 3u: { return vec4<f32>(v.y); }
         case 4u: { return vec4<f32>(v.z); }
@@ -218,8 +218,9 @@ fn prog_gradient(settings: u32, t_in: f32) -> vec3<f32> {
 // (shade.rs): the curvature as CurvatureMode::mask has it - `c` the radius,
 // no less than nought, and the contrast; the baked occlusion as
 // occlusion_shape has it - `c.y` the contrast, no less than 0.05, its powf
-// correctly rounded; the distance to other parts, what is left of the
-// closeness; the vertex colour.
+// correctly rounded, worked out in prog_run (tex_powf's one call site
+// there); the distance to other parts, what is left of the closeness; the
+// vertex colour.
 fn prog_attribute(settings: u32, c: vec4<f32>, pt: ProgPoint) -> vec4<f32> {
     switch settings & 3u {
         case 0u: {
@@ -235,7 +236,8 @@ fn prog_attribute(settings: u32, c: vec4<f32>, pt: ProgPoint) -> vec4<f32> {
             }
             return vec4<f32>(clamp(cy_exact((value - 0.5) * max(c.y, 0.0)) + 0.5, 0.0, 1.0));
         }
-        case 1u: { return vec4<f32>(tex_powf(clamp(pt.occlusion, 0.0, 1.0), c.y)); }
+        // The occlusion's powf is worked out in prog_run, once.
+        case 1u: { return vec4<f32>(0.0); }
         case 2u: { return vec4<f32>(clamp(1.0 - pt.closeness, 0.0, 1.0)); }
         default: { return vec4<f32>(pt.vertex_color, 0.0); }
     }
@@ -296,14 +298,33 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
         }
         var out = vec4<f32>(0.0);
         var out2 = vec4<f32>(0.0);
+        // A power or an arctangent an arm asks for, correctly rounded as the
+        // processor's powf and atan2f are all but rarely (textures.wgsl's
+        // tex_powf and tex_atan2), each worked out once below the arms.
+        var power = vec2<f32>(0.0);
+        var wants_power = false;
+        var angle = vec2<f32>(0.0);
+        var wants_angle = false;
+        var clamps = false;
         switch head & 0xFFu {
             case 1u: { if (prog_holds(1u)) { out = prog_point_input(settings, pt); } }
             case 2u: { if (prog_holds(2u)) {
-                var v = cy_math(settings & 0xFFu, a[0].x, a[1].x, a[2].x);
-                if ((settings & 0x100u) != 0u) {
-                    v = clamp(v, 0.0, 1.0);
+                // The Math node: a power of a number in [0, 1] to at least
+                // the first, and the arctangents (the processor's atanf is
+                // the arctangent over 1), below; the rest cy_math's.
+                let op = settings & 0xFFu;
+                let x = a[0].x;
+                let k = a[1].x;
+                if (op == 5u && x >= 1.17549435e-38 && x <= 1.0 && k >= 1.0 && k <= 3.4e38) {
+                    power = vec2<f32>(x, k);
+                    wants_power = true;
+                } else if (op == 34u || op == 35u) {
+                    angle = vec2<f32>(x, select(1.0, k, op == 35u));
+                    wants_angle = true;
+                } else {
+                    out = vec4<f32>(cy_math(op, x, k, a[2].x));
                 }
-                out = vec4<f32>(v);
+                clamps = (settings & 0x100u) != 0u;
             } }
             case 3u: { if (prog_holds(3u)) { out = cy_vector_math(settings, a[0].xyz, a[1].xyz, a[2].xyz, a[3].x); } }
             case 4u: { if (prog_holds(4u)) { out = vec4<f32>(cy_map_range(settings, a[0].x, a[1].x, a[2].x, a[3].x, a[4].x, a[5].x)); } }
@@ -356,9 +377,26 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
             } }
             case 25u: { if (prog_holds(25u)) { out = tq_instruction(settings, a); } }
             case 26u: { if (prog_holds(26u)) { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); } }
-            case 27u: { if (prog_holds(27u)) { out = prog_attribute(settings, a[0], pt); } }
+            case 27u: { if (prog_holds(27u)) {
+                if ((settings & 3u) == 1u) {
+                    // The baked occlusion's contrast, as occlusion_shape has it.
+                    power = vec2<f32>(clamp(pt.occlusion, 0.0, 1.0), a[0].y);
+                    wants_power = true;
+                } else {
+                    out = prog_attribute(settings, a[0], pt);
+                }
+            } }
             case 28u: { if (prog_holds(28u)) { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); } }
             default: {}
+        }
+        if (wants_power) {
+            out = vec4<f32>(tex_powf(power.x, power.y));
+        }
+        if (wants_angle) {
+            out = vec4<f32>(select(tex_atan2(angle.x, angle.y), 0.0, angle.x == 0.0 && angle.y == 0.0));
+        }
+        if (clamps) {
+            out = clamp(out, vec4<f32>(0.0), vec4<f32>(1.0));
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
         let second = (head >> 16u) & 0xFFu;
@@ -426,39 +464,47 @@ fn prog_write_back(p: GpuProgram, base: GpuMaterial) -> GpuMaterial {
     return prog_material_from(f, base);
 }
 
-// Vec3 / f32 as tequila-core has it: times the reciprocal.
+// Vec3 / f32 as tequila-core has it: times the reciprocal, correctly
+// rounded.
 fn prog_over(v: vec3<f32>, s: f32) -> vec3<f32> {
-    return v * (1.0 / s);
+    return v * cy_quot(1.0, s);
 }
 
 // try_normalize, or `fallback`.
 fn prog_normalized(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     let l2 = cy_dot3(v, v);
-    return select(fallback, prog_over(v, sqrt(l2)), l2 > 0.0 && l2 <= 3.4e38);
+    return select(fallback, v * (1.0 / sqrt(l2)), l2 > 0.0 && l2 <= 3.4e38);
+}
+
+// try_normalize, or `fallback`, rounded as the processor rounds it.
+fn prog_unit(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
+    let l2 = cy_dot3x(v, v);
+    return select(fallback, prog_over(v, cy_sqrt(l2)), l2 > 0.0 && l2 <= 3.4e38);
 }
 
 // The change in UV that moves a point by `offset` (surface_bump.rs
 // uv_offset): least squares on the UV derivatives.
 fn prog_uv_offset(dpdu: vec3<f32>, dpdv: vec3<f32>, offset: vec3<f32>) -> vec2<f32> {
-    let a = cy_dot3(dpdu, dpdu);
-    let b = cy_dot3(dpdu, dpdv);
-    let c = cy_dot3(dpdv, dpdv);
-    let det = a * c - b * b;
+    let a = cy_dot3x(dpdu, dpdu);
+    let b = cy_dot3x(dpdu, dpdv);
+    let c = cy_dot3x(dpdv, dpdv);
+    let det = cy_exact(a * c) - cy_exact(b * b);
     if (abs(det) < 1e-20) {
         return vec2<f32>(0.0);
     }
-    let pu = cy_dot3(dpdu, offset);
-    let pv = cy_dot3(dpdv, offset);
-    return vec2<f32>((c * pu - b * pv) / det, (a * pv - b * pu) / det);
+    let pu = cy_dot3x(dpdu, offset);
+    let pv = cy_dot3x(dpdv, offset);
+    return vec2<f32>(cy_quot(cy_exact(c * pu) - cy_exact(b * pv), det), cy_quot(cy_exact(a * pv) - cy_exact(b * pu), det));
 }
 
 // TangentFrame::from_normal's tangent: square to the normal and to Z, or
 // to X for a normal near Z.
 fn prog_normal_tangent(normal: vec3<f32>) -> vec3<f32> {
-    let n = prog_over(normal, sqrt(cy_dot3(normal, normal)));
+    let n = prog_over(normal, cy_sqrt(cy_dot3x(normal, normal)));
     let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.z) < 0.9);
+    // Across a unit axis each component is one product of a unit, exact.
     let t = cross(up, n);
-    return prog_over(t, sqrt(cy_dot3(t, t)));
+    return prog_over(t, cy_sqrt(cy_dot3x(t, t)));
 }
 
 // What the bump needs of the surface beyond the shading point: the normals,
@@ -504,10 +550,10 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
     let n = s.normal;
     var tangent = prog_normal_tangent(n);
     if (s.has_derivatives) {
-        let t = s.dpdu - n * cy_dot3(n, s.dpdu);
-        let l2 = cy_dot3(t, t);
+        let t = s.dpdu - cy_exact3(n * cy_dot3x(n, s.dpdu));
+        let l2 = cy_dot3x(t, t);
         if (l2 > 0.0 && l2 <= 3.4e38) {
-            tangent = prog_over(t, sqrt(l2));
+            tangent = prog_over(t, cy_sqrt(l2));
         }
     }
     let bitangent = cross(n, tangent);
@@ -573,10 +619,10 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
         shaded.normal = bumped;
     }
     if (runs == 3u) {
-        let along_t = (heights.x - shaded.here) / step;
-        let along_b = (heights.y - shaded.here) / step;
-        var bumped = prog_normalized(n - tangent * along_t - bitangent * along_b, n);
-        if (cy_dot3(bumped, s.geometric) <= 1e-4) {
+        let along_t = cy_quot(heights.x - shaded.here, step);
+        let along_b = cy_quot(heights.y - shaded.here, step);
+        var bumped = prog_unit(n - cy_exact3(tangent * along_t) - cy_exact3(bitangent * along_b), n);
+        if (cy_dot3x(bumped, s.geometric) <= 1e-4) {
             bumped = n;
         }
         shaded.normal = bumped;

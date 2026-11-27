@@ -39,12 +39,30 @@ fn cy_exact3(v: vec3<f32>) -> vec3<f32> {
     return bitcast<vec3<f32>>(bitcast<vec3<u32>>(v) | vec3<u32>(cy_zero));
 }
 
+fn cy_exact4(v: vec4<f32>) -> vec4<f32> {
+    return bitcast<vec4<f32>>(bitcast<vec4<u32>>(v) | vec4<u32>(cy_zero));
+}
+
 // a / b rounded as Rust rounds it: the card's quotient, corrected by its
 // remainder.
 fn cy_div(a: f32, b: f32) -> f32 {
     let q = a / b;
     let r = fma(-q, b, a);
     return fma(r, 1.0 / b, q);
+}
+
+// cy_div, and where an operand is nought or not finite, or the quotient
+// is not, the card's own, as IEEE has it there (a remainder of
+// infinities is not one).
+fn cy_quot(a: f32, b: f32) -> f32 {
+    let q = a / b;
+    let r = fma(-q, b, a);
+    let special = a == 0.0 || b == 0.0 || !(abs(a) <= 3.4e38) || !(abs(b) <= 3.4e38) || !(abs(q) <= 3.4e38);
+    return select(fma(r, 1.0 / b, q), q, special);
+}
+
+fn cy_quot4(a: vec4<f32>, b: f32) -> vec4<f32> {
+    return vec4<f32>(cy_quot(a.x, b), cy_quot(a.y, b), cy_quot(a.z, b), cy_quot(a.w, b));
 }
 
 // A vector with lane `i` set: a write by a run-time index into a vector,
@@ -142,7 +160,8 @@ fn cy_fmod(x: f32, y: f32) -> f32 {
     return bitcast<f32>(ux | sx);
 }
 
-// Sine and cosine of any argument (Cephes' sinf/cosf): reduced by quarter
+// Sine and cosine of any argument (Cephes' sinf/cosf), for the transport
+// and the Gabor (the nodes and patterns read cy_trig): reduced by quarter
 // turns in three parts, then a polynomial on [-pi/4, pi/4]. (sin, cos).
 fn cy_sincos(xx: f32) -> vec2<f32> {
     let x0 = abs(xx);
@@ -183,6 +202,44 @@ fn cy_sin(x: f32) -> f32 {
 
 fn cy_cos(x: f32) -> f32 {
     return cy_sincos(x).y;
+}
+
+// Sine and cosine as the processor's nodes and patterns have them
+// (tequila-texture's trig.rs: one implementation on both, as the platform's
+// sinf cannot be matched): Cephes' sinf and cosf, the reduction by quarter
+// turns and both polynomials in fused steps as written there. (sin, cos).
+fn cy_trig(xx: f32) -> vec2<f32> {
+    let x0 = abs(xx);
+    var j = cy_to_i32(x0 * 1.27323954473516);
+    var y = cy_u32_to_f32(u32(j));
+    if ((j & 1) != 0) {
+        j += 1;
+        y += 1.0;
+    }
+    let k = (j >> 1) & 3;
+    var x = fma(-y, 0.78515625, x0);
+    x = fma(-y, 2.4187564849853515625e-4, x);
+    x = fma(-y, 3.77489497744594108e-8, x);
+    let z = cy_exact(x * x);
+    let p = fma(fma(-1.9515295891e-4, z, 8.3321608736e-3), z, -1.6666654611e-1);
+    let s = fma(cy_exact(p * z), x, x);
+    let q = fma(fma(2.443315711809948e-5, z, -1.388731625493765e-3), z, 4.166664568298827e-2);
+    let c = fma(cy_exact(q * z), z, fma(-0.5, z, 1.0));
+    var sine: f32;
+    var cosine: f32;
+    switch k {
+        case 0: { sine = s; cosine = c; }
+        case 1: { sine = c; cosine = -s; }
+        case 2: { sine = -s; cosine = -c; }
+        default: { sine = -c; cosine = s; }
+    }
+    if (xx < 0.0) {
+        sine = -sine;
+    }
+    if (x0 != x0 || x0 > 3.4e38) {
+        return vec2<f32>(bitcast<f32>(0x7FC00000u));
+    }
+    return vec2<f32>(sine, cosine);
 }
 
 // A square root rounded as Rust rounds it: the card's, corrected by its
@@ -368,8 +425,10 @@ fn cy_pcg_unit(v: vec4<i32>, n: u32) -> vec4<f32> {
 
 // ---- Perlin noise and its fractals (noise.rs) ----------------------------
 
+// Every product an add reads through cy_exact, as Rust rounds it: the card
+// would fuse it into the add.
 fn cy_fade(t: f32) -> f32 {
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+    return cy_exact(cy_exact(t * t) * t) * (cy_exact(t * (cy_exact(t * 6.0) - 15.0)) + 10.0);
 }
 
 fn cy_negate_if(value: f32, condition: u32) -> f32 {
@@ -381,7 +440,7 @@ fn cy_grad(hash: u32, f: vec4<f32>, dims: u32) -> f32 {
         case 1u: {
             let h = hash & 15u;
             let g = 1.0 + f32(h & 7u);
-            return cy_negate_if(g, h & 8u) * f.x;
+            return cy_exact(cy_negate_if(g, h & 8u) * f.x);
         }
         case 2u: {
             let h = hash & 7u;
@@ -429,7 +488,7 @@ fn cy_perlin(p: vec4<f32>, dims: u32) -> f32 {
         for (var k = 0u; k < count; k++) {
             let a = v[2u * k];
             let b = v[2u * k + 1u];
-            v[k] = select((1.0 - s) * a + s * b, a + s * (b - a), lerp_form);
+            v[k] = select(cy_exact((1.0 - s) * a) + cy_exact(s * b), a + cy_exact(s * (b - a)), lerp_form);
         }
     }
     return v[0];
@@ -450,10 +509,10 @@ fn cy_snoise(p: vec4<f32>, dims: u32) -> f32 {
     }
     let v = cy_perlin(w, dims);
     switch dims {
-        case 1u: { return 0.25 * v; }
-        case 2u: { return 0.6616 * v; }
-        case 3u: { return 0.9820 * v; }
-        default: { return 0.8344 * v; }
+        case 1u: { return cy_exact(0.25 * v); }
+        case 2u: { return cy_exact(0.6616 * v); }
+        case 3u: { return cy_exact(0.9820 * v); }
+        default: { return cy_exact(0.8344 * v); }
     }
 }
 
@@ -504,7 +563,7 @@ fn cy_octaves_start(p: vec4<f32>, s: CyFractal) -> CyOctaves {
 
 // Where the next octave reads the noise.
 fn cy_octaves_point(st: CyOctaves, s: CyFractal) -> vec4<f32> {
-    return select(st.q, st.fscale * st.q, s.kind == 0u);
+    return select(st.q, cy_exact4(st.fscale * st.q), s.kind == 0u);
 }
 
 // One octave's noise `t` taken in, as noise.rs's loops take it.
@@ -514,7 +573,7 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
     switch s.kind {
         case 0u: {
             if (!(*st).remainder) {
-                (*st).sum += t * (*st).amp;
+                (*st).sum += cy_exact(t * (*st).amp);
                 (*st).maxamp += (*st).amp;
                 (*st).amp *= s.roughness;
                 (*st).fscale *= s.lacunarity;
@@ -524,34 +583,36 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
                         (*st).remainder = true;
                     } else {
                         (*st).done = true;
-                        (*st).value = select((*st).sum, 0.5 * (*st).sum / (*st).maxamp + 0.5, s.normalize);
+                        (*st).value = select((*st).sum, cy_exact(cy_quot(0.5 * (*st).sum, (*st).maxamp)) + 0.5, s.normalize);
                     }
                 }
             } else {
                 let sum = (*st).sum;
-                let sum2 = sum + t * (*st).amp;
+                // The sums through cy_exact too: the card's compiler would
+                // take (x + c) - (y + c) for x - y, and (s + d) - s for d.
+                let sum2 = cy_exact(sum + cy_exact(t * (*st).amp));
                 if (s.normalize) {
-                    let a = 0.5 * sum / (*st).maxamp + 0.5;
-                    let b = 0.5 * sum2 / ((*st).maxamp + (*st).amp) + 0.5;
-                    (*st).value = a + rmd * (b - a);
+                    let a = cy_exact(cy_exact(cy_quot(0.5 * sum, (*st).maxamp)) + 0.5);
+                    let b = cy_exact(cy_exact(cy_quot(0.5 * sum2, (*st).maxamp + (*st).amp)) + 0.5);
+                    (*st).value = a + cy_exact(rmd * (b - a));
                 } else {
-                    (*st).value = sum + rmd * (sum2 - sum);
+                    (*st).value = sum + cy_exact(rmd * (sum2 - sum));
                 }
                 (*st).done = true;
             }
         }
         case 1u: {
             if (!(*st).remainder) {
-                (*st).value *= (*st).pwr * t + 1.0;
+                (*st).value *= cy_exact((*st).pwr * t) + 1.0;
                 (*st).pwr *= s.roughness;
-                (*st).q = s.lacunarity * (*st).q;
+                (*st).q = cy_exact4(s.lacunarity * (*st).q);
                 (*st).i += 1;
                 if ((*st).i > whole) {
                     (*st).remainder = rmd != 0.0;
                     (*st).done = rmd == 0.0;
                 }
             } else {
-                (*st).value *= rmd * (*st).pwr * t + 1.0;
+                (*st).value *= cy_exact(rmd * (*st).pwr * t) + 1.0;
                 (*st).done = true;
             }
         }
@@ -560,9 +621,9 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
                 (*st).weight = min((*st).weight, 1.0);
                 let signal = (t + s.offset) * (*st).pwr;
                 (*st).pwr *= s.roughness;
-                (*st).value += (*st).weight * signal;
+                (*st).value += cy_exact((*st).weight * signal);
                 (*st).weight *= s.gain * signal;
-                (*st).q = s.lacunarity * (*st).q;
+                (*st).q = cy_exact4(s.lacunarity * (*st).q);
                 (*st).i += 1;
                 if (!((*st).weight > 0.001 && (*st).i <= whole)) {
                     let more = rmd != 0.0 && (*st).weight > 0.001;
@@ -572,7 +633,7 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
             } else {
                 let weight = min((*st).weight, 1.0);
                 let signal = (t + s.offset) * (*st).pwr;
-                (*st).value += rmd * weight * signal;
+                (*st).value += cy_exact(rmd * weight * signal);
                 (*st).done = true;
             }
         }
@@ -588,14 +649,14 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
                 signal *= signal;
                 signal *= weight;
                 (*st).signal = signal;
-                (*st).value += signal * (*st).pwr;
+                (*st).value += cy_exact(signal * (*st).pwr);
                 (*st).pwr *= s.roughness;
             }
             (*st).i += 1;
             if ((*st).i > whole) {
                 (*st).done = true;
             } else {
-                (*st).q = s.lacunarity * (*st).q;
+                (*st).q = cy_exact4(s.lacunarity * (*st).q);
             }
         }
         default: {
@@ -604,10 +665,10 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
                     (*st).value = s.offset + t;
                 } else {
                     let increment = (t + s.offset) * (*st).pwr * (*st).value;
-                    (*st).value += increment;
+                    (*st).value += cy_exact(increment);
                     (*st).pwr *= s.roughness;
                 }
-                (*st).q = s.lacunarity * (*st).q;
+                (*st).q = cy_exact4(s.lacunarity * (*st).q);
                 (*st).i += 1;
                 if ((*st).i > whole) {
                     (*st).remainder = rmd != 0.0;
@@ -615,7 +676,7 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
                 }
             } else {
                 let increment = (t + s.offset) * (*st).pwr * (*st).value;
-                (*st).value += rmd * increment;
+                (*st).value += cy_exact(rmd * increment);
                 (*st).done = true;
             }
         }
@@ -631,8 +692,8 @@ fn cy_octaves_step(st: ptr<function, CyOctaves>, t: f32, s: CyFractal) {
 // loop round it.
 fn cy_noise_node(settings: u32, vector: vec3<f32>, w_in: f32, scale: f32, detail: f32, roughness: f32, lacunarity: f32, offset: f32, gain: f32, distortion: f32) -> vec4<f32> {
     let dims = settings & 15u;
-    let p3 = vector * scale;
-    let w = w_in * scale;
+    let p3 = cy_exact3(vector * scale);
+    let w = cy_exact(w_in * scale);
     var p: vec4<f32>;
     switch dims {
         case 1u: { p = vec4<f32>(w, 0.0, 0.0, 0.0); }
@@ -667,7 +728,7 @@ fn cy_noise_node(settings: u32, vector: vec3<f32>, w_in: f32, scale: f32, detail
         }
         let t = cy_snoise(q, dims);
         if (distorting) {
-            d = cy_set(d, k, t * distortion);
+            d = cy_set(d, k, cy_exact(t * distortion));
             k += 1u;
             if (k == dims) {
                 p = p + d;
@@ -747,14 +808,14 @@ fn cy_cell_distance(a: vec4<f32>, b: vec4<f32>, p: CyVoronoi) -> vec2<f32> {
     for (var i = 0u; i < p.dims; i++) {
         let d = a[i] - b[i];
         switch p.metric {
-            case 0u: { sum += d * d; }
+            case 0u: { sum += cy_exact(d * d); }
             case 1u: { sum += abs(d); }
             case 2u: { most = max(most, abs(d)); }
             default: { sum += cy_powf(abs(d), p.exponent); }
         }
     }
     switch p.metric {
-        case 0u: { return vec2<f32>(sum, sqrt(sum)); }
+        case 0u: { return vec2<f32>(sum, cy_sqrt(sum)); }
         case 1u: { return vec2<f32>(sum); }
         case 2u: { return vec2<f32>(most); }
         default: { return vec2<f32>(sum, cy_powf(sum, 1.0 / p.exponent)); }
@@ -764,7 +825,7 @@ fn cy_cell_distance(a: vec4<f32>, b: vec4<f32>, p: CyVoronoi) -> vec2<f32> {
 fn cy_dot_n(a: vec4<f32>, b: vec4<f32>, dims: u32) -> f32 {
     var sum = 0.0;
     for (var i = 0u; i < dims; i++) {
-        sum += a[i] * b[i];
+        sum += cy_exact(a[i] * b[i]);
     }
     return sum;
 }
@@ -781,12 +842,12 @@ fn cy_cell_point(cellf: vec4<f32>, cell: vec4<i32>, offset: vec4<i32>, p: CyVoro
         if (offset.x == 0) {
             key = select(select(cellf.x, 0.0, cellf.x == 0.0), cellf.x, p.feature == 3u);
         }
-        return vec4<f32>(o + cy_hashf(vec4<f32>(key, 0.0, 0.0, 0.0), 1u) * p.randomness, 0.0, 0.0, 0.0);
+        return vec4<f32>(o + cy_exact(cy_hashf(vec4<f32>(key, 0.0, 0.0, 0.0), 1u) * p.randomness), 0.0, 0.0, 0.0);
     }
     let j = cy_pcg_unit(cell + offset, p.dims);
     var out = vec4<f32>(0.0);
     for (var i = 0u; i < p.dims; i++) {
-        out = cy_set(out, i, f32(offset[i]) + j[i] * p.randomness);
+        out = cy_set(out, i, f32(offset[i]) + cy_exact(j[i] * p.randomness));
     }
     return out;
 }
@@ -860,8 +921,8 @@ fn cy_smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 // values, but the lanes by constant index and no step of the general walk's
 // bookkeeping - the Headphones' grains spent most of their render here
 // (docs/07 R3, G1.1). Its answer is the general walk's to the bit
-// (tests/graphs.rs): each square is fused into the sum before it, as the
-// card fuses the general walk's loop.
+// (tests/graphs.rs), and the processor's: each square rounded, then added,
+// as Rust has them.
 fn cy_cells3(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
     let cellf = floor(coord);
     let local = (coord - cellf).xyz;
@@ -890,10 +951,10 @@ fn cy_cells3(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
             for (var ox = -reach; ox <= reach; ox++) {
                 let o = vec3<i32>(ox, oy, oz);
                 let j = cy_pcg_unit(vec4<i32>(cell + o, 0), 3u);
-                let point = vec3<f32>(f32(ox) + j.x * p.randomness, f32(oy) + j.y * p.randomness, f32(oz) + j.z * p.randomness);
+                let point = vec3<f32>(f32(ox), f32(oy), f32(oz)) + cy_exact3(j.xyz * p.randomness);
                 let e = point - local;
-                let sum = fma(e.z, e.z, fma(e.y, e.y, e.x * e.x));
-                let d = vec2<f32>(sum, sqrt(sum));
+                let sum = cy_exact(cy_exact(e.x * e.x) + cy_exact(e.y * e.y)) + cy_exact(e.z * e.z);
+                let d = vec2<f32>(sum, cy_sqrt(sum));
                 if (mode == 0u) {
                     if (d.x < best) {
                         best_offset = o;
@@ -918,15 +979,15 @@ fn cy_cells3(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
                     if (h == -1.0) {
                         h = 1.0;
                     } else {
-                        h = cy_smoothstep(0.0, 1.0, 0.5 + 0.5 * (smooth_distance - d.y) / p.smoothness);
+                        h = cy_smoothstep(0.0, 1.0, 0.5 + cy_quot(0.5 * (smooth_distance - d.y), p.smoothness));
                     }
                     correction = p.smoothness * h * (1.0 - h);
-                    smooth_distance = smooth_distance + h * (d.y - smooth_distance) - correction;
-                    correction /= 1.0 + 3.0 * p.smoothness;
-                    smooth_position = smooth_position + h * (point - smooth_position) - vec3<f32>(correction);
+                    smooth_distance = smooth_distance + cy_exact(h * (d.y - smooth_distance)) - correction;
+                    correction = cy_quot(correction, 1.0 + cy_exact(3.0 * p.smoothness));
+                    smooth_position = smooth_position + cy_exact3(h * (point - smooth_position)) - vec3<f32>(correction);
                     if (colour_along) {
                         let color = cy_pcg_unit(vec4<i32>(cell + o, 0), 3u).xyz;
-                        smooth_color = smooth_color + h * (color - smooth_color) - vec3<f32>(correction);
+                        smooth_color = smooth_color + cy_exact3(h * (color - smooth_color)) - vec3<f32>(correction);
                     }
                 }
             }
@@ -1045,12 +1106,12 @@ fn cy_cells_general(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
                     if (h == -1.0) {
                         h = 1.0;
                     } else {
-                        h = cy_smoothstep(0.0, 1.0, 0.5 + 0.5 * (smooth_distance - d.y) / p.smoothness);
+                        h = cy_smoothstep(0.0, 1.0, 0.5 + cy_quot(0.5 * (smooth_distance - d.y), p.smoothness));
                     }
                     correction = p.smoothness * h * (1.0 - h);
-                    smooth_distance = smooth_distance + h * (d.y - smooth_distance) - correction;
-                    correction /= 1.0 + 3.0 * p.smoothness;
-                    smooth_position = smooth_position + h * (point - smooth_position) - vec4<f32>(correction);
+                    smooth_distance = smooth_distance + cy_exact(h * (d.y - smooth_distance)) - correction;
+                    correction = cy_quot(correction, 1.0 + cy_exact(3.0 * p.smoothness));
+                    smooth_position = smooth_position + cy_exact4(h * (point - smooth_position)) - vec4<f32>(correction);
                 }
             } else if (mode == 3u) {
                 if (p.dims == 1u) {
@@ -1071,9 +1132,9 @@ fn cy_cells_general(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
                     let perpendicular = v - best_point;
                     let len2 = cy_dot_n(perpendicular, perpendicular, p.dims);
                     if (len2 > 0.0001) {
-                        let len = sqrt(len2);
-                        let mid = (best_point + v) / 2.0;
-                        let unit = perpendicular / len;
+                        let len = cy_sqrt(len2);
+                        let mid = (best_point + v) * 0.5;
+                        let unit = vec4<f32>(cy_quot(perpendicular.x, len), cy_quot(perpendicular.y, len), cy_quot(perpendicular.z, len), cy_quot(perpendicular.w, len));
                         second = min(second, cy_dot_n(mid, unit, p.dims));
                     }
                 }
@@ -1098,7 +1159,7 @@ fn cy_cells_general(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
         if (colour_now || (colour_along && n < total)) {
             let color = cy_cell_color(cellf, cell, at, p.dims);
             if (mode == 2u) {
-                smooth_color = smooth_color + h * (color - smooth_color) - vec3<f32>(correction);
+                smooth_color = smooth_color + cy_exact3(h * (color - smooth_color)) - vec3<f32>(correction);
             } else {
                 out.color = color;
             }
@@ -1122,14 +1183,14 @@ fn cy_cells_general(coord: vec4<f32>, p: CyVoronoi) -> CyCells {
         }
         case 3u: {
             if (p.dims == 1u) {
-                out.distance = min(abs((line.y + line.x) / 2.0 - local.x), abs((line.y + line.z) / 2.0 - local.x));
+                out.distance = min(abs((line.y + line.x) * 0.5 - local.x), abs((line.y + line.z) * 0.5 - local.x));
             } else {
                 out.distance = second;
             }
         }
         default: {
             let gap = second_point - best_point;
-            out.distance = select(sqrt(cy_dot_n(gap, gap, p.dims)), abs(gap.x), p.dims == 1u) / 2.0;
+            out.distance = select(cy_sqrt(cy_dot_n(gap, gap, p.dims)), abs(gap.x), p.dims == 1u) * 0.5;
         }
     }
     if (p.dims == 1u) {
@@ -1204,7 +1265,7 @@ fn cy_voronoi_node(settings: u32, vector: vec3<f32>, w_in: f32, scale: f32, deta
         if (!(f32(i) <= top)) {
             break;
         }
-        let octave = cy_cells(coord * octave_scale, p);
+        let octave = cy_cells(cy_exact4(coord * octave_scale), p);
         if (radius) {
             distance = octave.distance;
             break;
@@ -1218,28 +1279,28 @@ fn cy_voronoi_node(settings: u32, vector: vec3<f32>, w_in: f32, scale: f32, deta
         }
         if (f32(i) <= p.detail) {
             if (edge) {
-                max_amplitude = max_amplitude + amplitude * (p.max_distance / octave_scale - max_amplitude);
-                distance = distance + amplitude * (min(distance, octave.distance / octave_scale) - distance);
+                max_amplitude = max_amplitude + cy_exact(amplitude * (cy_quot(p.max_distance, octave_scale) - max_amplitude));
+                distance = distance + cy_exact(amplitude * (min(distance, cy_quot(octave.distance, octave_scale)) - distance));
             } else {
                 max_amplitude += amplitude;
-                distance += octave.distance * amplitude;
-                color += octave.color * amplitude;
-                position = position + amplitude * (octave.position / octave_scale - position);
+                distance += cy_exact(octave.distance * amplitude);
+                color += cy_exact3(octave.color * amplitude);
+                position = position + cy_exact4(amplitude * (cy_quot4(octave.position, octave_scale) - position));
             }
             octave_scale *= p.lacunarity;
             amplitude *= p.roughness;
         } else if (remainder != 0.0) {
             if (edge) {
-                let lerp_amplitude = max_amplitude + amplitude * (p.max_distance / octave_scale - max_amplitude);
-                max_amplitude = max_amplitude + remainder * (lerp_amplitude - max_amplitude);
-                let lerp_distance = distance + amplitude * (min(distance, octave.distance / octave_scale) - distance);
-                distance = distance + remainder * (min(distance, lerp_distance) - distance);
+                let lerp_amplitude = cy_exact(max_amplitude + cy_exact(amplitude * (cy_quot(p.max_distance, octave_scale) - max_amplitude)));
+                max_amplitude = max_amplitude + cy_exact(remainder * (lerp_amplitude - max_amplitude));
+                let lerp_distance = cy_exact(distance + cy_exact(amplitude * (min(distance, cy_quot(octave.distance, octave_scale)) - distance)));
+                distance = distance + cy_exact(remainder * (min(distance, lerp_distance) - distance));
             } else {
-                max_amplitude = max_amplitude + remainder * (max_amplitude + amplitude - max_amplitude);
-                distance = distance + remainder * (distance + octave.distance * amplitude - distance);
-                color = color + remainder * (color + octave.color * amplitude - color);
-                let toward = position + amplitude * (octave.position / octave_scale - position);
-                position = position + remainder * (toward - position);
+                max_amplitude = max_amplitude + cy_exact(remainder * (cy_exact(max_amplitude + amplitude) - max_amplitude));
+                distance = distance + cy_exact(remainder * (cy_exact(distance + cy_exact(octave.distance * amplitude)) - distance));
+                color = color + cy_exact3(remainder * (cy_exact3(color + cy_exact3(octave.color * amplitude)) - color));
+                let toward = cy_exact4(position + cy_exact4(amplitude * (cy_quot4(octave.position, octave_scale) - position)));
+                position = position + cy_exact4(remainder * (toward - position));
             }
         }
         i++;
@@ -1253,17 +1314,17 @@ fn cy_voronoi_node(settings: u32, vector: vec3<f32>, w_in: f32, scale: f32, deta
     }
     if (edge) {
         if (p.normalize) {
-            distance /= max_amplitude;
+            distance = cy_quot(distance, max_amplitude);
         }
         out.a.w = distance;
         return out;
     }
     if (p.normalize) {
-        distance /= max_amplitude * p.max_distance;
-        color /= max_amplitude;
+        distance = cy_quot(distance, max_amplitude * p.max_distance);
+        color = vec3<f32>(cy_quot(color.x, max_amplitude), cy_quot(color.y, max_amplitude), cy_quot(color.z, max_amplitude));
     }
     if (p.scale != 0.0) {
-        position = position / p.scale;
+        position = cy_quot4(position, p.scale);
     } else {
         position = vec4<f32>(0.0);
     }
@@ -1332,7 +1393,7 @@ fn cy_math(op: u32, a: f32, b: f32, c: f32) -> f32 {
     // Sine, cosine and tangent from one reduction, in one place.
     var sc = vec2<f32>(0.0, 1.0);
     if (op >= 29u && op <= 31u) {
-        sc = cy_sincos(a);
+        sc = cy_trig(a);
     }
     switch op {
         case 0u: { return a + b; }
@@ -1369,7 +1430,7 @@ fn cy_math(op: u32, a: f32, b: f32, c: f32) -> f32 {
         case 28u: { return cy_pingpong(a, b); }
         case 29u: { return sc.x; }
         case 30u: { return sc.y; }
-        case 31u: { return sc.x / sc.y; }
+        case 31u: { return cy_quot(sc.x, sc.y); }
         case 32u: { return asin(clamp(a, -1.0, 1.0)); }
         case 33u: { return acos(clamp(a, -1.0, 1.0)); }
         case 34u: { return cy_atan(a); }
@@ -1383,12 +1444,17 @@ fn cy_math(op: u32, a: f32, b: f32, c: f32) -> f32 {
 }
 
 fn cy_safe_normalize(v: vec3<f32>) -> vec3<f32> {
-    let t = sqrt(dot(v, v));
-    return select(v, v * (1.0 / t), t != 0.0);
+    let t = cy_sqrt(cy_dot3x(v, v));
+    return select(v, v * cy_quot(1.0, t), t != 0.0);
 }
 
 fn cy_dot3(a: vec3<f32>, b: vec3<f32>) -> f32 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// The dot product with each product rounded as Rust rounds it.
+fn cy_dot3x(a: vec3<f32>, b: vec3<f32>) -> f32 {
+    return cy_exact(a.x * b.x) + cy_exact(a.y * b.y) + cy_exact(a.z * b.z);
 }
 
 // One component of the Vector Math operations that work component by
@@ -1397,7 +1463,7 @@ fn cy_dot3(a: vec3<f32>, b: vec3<f32>) -> f32 {
 fn cy_vector_component(op: u32, a: f32, b: f32, c: f32) -> f32 {
     var sc = vec2<f32>(0.0, 1.0);
     if (op >= 26u) {
-        sc = cy_sincos(a);
+        sc = cy_trig(a);
     }
     switch op {
         case 3u: { return cy_safe_divide(a, b); }
@@ -1408,7 +1474,7 @@ fn cy_vector_component(op: u32, a: f32, b: f32, c: f32) -> f32 {
         case 25u: { return floor(select(0.0, cy_div(a, b), b != 0.0)) * b; }
         case 26u: { return sc.x; }
         case 27u: { return sc.y; }
-        default: { return sc.x / sc.y; }
+        default: { return cy_quot(sc.x, sc.y); }
     }
 }
 
@@ -1427,29 +1493,29 @@ fn cy_vector_math(op: u32, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, param: f32)
         case 1u: { return vec4<f32>(a - b, 0.0); }
         case 2u: { return vec4<f32>(a * b, 0.0); }
         case 4u: { return vec4<f32>(cy_exact3(a * b) + c, 0.0); }
-        case 5u: { return vec4<f32>(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x, 0.0); }
+        case 5u: { return vec4<f32>(cy_exact(a.y * b.z) - cy_exact(a.z * b.y), cy_exact(a.z * b.x) - cy_exact(a.x * b.z), cy_exact(a.x * b.y) - cy_exact(a.y * b.x), 0.0); }
         case 6u: {
-            let l2 = cy_dot3(b, b);
-            return vec4<f32>(select(vec3<f32>(0.0), b * (cy_dot3(a, b) / l2), l2 != 0.0), 0.0);
+            let l2 = cy_dot3x(b, b);
+            return vec4<f32>(select(vec3<f32>(0.0), b * cy_quot(cy_dot3x(a, b), l2), l2 != 0.0), 0.0);
         }
         case 7u: {
             let n = cy_safe_normalize(b);
-            return vec4<f32>(a - n * (2.0 * cy_dot3(a, n)), 0.0);
+            return vec4<f32>(a - cy_exact3(n * (2.0 * cy_dot3x(a, n))), 0.0);
         }
         case 8u: {
             let n = cy_safe_normalize(b);
             let eta = param;
-            let d = cy_dot3(n, a);
-            let k = 1.0 - eta * eta * (1.0 - d * d);
-            return vec4<f32>(select(a * eta - n * (eta * d + sqrt(k)), vec3<f32>(0.0), k < 0.0), 0.0);
+            let d = cy_dot3x(n, a);
+            let k = 1.0 - cy_exact(eta * eta * (1.0 - cy_exact(d * d)));
+            return vec4<f32>(select(cy_exact3(a * eta) - cy_exact3(n * (cy_exact(eta * d) + cy_sqrt(k))), vec3<f32>(0.0), k < 0.0), 0.0);
         }
-        case 9u: { return vec4<f32>(select(-a, a, cy_dot3(c, b) < 0.0), 0.0); }
-        case 10u: { return vec4<f32>(cy_dot3(a, b)); }
+        case 9u: { return vec4<f32>(select(-a, a, cy_dot3x(c, b) < 0.0), 0.0); }
+        case 10u: { return vec4<f32>(cy_dot3x(a, b)); }
         case 11u: {
             let d = a - b;
-            return vec4<f32>(sqrt(cy_dot3(d, d)));
+            return vec4<f32>(cy_sqrt(cy_dot3x(d, d)));
         }
-        case 12u: { return vec4<f32>(sqrt(cy_dot3(a, a))); }
+        case 12u: { return vec4<f32>(cy_sqrt(cy_dot3x(a, a))); }
         case 13u: { return vec4<f32>(a * param, 0.0); }
         case 14u: { return vec4<f32>(cy_safe_normalize(a), 0.0); }
         case 15u: { return vec4<f32>(abs(a), 0.0); }
@@ -1709,7 +1775,7 @@ fn cy_mapping_node(kind: u32, vector: vec3<f32>, location: vec3<f32>, rotation: 
     var sines = vec4<f32>(0.0);
     var cosines = vec4<f32>(1.0);
     for (var i = 0u; i < 3u; i++) {
-        let sc = cy_sincos(rotation[i]);
+        let sc = cy_trig(rotation[i]);
         sines = cy_set(sines, i, sc.x);
         cosines = cy_set(cosines, i, sc.y);
     }
@@ -1719,28 +1785,28 @@ fn cy_mapping_node(kind: u32, vector: vec3<f32>, location: vec3<f32>, rotation: 
     let cx = cosines.x;
     let cy = cosines.y;
     let cz = cosines.z;
-    let r0 = vec3<f32>(cy * cz, sy * sx * cz - cx * sz, sy * cx * cz + sx * sz);
-    let r1 = vec3<f32>(cy * sz, sy * sx * sz + cx * cz, sy * cx * sz - sx * cz);
+    let r0 = vec3<f32>(cy * cz, cy_exact(sy * sx * cz) - cy_exact(cx * sz), cy_exact(sy * cx * cz) + cy_exact(sx * sz));
+    let r1 = vec3<f32>(cy * sz, cy_exact(sy * sx * sz) + cy_exact(cx * cz), cy_exact(sy * cx * sz) - cy_exact(sx * cz));
     let r2 = vec3<f32>(-sy, cy * sx, cy * cx);
     switch kind {
         case 0u: {
             let v = vector * scale;
-            return vec3<f32>(cy_dot3(r0, v), cy_dot3(r1, v), cy_dot3(r2, v)) + location;
+            return vec3<f32>(cy_dot3x(r0, v), cy_dot3x(r1, v), cy_dot3x(r2, v)) + location;
         }
         case 1u: {
             let v = vector - location;
-            let t = vec3<f32>(r0.x * v.x + r1.x * v.y + r2.x * v.z, r0.y * v.x + r1.y * v.y + r2.y * v.z, r0.z * v.x + r1.z * v.y + r2.z * v.z);
+            let t = vec3<f32>(cy_dot3x(vec3<f32>(r0.x, r1.x, r2.x), v), cy_dot3x(vec3<f32>(r0.y, r1.y, r2.y), v), cy_dot3x(vec3<f32>(r0.z, r1.z, r2.z), v));
             return vec3<f32>(cy_safe_divide(t.x, scale.x), cy_safe_divide(t.y, scale.y), cy_safe_divide(t.z, scale.z));
         }
         case 2u: {
             let v = vector * scale;
-            return vec3<f32>(cy_dot3(r0, v), cy_dot3(r1, v), cy_dot3(r2, v));
+            return vec3<f32>(cy_dot3x(r0, v), cy_dot3x(r1, v), cy_dot3x(r2, v));
         }
         default: {
             let s = vec3<f32>(cy_safe_divide(vector.x, scale.x), cy_safe_divide(vector.y, scale.y), cy_safe_divide(vector.z, scale.z));
-            let v = vec3<f32>(cy_dot3(r0, s), cy_dot3(r1, s), cy_dot3(r2, s));
-            let t = sqrt(cy_dot3(v, v));
-            return select(v, v * (1.0 / t), t != 0.0);
+            let v = vec3<f32>(cy_dot3x(r0, s), cy_dot3x(r1, s), cy_dot3x(r2, s));
+            let t = cy_sqrt(cy_dot3x(v, v));
+            return select(v, v * cy_quot(1.0, t), t != 0.0);
         }
     }
 }
