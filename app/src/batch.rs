@@ -7345,7 +7345,9 @@ mod tests {
                 render.scene = Arc::new(scene);
                 render.config = IntegratorConfig::product();
                 renderer.submit(render);
-                match wait_for_finish(&renderer) {
+                // Larger and longer than a test's pictures: a debug build takes
+                // minutes over one.
+                match wait_for_finish_within(&renderer, Duration::from_secs(1800)) {
                     BatchEvent::Finished { preview, .. } => images.push(preview),
                     BatchEvent::Failed { message, .. } => panic!("{message}"),
                     _ => unreachable!(),
@@ -8389,7 +8391,11 @@ mod tests {
     }
 
     fn wait_for_finish(renderer: &BatchRenderer) -> BatchEvent {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        wait_for_finish_within(renderer, Duration::from_secs(120))
+    }
+
+    fn wait_for_finish_within(renderer: &BatchRenderer, time: Duration) -> BatchEvent {
+        let deadline = Instant::now() + time;
         loop {
             for event in renderer.drain() {
                 match event {
