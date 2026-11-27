@@ -14,6 +14,23 @@
 //! Geometry's Normal, world up; and the ray's footprint is Light Path's Ray
 //! Length times the angle a pixel spans, which is how Tequila's renderer
 //! measures it (`SceneSnapshot::shading_point_at`).
+//!
+//! # Room on the stack
+//!
+//! Scratches draw eight candidates per layer, some two hundred nodes each,
+//! and Cycles' SVM has 255 places on its stack for everything a shader
+//! holds at once. Two things about how Cycles (as Tequila ships it, Blender
+//! 5.0.1's) compiles a graph decide whether that fits. It generates nodes in
+//! sweeps in the order they were made, a node waiting for the next sweep if
+//! anything it reads is not done yet; and a link between sockets of two
+//! types gets a conversion node made then, after the node it feeds, so that
+//! node waits a sweep. With a wait in each candidate every candidate gets as
+//! far as its wait in one sweep, all eight holding what they have worked
+//! out, and the shader runs out of room. So every conversion here is made
+//! before the node it feeds ([`Nodes::as_kind`]), and the graph is
+//! generated in one sweep, a candidate at a time. And White Noise keeps a
+//! place for its Value whether it is read or not, for good, so the patterns
+//! read every White Noise's Value as well as its Color.
 
 use std::collections::HashMap;
 
@@ -34,6 +51,47 @@ pub(super) enum Vector {
     Link(Node, &'static str),
 }
 
+/// What a socket holds, as Cycles types it: links between two kinds take a
+/// conversion node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Kind {
+    Vector,
+    Point,
+    Normal,
+    Color,
+}
+
+impl Kind {
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Vector => "vector",
+            Kind::Point => "point",
+            Kind::Normal => "normal",
+            Kind::Color => "color",
+        }
+    }
+
+    /// A conversion node's socket of this kind.
+    fn socket(self) -> &'static str {
+        match self {
+            Kind::Vector => "value_vector",
+            Kind::Point => "value_point",
+            Kind::Normal => "value_normal",
+            Kind::Color => "value_color",
+        }
+    }
+
+    /// The kind of the output `name` of the nodes these patterns read.
+    fn of_output(name: &str) -> Kind {
+        match name {
+            "Color" | "value_color" => Kind::Color,
+            "Normal" | "value_normal" => Kind::Normal,
+            "Object" | "Position" | "UV" | "Generated" | "value_point" => Kind::Point,
+            _ => Kind::Vector,
+        }
+    }
+}
+
 /// The patterns' arithmetic, as nodes of one shader.
 struct Nodes<'b, 'a> {
     builder: &'b mut Builder<'a>,
@@ -44,6 +102,10 @@ struct Nodes<'b, 'a> {
     mapping: Option<&'b Mapping>,
     /// Each vector's Separate XYZ, made once.
     split: HashMap<(Node, &'static str), Node>,
+    /// Each vector as another kind, converted once.
+    converted: HashMap<(Node, &'static str, Kind), Node>,
+    /// Outputs whose kind their name does not say.
+    kinds: HashMap<(Node, &'static str), Kind>,
     /// The first thing that went wrong: the arithmetic carries on with
     /// stand-ins, and this is what the pattern answers.
     failed: Option<String>,
@@ -107,6 +169,7 @@ impl Nodes<'_, '_> {
     /// A Vector Math node of `op` on up to three vectors and a scale, its
     /// Vector output (or its Value, for those that give a number).
     fn vector_node(&mut self, op: &str, vectors: &[Vector], scale: Option<Slot>) -> Option<Node> {
+        let vectors: Vec<Vector> = vectors.iter().map(|v| self.as_kind(*v, Kind::Vector)).collect();
         let node = self.node("vector_math")?;
         let result = self.builder.session.set_string(node, "math_type", op);
         self.check(result, ());
@@ -178,7 +241,12 @@ impl Ops for Nodes<'_, '_> {
     fn position(&mut self) -> Vector {
         let result = self.builder.procedural_position(self.shader, self.mapping);
         match self.check(result.map(Some), None) {
-            Some((node, output)) => Vector::Link(node, output),
+            Some((node, output)) => {
+                // Through a mapping, a Mapping node's Vector, which is a
+                // point; else Vector Math's.
+                self.kinds.insert((node, output), if self.mapped() { Kind::Point } else { Kind::Vector });
+                Vector::Link(node, output)
+            }
             None => Vector::Known(Vec3::ZERO),
         }
     }
@@ -195,9 +263,10 @@ impl Ops for Nodes<'_, '_> {
         if self.mapped() {
             return Slot::Value(Value::Float(1.0));
         }
-        // Cycles' world is Z up.
+        // Cycles' world is Z up: the normal's z, as a dot product, which
+        // (unlike Separate XYZ) keeps no place for what it does not give.
         let Some(geometry) = self.node("geometry") else { return self.zero() };
-        Slot::Link(self.split_of((geometry, "Normal")).unwrap_or(geometry), "Z")
+        self.dot(Vector::Link(geometry, "Normal"), Vector::Known(Vec3::Z))
     }
 
     fn footprint(&mut self) -> Slot {
@@ -356,15 +425,16 @@ impl Ops for Nodes<'_, '_> {
         }
     }
 
-    fn white(&mut self, key: Vector) -> Vector {
+    fn white(&mut self, key: Vector) -> (Vector, Slot) {
         if let Vector::Known(k) = key {
-            return Vector::Known(numbers().white(k));
+            let (colour, value) = numbers().white(k);
+            return (Vector::Known(colour), Slot::Value(Value::Float(value)));
         }
-        let Some(key) = self.linked(key) else { return Vector::Known(Vec3::ZERO) };
+        let Some(key) = self.as_point(key) else { return (Vector::Known(Vec3::ZERO), self.zero()) };
         let result = self.builder.white(self.shader, key);
         match self.check(result.map(Some), None) {
-            Some(node) => Vector::Link(node, "Color"),
-            None => Vector::Known(Vec3::ZERO),
+            Some(node) => (Vector::Link(node, "Color"), Slot::Link(node, "Value")),
+            None => (Vector::Known(Vec3::ZERO), self.zero()),
         }
     }
 
@@ -372,6 +442,7 @@ impl Ops for Nodes<'_, '_> {
         if let Vector::Known(p) = p {
             return Slot::Value(Value::Float(numbers().noise(p, detail, roughness)));
         }
+        let p = self.as_kind(p, Kind::Point);
         let Some(node) = self.node("noise_texture") else { return self.zero() };
         for (socket, value) in [("scale", 1.0), ("detail", detail), ("roughness", roughness), ("lacunarity", 2.0)] {
             let result = self.builder.session.set_float(node, socket, value);
@@ -386,7 +457,7 @@ impl Ops for Nodes<'_, '_> {
             let (d, c, at) = numbers().voronoi(p);
             return (Slot::Value(Value::Float(d)), Vector::Known(c), Vector::Known(at));
         }
-        let Some(placed) = self.linked(p) else { return (self.zero(), Vector::Known(Vec3::ZERO), Vector::Known(Vec3::ZERO)) };
+        let Some(placed) = self.as_point(p) else { return (self.zero(), Vector::Known(Vec3::ZERO), Vector::Known(Vec3::ZERO)) };
         let result = self.builder.voronoi(self.shader, placed, "euclidean", "f1");
         match self.check(result.map(Some), None) {
             Some(node) => (Slot::Link(node, "Distance"), Vector::Link(node, "Color"), Vector::Link(node, "Position")),
@@ -405,10 +476,44 @@ impl Nodes<'_, '_> {
         if let Some(split) = self.split.get(&from) {
             return Some(*split);
         }
-        let result = self.builder.split(self.shader, from);
+        // Separate XYZ reads a colour.
+        let Vector::Link(node, output) = self.as_kind(Vector::Link(from.0, from.1), Kind::Color) else { return None };
+        let result = self.builder.split(self.shader, (node, output));
         let split = self.check(result.map(Some), None)?;
         self.split.insert(from, split);
         Some(split)
+    }
+
+    fn kind(&self, node: Node, output: &'static str) -> Kind {
+        self.kinds.get(&(node, output)).copied().unwrap_or_else(|| Kind::of_output(output))
+    }
+
+    /// `v` as a `kind`: through a conversion node made now, before the node
+    /// it will feed, rather than the one Cycles would make when the two are
+    /// linked, after it (see the module's notes).
+    fn as_kind(&mut self, v: Vector, kind: Kind) -> Vector {
+        let Vector::Link(node, output) = v else { return v };
+        let from = self.kind(node, output);
+        if from == kind {
+            return v;
+        }
+        if let Some(convert) = self.converted.get(&(node, output, kind)) {
+            return Vector::Link(*convert, kind.socket());
+        }
+        let Some(convert) = self.node(&format!("convert_{}_to_{}", from.name(), kind.name())) else { return v };
+        let result = self.builder.session.connect(self.shader, node, output, convert, from.socket());
+        self.check(result, ());
+        self.converted.insert((node, output, kind), convert);
+        Vector::Link(convert, kind.socket())
+    }
+
+    /// A node output holding `v` as a point, for a texture to read.
+    fn as_point(&mut self, v: Vector) -> Option<(Node, &'static str)> {
+        let linked = self.linked(v)?;
+        match self.as_kind(Vector::Link(linked.0, linked.1), Kind::Point) {
+            Vector::Link(node, output) => Some((node, output)),
+            Vector::Known(_) => None,
+        }
     }
 }
 
@@ -416,7 +521,7 @@ impl Builder<'_> {
     /// A wear pattern, as Tequila's renderer evaluates it
     /// (`Procedural::evaluate_at`); `None` for any other pattern.
     pub(super) fn wear(&mut self, shader: Shader, procedural: &Procedural, seed: u32, mapping: Option<&Mapping>) -> Result<Option<Slot>, String> {
-        let mut nodes = Nodes { builder: self, shader, mapping, split: HashMap::new(), failed: None };
+        let mut nodes = Nodes { builder: self, shader, mapping, split: HashMap::new(), converted: HashMap::new(), kinds: HashMap::new(), failed: None };
         let slot = match procedural {
             Procedural::WearScratches(s) => wear::scratches(&mut nodes, s, seed),
             Procedural::Dust(d) => wear::dust(&mut nodes, d, seed),

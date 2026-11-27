@@ -179,3 +179,89 @@ fn every_kind_of_scratches_fits_cycles() {
     }
     assert!(wrong.is_empty(), "scratches that differ: {wrong:#?}");
 }
+
+/// Cycles' shader stack has room for 255 numbers, and a shader that needs
+/// more draws black: the heaviest wear materials there are fit, with room
+/// to spare - three layers of scratches each way, every pattern at once,
+/// and patterns on a bump (which Cycles works out three times over, at the
+/// point and a step to each side).
+#[test]
+fn heavy_wear_materials_fit_cycles_stack() {
+    use tequila_texture::wear::EdgeWear;
+    if let Err(why) = tequila_render_cycles::available() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let scratches = |direction: ScratchDirection| Procedural::WearScratches(Scratches { frequency: 25.0, width: 0.012, density: 1.0, direction, layers: 3, ..Scratches::default() });
+    let dust = Procedural::Dust(Dust { speck_frequency: 300.0, specks: 0.8, ..Dust::default() });
+    let prints = Procedural::Fingerprints(Fingerprints { frequency: 12.0, prints: 0.9, ..Fingerprints::default() });
+    let scuffs = Procedural::Scuffs(Scuffs { frequency: 10.0, coverage: 0.9, ..Scuffs::default() });
+    let edges = Procedural::EdgeWear(EdgeWear::default());
+    let every = [scratches(ScratchDirection::Random), dust, prints, scuffs, edges];
+    let cases: Vec<(&str, Vec<Procedural>, bool)> = vec![
+        ("three layers each way", vec![scratches(ScratchDirection::Random), scratches(ScratchDirection::Swirl), scratches(ScratchDirection::AlongX)], false),
+        ("every pattern", every.to_vec(), false),
+        ("every pattern, on a bump too", every.to_vec(), true),
+    ];
+    let mut black = Vec::new();
+    for (name, patterns, bump) in cases {
+        // Glowing as bright as the patterns add up to, or (on a bump) a
+        // grey plastic coloured by them under a white sky, bumped by them.
+        let kind = if bump { MaterialType::Plastic } else { MaterialType::Flat };
+        let mut graph = MaterialGraph::from_material(kind.defaults());
+        let mut last = None;
+        for (i, p) in patterns.iter().enumerate() {
+            let node = graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(*p), seed: SEED + i as u32 }));
+            last = Some(match last {
+                None => node,
+                Some(previous) => {
+                    let add = graph.add_node(Node::new(NodeKind::Add));
+                    graph.connect(previous, add, Socket::Input(0));
+                    graph.connect(node, add, Socket::Input(1));
+                    add
+                }
+            });
+        }
+        let last = last.expect("a pattern");
+        let output = graph.output();
+        if bump {
+            graph.connect(last, output, Socket::Param(Param::BaseColor));
+            graph.connect(last, output, Socket::Param(Param::Bump));
+        } else {
+            graph.connect(last, output, Socket::Param(Param::EmissionColor));
+        }
+        let program = graph.compile().expect("compiles");
+        let sky = if bump { Spectrum::ONE } else { Spectrum::ZERO };
+        let scene = SceneSnapshot::new(
+            vec![Arc::new(tile())],
+            vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))],
+            vec![graph.material().clone()],
+            Arc::new(Environment::uniform(sky)),
+        )
+        .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+        let lighting = IntegratorConfig::product();
+        let view = translate::View {
+            camera: camera(),
+            width: 32,
+            height: 32,
+            transparent: false,
+            ground_illumination: false,
+            light_materials: true,
+            light_groups: false,
+            shadow_glass: lighting.shadow_glass(),
+            manifold_caustics: false,
+        };
+        let mut session = Session::new("CPU", 0, None).expect("a Cycles session");
+        translate::build(&mut session, &scene, &view).expect("translates");
+        translate::configure(&mut session, &translate::Quality::with_lighting(false, false, None, &lighting)).expect("configures");
+        let rgba = session.render(32, 32, 4, |_, _| {}).expect("renders");
+        let mean = rgba.chunks_exact(4).map(|p| (p[0] + p[1] + p[2]) as f64 / 3.0).sum::<f64>() / 1024.0;
+        eprintln!("{name}: mean {mean:.5}");
+        // Fine scratches glowing cover a few thousandths of the tile; a
+        // shader out of room draws nothing at all.
+        if mean < 1e-4 {
+            black.push(name);
+        }
+    }
+    assert!(black.is_empty(), "drew black, out of room on the shader stack: {black:?}");
+}

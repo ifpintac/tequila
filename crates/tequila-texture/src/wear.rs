@@ -129,9 +129,11 @@ pub trait Ops {
     fn component(&mut self, v: Self::V, axis: usize) -> Self::S;
     fn combine(&mut self, x: Self::S, y: Self::S, z: Self::S) -> Self::V;
 
-    /// Three random numbers in 0 to 1 for the point `key`: White Noise's
-    /// Color, in three dimensions.
-    fn white(&mut self, key: Self::V) -> Self::V;
+    /// Four random numbers in 0 to 1 for the point `key`: White Noise's
+    /// Color and Value, in three dimensions. Cycles keeps a place on its
+    /// stack for the Value whether it is read or not, so a pattern that
+    /// draws many reads both.
+    fn white(&mut self, key: Self::V) -> (Self::V, Self::S);
     /// Cycles' Noise texture's Fac at `p` (already scaled): fBM, normalized,
     /// `detail` octaves past the first, lacunarity 2.
     fn noise(&mut self, p: Self::V, detail: f32, roughness: f32) -> Self::S;
@@ -448,13 +450,13 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
             let (i, j, k) = (corner % span, corner / span % span, corner / (span * span));
             let step = o.vector(vec3(i as f32, j as f32, k as f32) + Vec3::splat(first));
             let cell = o.vadd(base, step);
+            // Every number a scratch is drawn by comes from three White
+            // Noise reads of its cell, all four numbers of each: where its
+            // middle is, and where its wobble starts;
             let k1 = o.vector(key(seed, layer.role, 0.5));
             let k1 = o.vadd(cell, k1);
-            let jitter = o.white(k1);
+            let (jitter, phase) = o.white(k1);
             let middle = o.vadd(cell, jitter);
-            // Where its wobble starts, from the same numbers.
-            let phase_weights = o.vector(vec3(37.1, 59.3, 83.7));
-            let phase = o.dot(jitter, phase_weights);
             let q = o.vsub(at, middle);
             let distance = o.length(q);
             // Nothing past half a cell, softly, so a scratch never meets
@@ -463,9 +465,11 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
             if o.nothing(held) {
                 continue;
             }
+            // whether it is there, how long it is, how it bends (in a
+            // swirl, how far it turns off the circle) and how deep it is;
             let k3 = o.vector(key(seed, layer.role + 1, 0.75));
             let k3 = o.vadd(cell, k3);
-            let chance = o.white(k3);
+            let (chance, deep) = o.white(k3);
             let presence = o.component(chance, 0);
             let lengths = o.component(chance, 1);
             let bends = o.component(chance, 2);
@@ -486,12 +490,11 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
             // (`b`), in the surface, and how sharply it curves (towards
             // +b). Worked out as numbers, not as the scratch's directions:
             // `a` is `q` along the direction flattened onto the surface,
-            // `b` along the normal crossed with it.
-            let k2 = o.vector(key(seed, layer.role + 2, 0.25));
-            let k2 = o.vadd(cell, k2);
-            let turn = o.white(k2);
+            // `b` along the normal crossed with it. The third read: which
+            // way it runs (in a swirl, where the pad went round), and where
+            // its width starts coming and going.
             let h = affine(o, lengths, -length_variation * half_max, half_max);
-            let (a, b, curve) = match s.direction {
+            let (a, b, curve, swell_phase) = match s.direction {
                 ScratchDirection::Swirl => {
                     // Arcs about the place a pad went round: one per block
                     // of three cells each way, somewhere in it.
@@ -500,7 +503,7 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
                     let block = o.vfloor(block);
                     let kb = o.vector(key(seed, layer.role + 3, 0.125));
                     let kb = o.vadd(block, kb);
-                    let pad = o.white(kb);
+                    let (pad, swell_phase) = o.white(kb);
                     let pad = o.vadd(block, pad);
                     let three = o.num(3.0);
                     let pad = o.vscale(pad, three);
@@ -521,8 +524,7 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
                     let b0 = o.div(inward, radius);
                     // Turned off the circle by up to half the spread of a
                     // half turn either way.
-                    let wander = o.component(turn, 0);
-                    let angle = affine(o, wander, spread * std::f32::consts::PI, -0.5 * spread * std::f32::consts::PI);
+                    let angle = affine(o, bends, spread * std::f32::consts::PI, -0.5 * spread * std::f32::consts::PI);
                     let (c, si) = (o.cos(angle), o.sin(angle));
                     let bs = o.mul(b0, si);
                     let a = o.madd(a0, c, bs);
@@ -535,9 +537,12 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
                     let two = o.num(2.0);
                     let tightest = o.div(two, h);
                     let curve = o.min(follow, tightest);
-                    (a, b, curve)
+                    (a, b, curve, swell_phase)
                 }
                 direction => {
+                    let k2 = o.vector(key(seed, layer.role + 2, 0.25));
+                    let k2 = o.vadd(cell, k2);
+                    let (turn, swell_phase) = o.white(k2);
                     let d = match direction.axis() {
                         // The axis, pushed off it by the spread; a little
                         // even at none, so a face square to the axis still
@@ -566,7 +571,7 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
                     let b = o.div(across, length);
                     let curl = affine(o, bends, 2.0 * bend, -bend);
                     let curve = o.div(curl, h);
-                    (a, b, curve)
+                    (a, b, curve, swell_phase)
                 }
             };
 
@@ -577,18 +582,19 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
             let sag = o.mul(slope, a);
             let half = o.num(-0.5);
             let b = o.madd(sag, half, b);
-            // Wobble: the line wanders, and its width comes and goes.
+            // Wobble: the line wanders, and its width comes and goes, each
+            // from its own place in the wave.
             let wave = {
                 let k = o.num(std::f32::consts::TAU * 0.9 / half_max);
+                let phase = times(o, phase, std::f32::consts::TAU);
                 let x = o.madd(a, k, phase);
                 o.sin(x)
             };
-            let b = {
-                let amount = o.num(wobble * 0.05 * half_max);
-                o.madd(wave, amount, b)
-            };
+            let amount = o.num(wobble * 0.05 * half_max);
+            let b = o.madd(wave, amount, b);
             let swell = {
                 let k = o.num(std::f32::consts::TAU * 2.3 / half_max);
+                let phase = times(o, swell_phase, std::f32::consts::TAU);
                 let x = o.madd(a, k, phase);
                 let s = o.sin(x);
                 affine(o, s, wobble * 0.35, 1.0)
@@ -596,8 +602,7 @@ fn scratches_in<O: Ops>(o: &mut O, s: &Scratches, seed: u32, span: u32) -> O::S 
             // Narrowing to the ends, and deeper scratches wider.
             let tt = o.mul(t, t);
             let narrowing = affine(o, tt, -taper, 1.0);
-            let strength = o.div(presence, threshold);
-            let depth = affine(o, strength, -depth_variation, 1.0);
+            let depth = affine(o, deep, -depth_variation, 1.0);
             let wider = affine(o, depth, 0.5 * layer.width, 0.5 * layer.width);
             let w = o.mul(narrowing, swell);
             let w = o.mul(w, wider);
@@ -807,7 +812,7 @@ pub fn fingerprints<O: Ops>(o: &mut O, s: &Fingerprints, seed: u32) -> O::S {
     let near = smooth(o, off, 0.18, 0.3, 1.0, 0.0);
     let k = o.vector(key(seed, 0x51d6, 0.5));
     let k = o.vadd(middle, k);
-    let turn = o.white(k);
+    let (turn, _) = o.white(k);
     let (two, from) = (o.vector(Vec3::splat(2.0)), o.vector(Vec3::splat(-1.0)));
     let d = o.vmadd(turn, two, from);
     let (d, _) = flatten(o, d, n);
@@ -948,7 +953,7 @@ pub fn scuffs<O: Ops>(o: &mut O, s: &Scuffs, seed: u32) -> O::S {
     let near = smooth(o, off, 0.2, 0.32, 1.0, 0.0);
     let k = o.vector(key(seed, 0x5c0f, 0.5));
     let k = o.vadd(middle, k);
-    let turn = o.white(k);
+    let (turn, _) = o.white(k);
     let (two, from) = (o.vector(Vec3::splat(2.0)), o.vector(Vec3::splat(-1.0)));
     let d = o.vmadd(turn, two, from);
     let (d, _) = flatten(o, d, n);
@@ -1177,9 +1182,9 @@ impl Ops for Eval {
     fn combine(&mut self, x: f32, y: f32, z: f32) -> Vec3 {
         vec3(x, y, z)
     }
-    fn white(&mut self, key: Vec3) -> Vec3 {
+    fn white(&mut self, key: Vec3) -> (Vec3, f32) {
         let [x, y, z] = crate::cycles::hash::hash_float3_to_float3(a3(key));
-        vec3(x, y, z)
+        (vec3(x, y, z), crate::cycles::hash::hash_float3_to_float(a3(key)))
     }
     fn noise(&mut self, p: Vec3, detail: f32, roughness: f32) -> f32 {
         NoiseSettings { detail, roughness, ..NoiseSettings::default() }.value(a3(p))

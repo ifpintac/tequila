@@ -59,7 +59,7 @@ pub(crate) fn scratches(ui: &mut egui::Ui, s: &mut Scratches) {
     share(ui, &mut s.wobble, "Wobble", "How hand-made a scratch is: its line wanders and its width comes and goes.");
     ui.horizontal(|ui| {
         ui.label("Direction");
-        egui::ComboBox::from_id_salt("wear_scratch_direction")
+        egui::ComboBox::from_id_salt(ui.id().with("wear_scratch_direction"))
             .selected_text(s.direction.label())
             .show_ui(ui, |ui| {
                 for direction in ScratchDirection::ALL {
