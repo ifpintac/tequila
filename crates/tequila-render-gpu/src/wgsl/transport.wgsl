@@ -1943,6 +1943,17 @@ struct LightSampleAt {
     tp4: vec4<f32>,
     alone: bool,
     disperses: bool,
+    // Its draws, taken where it is set up, in the processor's order - the
+    // sky's, the lamp's choice and the lamp's, the glowing part's choice and
+    // its point (ic:2140-2240, 4290-4350): past the Sobol' dimensions (from
+    // bounce 7) each is the next of the open stream, which the processor
+    // draws from for the light sample before the bounce, and for a
+    // collision's before its turn. The lamp chosen with them.
+    u_sky: vec2<f32>,
+    choice: LampChoice,
+    u_lamp: vec2<f32>,
+    u_glow_pick: f32,
+    u_glow: vec2<f32>,
 };
 
 // The light samples' sum, and each source's apart - the sky's, the lamp's,
@@ -1992,7 +2003,7 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
             }
             // Chosen from here down the tree, on the bounce's light choice
             // and light sample, as the lamp was.
-            let e = emitters_sample(surf.position, surf.geometric, transmissive, sampler_light_select(s), sampler_light_sample(s));
+            let e = emitters_sample(surf.position, surf.geometric, transmissive, here.u_glow_pick, here.u_glow);
             if (!e.ok) {
                 continue;
             }
@@ -2023,7 +2034,7 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
             // seen from here (sample_from): the direction there, the density
             // times the patch's jacobian, and how far the dome is.
             let finite = dome_finite();
-            let e = env_sample_sky(select(facing, vec3<f32>(0.0), finite), sampler_light_sample(s));
+            let e = env_sample_sky(select(facing, vec3<f32>(0.0), finite), here.u_sky);
             if (!e.ok) {
                 continue;
             }
@@ -2051,8 +2062,9 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
                 continue;
             }
             // The lamp chosen from this point, facing the side the path is on
-            // (both sides for a surface that transmits), and its own variates.
-            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u && !medium, surf.position, surf.geometric, transmissive, sampler_light_select(s));
+            // (both sides for a surface that transmits), and its own variates:
+            // both where the sample was set up.
+            let choice = here.choice;
             if (!choice.ok) {
                 continue;
             }
@@ -2061,7 +2073,7 @@ fn direct_light(s: ptr<function, Sampler>, here: LightSampleAt) -> Direct {
             if (!lamp_lights(light, instance)) {
                 continue;
             }
-            draw = lamp_sample(light, surf.position, sampler_light_sample(s));
+            draw = lamp_sample(light, surf.position, here.u_lamp);
             if (!draw.ok || all(draw.radiance == vec3<f32>(0.0)) || (!draw.is_delta && draw.pdf <= 0.0)) {
                 continue;
             }
@@ -2809,10 +2821,26 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
             (*st).receiver_normal = surf.geometric;
             (*st).receiver_two_sided = transmissive;
         }
-        // Taken by path's one call of direct_light as the vertex is left: its
-        // draws are the bounce's own dimensions, and nothing between reads
-        // the radiance or meets a crossing.
-        *light = LightSampleAt(true, false, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing, (*st).throughput, light_ceiling((*st).specular_chain, bounce), vec3<f32>(0.0), 0.0, (*st).tp4, (*st).alone, disperses);
+        // Taken by path's one call of direct_light as the vertex is left,
+        // nothing between reading the radiance or meeting a crossing; its
+        // draws here, before the bounce's, as the processor draws them: the
+        // sky's where it lights, the lamp's choice from this point and the
+        // lamp's where it lights this part, the glowing part's.
+        *light = LightSampleAt(true, false, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing, (*st).throughput, light_ceiling((*st).specular_chain, bounce), vec3<f32>(0.0), 0.0, (*st).tp4, (*st).alone, disperses, vec2<f32>(0.0), LampChoice(false, 0u, 0.0), vec2<f32>(0.0), 0.0, vec2<f32>(0.0));
+        if (frame.env_intensity > 0.0) {
+            (*light).u_sky = sampler_light_sample(s);
+        }
+        if (FEATURE_LAMPS && frame.light_count > 0u) {
+            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u, surf.position, surf.geometric, transmissive, sampler_light_select(s));
+            (*light).choice = choice;
+            if (choice.ok && lamp_lights(scene_lights[choice.index], inst.instance)) {
+                (*light).u_lamp = sampler_light_sample(s);
+            }
+        }
+        if ((frame.glass_flags & SCENE_EMITTERS) != 0u) {
+            (*light).u_glow_pick = sampler_light_select(s);
+            (*light).u_glow = sampler_light_sample(s);
+        }
     }
 
     // The split (ic:2267-2318): at the first plain glass the camera ray
@@ -3971,9 +3999,20 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             if (FEATURE_SCATTERING && !medium.doorway && abs(medium.ior - 1.0) < 1e-3 && st.media.len == 1u && (frame.lamp_flags & LAMPS_UNSAMPLED) == 0u) {
                                 // Its light sample (medium_direct_light), by
                                 // direct_light's one call below: its draws
-                                // are the bounce's dimensions, the turn's the
-                                // open stream's.
+                                // here, before the turn's, as the processor
+                                // draws them - the sky's, the lamp's choice
+                                // by power and the lamp's where it lights
+                                // the medium's part.
                                 light.wanted = true;
+                                light.u_sky = sampler_light_sample(&s);
+                                light.choice.ok = false;
+                                if (FEATURE_LAMPS && frame.light_count > 0u) {
+                                    let choice = lamps_select(frame.light_count, sampler_light_select(&s));
+                                    light.choice = choice;
+                                    if (choice.ok && lamp_lights(scene_lights[choice.index], medium.solid)) {
+                                        light.u_lamp = sampler_light_sample(&s);
+                                    }
+                                }
                                 light.medium = true;
                                 light.surf.position = at;
                                 light.wo = st.direction;

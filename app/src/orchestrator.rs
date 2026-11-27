@@ -107,6 +107,10 @@ pub struct RenderRequest {
     /// ([`crate::cycles_view`]). The final render's choice, so the preview is
     /// the render it previews.
     pub engine: tequila_scene::render::RenderEngine,
+    /// The devices Cycles on the graphics card renders the view on, as
+    /// Preferences › Rendering chose them ([`crate::render_devices`]): a
+    /// change starts the view again on the new ones.
+    pub devices: tequila_render_core::devices::Choice,
     /// The render's pixels per point of viewport: one on a standard screen,
     /// the screen's own on a Retina one (`render_scale` in `main.rs`).
     /// `width` and `height` are pixels, which Cycles renders; Tequila's own
@@ -267,6 +271,7 @@ impl PartialEq for RenderRequest {
             && self.shading == other.shading
             && self.interacting == other.interacting
             && self.engine == other.engine
+            && self.devices == other.devices
             && self.pixels_per_point == other.pixels_per_point
             && self.checker.as_ref().map(|c| c.0) == other.checker.as_ref().map(|c| c.0)
     }
@@ -291,6 +296,9 @@ struct Shared {
     engine_note: Mutex<Option<EngineNote>>,
     /// Whether the render thread keeps a Cycles view, showing or paused.
     keeps_cycles: AtomicBool,
+    /// What the Cycles view renders on, in a few words
+    /// (`render_devices::session_label`); empty while there is none.
+    view_devices: Mutex<String>,
     /// The intersector the render thread most recently built, shared so the UI
     /// can pick against exactly the geometry that is on screen.
     ///
@@ -356,6 +364,7 @@ impl Orchestrator {
             request: Mutex::new(None),
             engine_note: Mutex::new(None),
             keeps_cycles: AtomicBool::new(false),
+            view_devices: Mutex::new(String::new()),
             intersector: Mutex::new(None),
             request_generation: AtomicU64::new(0),
             image: Mutex::new(DisplayImage::default()),
@@ -496,6 +505,13 @@ impl Orchestrator {
         self.shared.engine_note.lock().unwrap().clone()
     }
 
+    /// What the Rendered view's Cycles renders on, in a few words: "GeForce
+    /// RTX 2060", "2 graphics cards", "processor". Empty while there is no
+    /// Cycles view.
+    pub fn view_devices(&self) -> String {
+        self.shared.view_devices.lock().unwrap().clone()
+    }
+
     /// Whether a Cycles view is kept, showing or paused: let go
     /// `CYCLES_KEPT` after the viewport stops showing it.
     #[cfg(test)]
@@ -621,7 +637,8 @@ fn render_loop(shared: Arc<Shared>) {
     // remembered, so the viewport falls back to Tequila's own renderer rather
     // than trying again every frame.
     let mut cycles: Option<crate::cycles_view::CyclesView> = None;
-    let mut cycles_failed: Option<tequila_scene::render::RenderEngine> = None;
+    // The engine and the devices that would not start.
+    let mut cycles_failed: Option<(tequila_scene::render::RenderEngine, String)> = None;
     let mut cycles_status = String::new();
     // Why the engine that failed did, and how many frames the Cycles view
     // has shown since it was made: none yet means it is still getting ready.
@@ -655,6 +672,13 @@ fn render_loop(shared: Arc<Shared>) {
 
     while shared.running.load(Ordering::Acquire) {
         shared.keeps_cycles.store(cycles.is_some(), Ordering::Release);
+        {
+            let label = cycles.as_ref().map(|view| view.devices_label().to_string()).unwrap_or_default();
+            let mut said = shared.view_devices.lock().unwrap();
+            if *said != label {
+                *said = label;
+            }
+        }
         let request_generation = shared.request_generation.load(Ordering::Acquire);
         let style_generation = shared.style_generation.load(Ordering::Acquire);
 
@@ -796,24 +820,30 @@ fn render_loop(shared: Arc<Shared>) {
         // A Rendered viewport on the Cycles engine shows Cycles' newest frame.
         let engine = state.request.engine;
         let on_cycles = state.request.shading == Shading::Rendered && engine.is_cycles();
-        if on_cycles && cycles_failed == Some(engine) {
+        // The devices chosen for the view, as Cycles takes them: found the
+        // first time, when Cycles is loaded for the view anyway.
+        let plan = on_cycles.then(|| crate::render_devices::cycles_plan(engine, &state.request.devices, tequila_render_core::devices::Use::View));
+        let wanted = plan.as_ref().map(|plan| (engine, plan.device.clone()));
+        if on_cycles && cycles_failed == wanted {
             say(Some(EngineNote::FellBack { engine, why: cycles_why.clone() }));
         } else if !on_cycles {
             say(None);
         }
-        if on_cycles && cycles_failed != Some(engine) {
+        if let Some(plan) = plan.filter(|_| cycles_failed != wanted) {
             cycles_away = None;
-            if cycles.as_ref().map(|view| view.engine()) != Some(engine) {
+            if cycles.as_ref().map(|view| (view.engine(), view.device().to_string())) != wanted {
+                // The old session ends before the new one starts: the two
+                // never hold the graphics card at once.
                 cycles = None;
                 cycles_frames = 0;
-                match crate::profile::time("render: start cycles", || crate::cycles_view::CyclesView::new(engine)) {
+                match crate::profile::time("render: start cycles", || crate::cycles_view::CyclesView::on(engine, plan)) {
                     Ok(view) => {
                         cycles = Some(view);
                         shared.keeps_cycles.store(true, Ordering::Release);
                     }
                     Err(error) => {
                         eprintln!("Tequila: Cycles could not start, so the viewport uses Tequila's renderer: {error}");
-                        cycles_failed = Some(engine);
+                        cycles_failed = wanted;
                         cycles_why = error;
                         continue;
                     }
@@ -826,7 +856,7 @@ fn render_loop(shared: Arc<Shared>) {
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!("Tequila: Cycles could not show this scene, so the viewport uses Tequila's renderer: {error}");
-                    cycles_failed = Some(engine);
+                    cycles_failed = wanted.clone();
                     cycles_why = error;
                     cycles = None;
                     continue;
@@ -877,7 +907,7 @@ fn render_loop(shared: Arc<Shared>) {
                         eprintln!("Tequila: Cycles stopped, so the viewport uses Tequila's renderer: {error}");
                         cycles_status = error.clone();
                     }
-                    cycles_failed = Some(engine);
+                    cycles_failed = wanted.clone();
                     cycles_why = error;
                     cycles = None;
                     continue;
@@ -1998,6 +2028,7 @@ mod tests {
             gpu_solid: false,
             shading: Shading::Rendered,
             engine: RenderEngine::Tequila,
+            devices: Default::default(),
             pixels_per_point: 1.0,
             checker: None,
             submitted: Instant::now(),
@@ -2294,6 +2325,7 @@ mod tests {
             // default engine is Cycles on the graphics card, and every test
             // starting a card session of its own at once left one without.
             engine: tequila_scene::render::RenderEngine::Tequila,
+            devices: Default::default(),
             pixels_per_point: 1.0,
             checker: None,
             submitted: Instant::now(),

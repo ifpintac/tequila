@@ -83,6 +83,7 @@ impl ImproveModel {
                                     Tessellation::Medium => "How a STEP comes in",
                                     Tessellation::High => "Smooth at a close look",
                                     Tessellation::Ultra => "Smooth in extreme close-ups; many triangles",
+                                    Tessellation::Custom { .. } => "Tolerances of your own",
                                 })
                                 .clicked()
                             {

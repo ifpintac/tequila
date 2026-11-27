@@ -662,8 +662,10 @@ fn style(ctx: &egui::Context, p: &Palette) -> egui::Style {
 /// desktop is set in, so the application reads as native and its text at
 /// 13 px is the text the platform tuned for that size. egui's fonts stay
 /// behind it as fallbacks, for every character the system face lacks — the
-/// glyph test below checks against exactly those.
-fn font_definitions() -> egui::FontDefinitions {
+/// glyph test below checks against exactly those — and behind them the
+/// system's fonts for Chinese, Japanese, Korean and Devanagari
+/// ([`crate::fallback_fonts`]), for names written in those.
+pub(crate) fn font_definitions() -> egui::FontDefinitions {
     let windows = std::env::var_os("WINDIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "C:\\Windows".into())
@@ -694,6 +696,7 @@ fn font_definitions() -> egui::FontDefinitions {
         fonts.font_data.insert("system-mono".into(), egui::FontData::from_owned(bytes));
         fonts.families.entry(egui::FontFamily::Monospace).or_default().insert(0, "system-mono".into());
     }
+    crate::fallback_fonts::add(&mut fonts, &egui::FontFamily::Name(SEMIBOLD.into()));
     // Lucide's icons (ISC licence, scripts/notices/lucide): a family of
     // their own, so their private-use codepoints never meet text.
     fonts.font_data.insert("lucide".into(), egui::FontData::from_static(include_bytes!("../assets/fonts/lucide.ttf")));

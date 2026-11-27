@@ -748,6 +748,9 @@ fn harness_main(@builtin(global_invocation_id) id: vec3<u32>) {{
     let i = id.x;
     if (i >= {count}u) {{ return; }}
     let at = i * 8u;
+    // Nought, from a word the compiler cannot see, as prog_run sets it:
+    // cy_exact rounds a product then, as it does in the kernel.
+    cy_zero = harness_input[at + 7u];
     var p: CyVoronoi;
     p.dims = 3u;
     p.metric = 0u;

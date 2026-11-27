@@ -358,7 +358,13 @@ pub fn install_zip(zip: &Path, into: &Path, replace: bool) -> Result<PathBuf, St
 /// panel and an event, and the Python that answers them - working as it
 /// stands, so the first thing a person sees is it doing something.
 pub fn create_from_template(into: &Path, name: &str) -> Result<PathBuf, String> {
-    let stem = tequila_format::library::file_stem(name).replace('_', "-");
+    // An id is ASCII ([`valid_id`]), whatever the plugin is called.
+    let words: Vec<String> = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let stem = if words.is_empty() { "plugin".to_string() } else { words.join("-") };
     let id = format!("my.{stem}");
     let folder = into.join(&id);
     if folder.exists() {

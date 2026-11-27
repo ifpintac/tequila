@@ -49,17 +49,38 @@ use truck_topology::compress::CompressedShell;
 /// assembly seen whole, Draft. The presets are `docs/03` §6.2's. The exact geometry is kept with the project
 /// (`tequila_scene::document::Sources`), so a part can be divided again at
 /// another quality without its file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// [`Custom`](Tessellation::Custom) is the import dialog's own pair of
+/// tolerances, for a person who knows the chord and angle they want.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Tessellation {
     Draft,
     #[default]
     Medium,
     High,
     Ultra,
+    /// The chord as a fraction of each body's size, as the presets' is, and
+    /// the angle in radians; held to [`Tessellation::CHORDS`] and
+    /// [`Tessellation::ANGLES`] by [`Tessellation::custom`].
+    Custom { chord: f64, angle: f64 },
 }
 
 impl Tessellation {
     pub const ALL: [Tessellation; 4] = [Tessellation::Draft, Tessellation::Medium, Tessellation::High, Tessellation::Ultra];
+
+    /// The chords a custom tessellation may take: from twice Draft's, a
+    /// hundredth, to a tenth of Ultra's, beyond which a body's triangles
+    /// run to millions for nothing a camera sees.
+    pub const CHORDS: std::ops::RangeInclusive<f64> = 1.0e-5..=1.0e-2;
+
+    /// The angles, in radians: 3° to 60°.
+    pub const ANGLES: std::ops::RangeInclusive<f64> = 0.0523..=1.0472;
+
+    /// Tolerances of the person's own, held to the ranges above.
+    pub fn custom(chord: f64, angle: f64) -> Tessellation {
+        let hold = |v: f64, range: &std::ops::RangeInclusive<f64>, fallback: f64| if v.is_finite() { v.clamp(*range.start(), *range.end()) } else { fallback };
+        Tessellation::Custom { chord: hold(chord, &Self::CHORDS, 1.0e-3), angle: hold(angle, &Self::ANGLES, 0.5) }
+    }
 
     /// The chord tolerance, as a fraction of the body's size.
     pub fn chord(self) -> f64 {
@@ -68,6 +89,7 @@ impl Tessellation {
             Tessellation::Medium => 1.0e-3,
             Tessellation::High => 5.0e-4,
             Tessellation::Ultra => 1.0e-4,
+            Tessellation::Custom { chord, .. } => chord,
         }
     }
 
@@ -80,6 +102,7 @@ impl Tessellation {
             Tessellation::Medium => 0.5,
             Tessellation::High => 0.35,
             Tessellation::Ultra => 0.2,
+            Tessellation::Custom { angle, .. } => angle,
         }
     }
 
@@ -89,12 +112,40 @@ impl Tessellation {
             Tessellation::Medium => "Medium",
             Tessellation::High => "High",
             Tessellation::Ultra => "Ultra",
+            Tessellation::Custom { .. } => "Custom",
         }
     }
 
-    pub fn from_label(label: &str) -> Option<Tessellation> {
-        Tessellation::ALL.into_iter().find(|t| t.label().eq_ignore_ascii_case(label.trim()))
+    /// What a model's top nodes record it as ([`TESSELLATION`]): a preset's
+    /// label, or a custom one's tolerances, "Custom 0.0005 20°", which
+    /// [`Tessellation::from_label`] reads back.
+    pub fn name(self) -> String {
+        match self {
+            Tessellation::Custom { chord, angle } => format!("Custom {chord} {}°", round_degrees(angle.to_degrees())),
+            preset => preset.label().to_string(),
+        }
     }
+
+    /// A preset by its label, or a custom tessellation by its
+    /// [`name`](Tessellation::name).
+    pub fn from_label(label: &str) -> Option<Tessellation> {
+        let label = label.trim();
+        if let Some(preset) = Tessellation::ALL.into_iter().find(|t| t.label().eq_ignore_ascii_case(label)) {
+            return Some(preset);
+        }
+        let mut words = label.split_whitespace();
+        if !words.next()?.eq_ignore_ascii_case("custom") {
+            return None;
+        }
+        let chord: f64 = words.next()?.parse().ok()?;
+        let degrees: f64 = words.next()?.trim_end_matches('°').parse().ok()?;
+        words.next().is_none().then(|| Tessellation::custom(chord, degrees.to_radians()))
+    }
+}
+
+/// Degrees to a hundredth, as a name says them.
+fn round_degrees(degrees: f64) -> f64 {
+    (degrees * 100.0).round() / 100.0
 }
 
 /// How far the STEP reads under way have got, summed over all of them: the
@@ -125,26 +176,30 @@ pub struct Progress {
     pub read: usize,
 }
 
-#[derive(Default)]
-struct Counts {
-    done: std::sync::atomic::AtomicUsize,
-    total: std::sync::atomic::AtomicUsize,
-    read: std::sync::atomic::AtomicUsize,
-}
+use crate::watch::Counts;
 
 static READING: std::sync::Mutex<Vec<std::sync::Arc<Counts>>> = std::sync::Mutex::new(Vec::new());
 
 /// One read's counts, listed while it lasts. An IGES file OpenCASCADE reads
-/// is counted here too: its wait is as long as a STEP file's.
-pub(crate) struct Reading(std::sync::Arc<Counts>);
+/// is counted here too: its wait is as long as a STEP file's. Under a
+/// [`Watch`](crate::watch::Watch) the counts are the watch's, so the import
+/// dialog's bar shows them, and the watch's Cancel stops the read.
+pub(crate) struct Reading(std::sync::Arc<Counts>, Option<crate::watch::Watch>);
 
 impl Reading {
     pub(crate) fn start() -> Reading {
-        let counts = std::sync::Arc::new(Counts::default());
+        let watch = crate::watch::current();
+        let counts = watch.as_ref().map(|w| w.counts()).unwrap_or_default();
+        counts.clear();
         if let Ok(mut reading) = READING.lock() {
             reading.push(counts.clone());
         }
-        Reading(counts)
+        Reading(counts, watch)
+    }
+
+    /// Whether the import this read is for was cancelled.
+    pub(crate) fn stopped(&self) -> bool {
+        self.1.as_ref().is_some_and(crate::watch::Watch::is_cancelled)
     }
 
     /// What OpenCASCADE's helper reports, counted where [`progress`] sums it.
@@ -184,13 +239,13 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
     let mut fell_back = None;
     if let Some(helper) = crate::occt::helper() {
         let report = reading.report();
-        match crate::occt::read(&helper, bytes, crate::occt::Format::Step, quality.chord(), quality.angle(), &report) {
+        match crate::occt::read(&helper, bytes, crate::occt::Format::Step, quality.chord(), quality.angle(), &report, &|| reading.stopped()) {
             Ok(read) => return from_occt(read, &predefined_in(bytes), name, quality, "STEP"),
+            // Stopped, not failed: truck is not to try.
+            Err(_) if reading.stopped() => return Err(ImportError::Cancelled),
             Err(why) => fell_back = Some(why),
         }
-        reading.0.done.store(0, std::sync::atomic::Ordering::Relaxed);
-        reading.0.total.store(0, std::sync::atomic::Ordering::Relaxed);
-        reading.0.read.store(0, std::sync::atomic::Ordering::Relaxed);
+        reading.0.clear();
     }
     let text = String::from_utf8_lossy(bytes);
     let data = crate::part21::data_section(&text)
@@ -240,6 +295,11 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
                 let mut meshes = Vec::new();
                 let (mut failed, mut total) = (0, 0);
                 for (colour, faces, inverted) in groups {
+                    // Cancelled: the rest is not divided, and the read
+                    // ends below.
+                    if reading.stopped() {
+                        break;
+                    }
                     let count = faces.len();
                     total += count;
                     let holder = ShellHolder { label: String::new(), cfs_faces: faces };
@@ -252,6 +312,9 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
             })
             .collect()
     };
+    if reading.stopped() {
+        return Err(ImportError::Cancelled);
+    }
     let mut meshed: Vec<Vec<(Option<Colour>, usize)>> = Vec::with_capacity(bodies.len());
     for ((meshes, failed, total), body_name) in results.into_iter().zip(&names) {
         if failed > 0 {
@@ -295,7 +358,7 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
         warnings.insert(0, format!("{why}; read with Tequila's own reader instead"));
     }
     scene.warnings = warnings;
-    scene.tessellation = Some(quality.label().to_string());
+    scene.tessellation = Some(quality.name());
     Ok(scene)
 }
 
@@ -379,7 +442,7 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
         }
     }
     scene.warnings = warnings;
-    scene.tessellation = Some(quality.label().to_string());
+    scene.tessellation = Some(quality.name());
     Ok(scene)
 }
 

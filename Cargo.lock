@@ -4297,6 +4297,7 @@ dependencies = [
  "exr",
  "hidapi",
  "libloading",
+ "memmap2",
  "objc2 0.6.4",
  "png 0.17.16",
  "raw-window-handle",

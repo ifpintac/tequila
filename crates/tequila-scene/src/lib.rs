@@ -25,6 +25,7 @@ pub mod displacement;
 pub mod document;
 pub mod duplicate;
 pub mod environment;
+pub mod focus;
 pub mod geometry;
 pub mod gizmo;
 pub mod guides;

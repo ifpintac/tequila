@@ -389,6 +389,16 @@ class StdioTests(unittest.TestCase):
         self.assertEqual([r['id'] for r in replies], [1, 2], process.stderr)
         self.assertEqual(len(replies[1]['result']['tools']), len(TOOLS))
 
+    def test_names_in_any_language_arrive_as_written(self):
+        # As an AI app writes it: UTF-8, not escaped. The unknown tool's
+        # name comes back in the error, so what the server read shows.
+        name = '测试 日本語 한국어 हिन्दी Español'
+        line = json.dumps({'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': name}}, ensure_ascii=False)
+        process = subprocess.run([sys.executable, str(Path(tequila_mcp.__file__))], input=(line + '\n').encode('utf-8'),
+                                 capture_output=True, timeout=30)
+        reply = json.loads(process.stdout.decode('utf-8').strip())
+        self.assertEqual(reply['error']['message'], f'Unknown tool: {name}', process.stderr)
+
     def test_garbage_is_a_parse_error_not_a_crash(self):
         out = io.StringIO()
         serve(Bridge(), io.StringIO('not json\n{"jsonrpc":"2.0","id":5,"method":"ping"}\n'), out)

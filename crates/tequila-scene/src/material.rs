@@ -312,7 +312,7 @@ impl MaterialStore {
     }
 
     /// `"Paint"` -> `"Paint 2"`, `"Paint 2"` -> `"Paint 3"`, and so on.
-    fn next_available_name(&self, base: &str) -> String {
+    pub fn next_available_name(&self, base: &str) -> String {
         // Strip an existing suffix so unlinking twice gives "Paint 3", not
         // "Paint 2 2".
         let stem = match base.rsplit_once(' ') {
