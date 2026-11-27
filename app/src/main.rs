@@ -67,6 +67,7 @@ mod sky_panel;
 mod orchestrator;
 mod orient;
 mod pattern_panel;
+mod part_material;
 mod profile;
 mod project;
 mod readout;
@@ -384,6 +385,8 @@ struct TequilaApp {
     toasts: toast::Toasts,
     /// The node a right-click landed on, or `None` for empty space.
     context_target: Option<tequila_scene::tree::NodeId>,
+    /// What Copy material kept (`part_material`).
+    material_clipboard: part_material::Clipboard,
     /// The parts a material being dragged would land on, outlined live.
     ///
     /// §3.1 step 2 asks for the part under the cursor to be highlighted during
@@ -1117,6 +1120,7 @@ impl TequilaApp {
             spin_pending: Vec::new(),
             toasts: toast::Toasts::default(),
             context_target: None,
+            material_clipboard: Default::default(),
             drag_highlight: Vec::new(),
             project_tab: ProjectTab::Scene,
             pending_unit: None,
@@ -2565,6 +2569,17 @@ impl TequilaApp {
             ui.separator();
         }
 
+        // Edit, Copy and Paste material, and Unlink (`part_material`): the
+        // Scene tree's menu has the same.
+        if let Some(node) = self.context_target {
+            let offer = self.material_offer();
+            if let Some(action) = part_material::menu_items(ui, self.project.document(), &self.project.selection, &offer, node) {
+                self.part_material(action);
+                ui.close_menu();
+            }
+            ui.separator();
+        }
+
         // The group it is in: a CAD body that came as a piece per face
         // colour, or a sub-assembly, to take a material or a move as one.
         let document = self.project.document();
@@ -2636,13 +2651,6 @@ impl TequilaApp {
             self.project_tab = ProjectTab::Scene;
             self.show_project = true;
             self.toasts.info("Press F2 in the Scene tree to rename");
-            ui.close_menu();
-        }
-        if ui.button("Unlink material").clicked() {
-            if let Some(node) = self.context_target {
-                let _ = self.project.apply(Command::UnlinkMaterial { node });
-                self.toasts.info("Material unlinked");
-            }
             ui.close_menu();
         }
         if ui.button("Set pivot here").clicked() {
@@ -3646,6 +3654,8 @@ impl TequilaApp {
                             ui.close_menu();
                         }
                     }
+                    ui.separator();
+                    self.material_menu_items(ui);
                     ui.separator();
                     for (label, action, enabled) in [
                         ("Select all", shortcuts::Action::SelectAll, true),
@@ -4855,6 +4865,8 @@ impl TequilaApp {
             }
             Key::DeselectAll => self.project.selection.clear(),
             Key::Duplicate => self.duplicate_selection(),
+            Key::CopyMaterial => self.copy_selected_material(),
+            Key::PasteMaterial => self.paste_onto_selection(),
             Key::Group => {
                 let nodes: Vec<_> = self.project.selection.nodes().collect();
                 if nodes.len() >= 2 {
@@ -6322,6 +6334,7 @@ impl TequilaApp {
             }
             ProjectTab::Scene => {
                 let mut tab = std::mem::take(&mut self.scene_tab);
+                tab.material_offer = self.material_offer();
                 tab.show(ui, &mut self.project);
                 let selected = self.project.selection.active();
                 if selected.is_none() {
@@ -6376,7 +6389,11 @@ impl TequilaApp {
                 let retessellate = tab.retessellate_request.take();
                 let units = tab.units_request.take();
                 let improve = tab.improve_request.take();
+                let material = tab.material_request.take();
                 self.scene_tab = tab;
+                if let Some(action) = material {
+                    self.part_material(action);
+                }
                 if let Some(node) = improve {
                     self.improve_model = improve_model::ImproveModel::new(self.project.document(), node);
                     if self.improve_model.is_none() {

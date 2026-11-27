@@ -606,7 +606,9 @@ failure is reported as an error rather than silently exporting a noisy image.
 Camera commands, undo and redo update the viewport and export camera together;
 adopting a saved camera preserves its exact orientation, including roll.
 Textures remain external assets. Imported and shared materials should be
-inspected before changing them. After creation/import/unlink, query fresh IDs.
+inspected before changing them. After creation/import/unlink/paste, query fresh IDs.
+`material.paste` gives parts a copy of a material of their own in one step
+(Paste material in the app), where `material.assign` shares the one material.
 Failed commands are logged in the workspace. A script is not atomic: if its
 fifth operation fails, its first four successful edits remain. Do not blindly
 undo several steps if a person or another client edited in between.
