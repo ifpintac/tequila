@@ -578,6 +578,19 @@
     "focal_length": {
      "type": "number",
      "description": "Millimetres."
+    },
+    "focus": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 3,
+     "maxItems": 3,
+     "description": "A point [x, y, z] to focus on: the focus distance becomes its distance from the camera along the view, and the blur comes on if it was off."
+    },
+    "focus_part": {
+     "type": "integer",
+     "description": "A part (or group) id to focus on, at its middle, as focus does."
     }
    },
    "required": [],

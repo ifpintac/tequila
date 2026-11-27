@@ -70,7 +70,10 @@ const FLAKE_N: vec3<f32> = vec3<f32>(1.345, 0.965, 0.617);
 const FLAKE_K: vec3<f32> = vec3<f32>(7.475, 6.400, 5.303);
 
 // material.rs's GpuMaterial, member for member (tests/layouts.rs holds the
-// two to one layout). Colours are vec4s whose w is unused.
+// two to one layout). Colours are vec4s whose w is unused but where said:
+// the w of metal_n, metal_k and specular_color is the crossing tint a
+// spectral path takes through glass of a colour (GLASS_TINTED,
+// crossing_tint_of).
 struct GpuMaterial {
     base_color: vec4<f32>,
     metal_n: vec4<f32>,
@@ -174,6 +177,13 @@ const GLASS_PLAIN: u32 = 16u;
 const GLASS_BENDS: u32 = 32u;
 const GLASS_PANE_VOLUME: u32 = 64u;
 const GLASS_SCATTERS: u32 = 128u;
+const GLASS_TINTED: u32 = 256u;
+
+// The tint a spectral path takes a crossing of `m`'s glass at, where
+// GLASS_TINTED (material.rs's GpuMaterial::specular_color).
+fn crossing_tint_of(m: GpuMaterial) -> vec3<f32> {
+    return vec3<f32>(m.metal_n.w, m.metal_k.w, m.specular_color.w);
+}
 
 // The assembled stack for one shading point.
 struct OpenPbr {
