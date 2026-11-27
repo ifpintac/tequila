@@ -72,6 +72,7 @@ mod project;
 mod readout;
 mod recent;
 mod render_frame;
+mod render_view;
 mod render_window;
 mod scene_tab;
 mod sections;
@@ -1944,11 +1945,9 @@ impl eframe::App for TequilaApp {
         self.improve_model_window(ctx);
         profile::time("ui: queue", || self.pump_queue(ctx));
         let mut window = std::mem::take(&mut self.render_window);
-        window.rendering = self.batch.is_running();
+        window.follow(&self.batch);
         profile::time("ui: render window", || window.show(ctx, &mut self.project));
-        if std::mem::take(&mut window.cancel_requested) {
-            self.batch.cancel();
-        }
+        window.act_on(&self.batch);
         let frames = window.frames_requested.take();
         self.render_window = window;
         if let Some((first, last)) = frames {
@@ -4000,6 +3999,7 @@ impl TequilaApp {
             .find(|j| j.state == tequila_scene::render::JobState::Rendering)
             .map(render_window::progress);
         let label = match progress {
+            Some(done) if self.batch.is_paused() => format!("Paused {:.0}%", done * 100.0),
             Some(done) => format!("Rendering {:.0}%", done * 100.0),
             None => "Render".to_string(),
         };
@@ -6590,8 +6590,7 @@ impl TequilaApp {
                             egui::TextureOptions::LINEAR,
                         )
                     });
-                    self.render_window.preview_job = Some(id);
-                    self.render_window.preview = texture.clone();
+                    self.render_window.keep_pixels(&path, width, height, preview);
                     self.render_window.add(render_window::GalleryEntry {
                         name,
                         path,

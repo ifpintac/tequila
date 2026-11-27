@@ -1019,6 +1019,11 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
             return Reply::Failed(error);
         }
     }
+    if let Some(view) = &change.render_view {
+        if let Err(error) = app.render_window.script(view, &app.batch, &app.project) {
+            return Reply::Failed(error);
+        }
+    }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }
@@ -1133,6 +1138,18 @@ fn section_page(page: &str) -> &str {
 fn ui_state(app: &TequilaApp) -> Value {
     let mut out = Object::new();
     out.set("render_window", app.render_window.open)
+        // The Render window's stage: its zoom ("fit", or screen pixels to a
+        // pixel of the render), the point of the picture at its middle, and
+        // the render in progress paused, and held yet.
+        .set("render_view", {
+            let (zoom, [x, y]) = app.render_window.view_state();
+            let mut view = Object::new();
+            view.set("zoom", zoom.map_or(Value::String("fit".into()), |zoom| Value::Number(zoom as f64)))
+                .set("at", vec![Value::Number(x as f64), Value::Number(y as f64)])
+                .set("paused", app.batch.is_paused())
+                .set("held", app.batch.is_held());
+            view.build()
+        })
         .set("console", app.console.open)
         .set("inspector", app.show_project)
         .set("tab", app.project_tab.label().to_ascii_lowercase())
@@ -3105,6 +3122,25 @@ mod handler_tests {
         let sized = value(&mut app, &format!(r#"{{"op":"model_units","node":{part},"unit":"cm"}}"#));
         assert!((sized.get("scaled_by").and_then(Value::as_f64).unwrap() - 0.01).abs() < 1e-9);
         value(&mut app, r#"{"op":"undo"}"#);
+    }
+
+    /// A script zooms the Render window's stage and says where it looks,
+    /// as the toolbar does, and `query ui` reads it back; Pause is refused
+    /// with nothing rendering to pause.
+    #[test]
+    fn a_script_zooms_the_render_window_and_pauses_only_a_render() {
+        let mut app = TequilaApp::for_tests();
+        let view = |app: &mut TequilaApp| value(app, r#"{"op":"query","what":"ui"}"#).get("render_view").cloned().expect("query ui says how the stage is");
+        assert_eq!(view(&mut app).get("zoom").and_then(Value::as_str), Some("fit"));
+        let zoomed = value(&mut app, r#"{"op":"ui","render_view":{"zoom":"200%","at":[0.25,0.75]}}"#);
+        let stage = zoomed.get("render_view").unwrap();
+        assert_eq!(stage.get("zoom").and_then(Value::as_f64), Some(2.0));
+        assert_eq!(stage.get("at").unwrap().as_array().iter().filter_map(Value::as_f64).collect::<Vec<_>>(), [0.25, 0.75]);
+        assert!(app.render_window.open, "zoomed, the window shows");
+        value(&mut app, r#"{"op":"ui","render_view":{"zoom":"fit"}}"#);
+        assert_eq!(view(&mut app).get("zoom").and_then(Value::as_str), Some("fit"));
+        assert!(failure(&mut app, r#"{"op":"ui","render_view":{"pause":true}}"#).contains("nothing is rendering"));
+        assert_eq!(view(&mut app).get("paused").and_then(Value::as_bool), Some(false));
     }
 
     /// A turntable's frames are queued over the channel, one job a frame,
