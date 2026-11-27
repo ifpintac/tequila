@@ -1,0 +1,99 @@
+{
+  "base_color": [0.003, 0.003, 0.0035],
+  "category": "Light & Display",
+  "description": "A switched-off phone or tablet after it has been held: black cover glass, its mirror hazed by fingerprints, each with its ridges, and a wiped smear or two.",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "frequency": 22,
+          "kind": "fingerprints",
+          "prints": 0.6,
+          "ridges": 0.75,
+          "smears": 0.35,
+          "softness": 0.4
+        },
+        "seed": 9
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.02
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Display Glass Black Fingerprinted",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.02,
+  "tags": [
+    "display",
+    "screen",
+    "off",
+    "black glass",
+    "cover glass",
+    "fingerprints",
+    "smudges",
+    "used",
+    "wear",
+    "screen off",
+    "black screen",
+    "touchscreen",
+    "finger prints",
+    "smears",
+    "oily",
+    "phone front",
+    "electronics",
+    "appliances",
+    "automotive"
+  ],
+  "type": "generic"
+}
+

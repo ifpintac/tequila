@@ -250,6 +250,18 @@ pub enum Procedural {
         size: f32,
         softness: f32,
     },
+    /// Wear (`crate::wear`): scratches laid along any surface, no UVs, with
+    /// length, taper, bend, wobble, direction, layers of hairlines and
+    /// swirl marks. Not planar: `Scratches` above is the flat first one.
+    WearScratches(crate::wear::Scratches),
+    /// Wear: a dust film with specks, settling on what faces up.
+    Dust(crate::wear::Dust),
+    /// Wear: fingerprints with their ridges, and wiped smears.
+    Fingerprints(crate::wear::Fingerprints),
+    /// Wear: soft rubbed patches full of fine abrasion lines.
+    Scuffs(crate::wear::Scuffs),
+    /// Wear: edges rubbed through, from the surface's curvature.
+    EdgeWear(crate::wear::EdgeWear),
 }
 
 impl Default for Procedural {
@@ -267,7 +279,9 @@ impl Procedural {
         match self {
             Procedural::Noise { .. } => "Noise",
             Procedural::Cellular { .. } => "Cellular",
-            Procedural::Scratches { .. } => "Scratches",
+            // The first scratches, which lie flat in one plane; the ones
+            // that follow any surface are called Scratches now.
+            Procedural::Scratches { .. } => "Flat scratches",
             Procedural::Marble { .. } => "Marble",
             Procedural::Wood { .. } => "Wood",
             Procedural::WoodAdvanced { .. } => "Wood (Advanced)",
@@ -282,6 +296,11 @@ impl Procedural {
             Procedural::BrushedRadial { .. } => "Brushed (Radial)",
             Procedural::Weave { .. } => "Weave",
             Procedural::Mesh { .. } => "Perforated mesh",
+            Procedural::WearScratches(_) => "Scratches",
+            Procedural::Dust(_) => "Dust",
+            Procedural::Fingerprints(_) => "Fingerprints",
+            Procedural::Scuffs(_) => "Scuffs",
+            Procedural::EdgeWear(_) => "Edge wear",
         }
     }
 
@@ -305,6 +324,35 @@ impl Procedural {
             Procedural::BrushedRadial { .. } => "brushed_radial",
             Procedural::Weave { .. } => "weave",
             Procedural::Mesh { .. } => "mesh",
+            Procedural::WearScratches(_) => "wear_scratches",
+            Procedural::Dust(_) => "dust",
+            Procedural::Fingerprints(_) => "fingerprints",
+            Procedural::Scuffs(_) => "scuffs",
+            Procedural::EdgeWear(_) => "edge_wear",
+        }
+    }
+
+    /// Whether this is one of the wear patterns (`crate::wear`), which read
+    /// more of the shading point than its place: which way the surface
+    /// faces, how wide a pixel is there, how sharply it bends.
+    pub fn is_wear(&self) -> bool {
+        matches!(
+            self,
+            Procedural::WearScratches(_) | Procedural::Dust(_) | Procedural::Fingerprints(_) | Procedural::Scuffs(_) | Procedural::EdgeWear(_)
+        )
+    }
+
+    /// What the pattern is, flat: its middle value for most, the share of
+    /// the surface it marks on average for the wear patterns, which are
+    /// mostly nothing. What a view that cannot draw the pattern shows.
+    pub fn stand_in(&self) -> f32 {
+        match self {
+            Procedural::WearScratches(s) => s.mean(),
+            Procedural::Dust(d) => d.mean(),
+            Procedural::Fingerprints(s) => s.mean(),
+            Procedural::Scuffs(s) => s.mean(),
+            Procedural::EdgeWear(e) => e.mean(),
+            _ => 0.5,
         }
     }
 
@@ -320,8 +368,9 @@ impl Procedural {
     }
 
 
-    /// One of each, at usable defaults, for the menu.
-    pub fn catalog() -> [Procedural; 17] {
+    /// One of each, at usable defaults, for the menu: the wear patterns
+    /// last.
+    pub fn catalog() -> [Procedural; 22] {
         [
             Procedural::Noise {
                 fractal: Fractal::default(),
@@ -444,6 +493,11 @@ impl Procedural {
                 size: 0.6,
                 softness: 0.05,
             },
+            Procedural::WearScratches(crate::wear::Scratches::default()),
+            Procedural::Dust(crate::wear::Dust::default()),
+            Procedural::Fingerprints(crate::wear::Fingerprints::default()),
+            Procedural::Scuffs(crate::wear::Scuffs::default()),
+            Procedural::EdgeWear(crate::wear::EdgeWear::default()),
         ]
     }
 
@@ -451,6 +505,11 @@ impl Procedural {
     /// into the pattern's Coordinates hands it. A flat pattern lies on (u, v);
     /// a solid one is sampled on the plane z = 0 of its space.
     pub fn evaluate_uv(&self, u: f32, v: f32, seed: u32) -> f32 {
+        if self.is_wear() {
+            // A wear pattern on the plane of the mapping, facing out of it.
+            let point = crate::wear::WearPoint { normal: Vec3::Z, ..crate::wear::WearPoint::flat(vec3(u, v, 0.0)) };
+            return self.evaluate_at(&point, seed);
+        }
         if self.is_planar() {
             self.evaluate_planar(u, v, seed)
         } else {
@@ -490,8 +549,27 @@ impl Procedural {
         }
     }
 
-    /// Evaluate at an object-space point, in `[0, 1]`.
+    /// Evaluate at a shading point, in `[0, 1]`: as [`Procedural::evaluate`]
+    /// at its position, but a wear pattern reads the rest of it too.
+    pub fn evaluate_at(&self, point: &crate::wear::WearPoint, seed: u32) -> f32 {
+        use crate::wear::{self, Eval};
+        let mut at = Eval::new(*point);
+        match self {
+            Procedural::WearScratches(s) => wear::scratches(&mut at, s, seed),
+            Procedural::Dust(d) => wear::dust(&mut at, d, seed),
+            Procedural::Fingerprints(s) => wear::fingerprints(&mut at, s, seed),
+            Procedural::Scuffs(s) => wear::scuffs(&mut at, s, seed),
+            Procedural::EdgeWear(e) => wear::edge_wear(&mut at, e, seed),
+            other => other.evaluate(point.position, seed),
+        }
+    }
+
+    /// Evaluate at an object-space point, in `[0, 1]`. A wear pattern reads
+    /// it as a point on a face looking up ([`crate::wear::WearPoint::flat`]).
     pub fn evaluate(&self, position: Vec3, seed: u32) -> f32 {
+        if self.is_wear() {
+            return self.evaluate_at(&crate::wear::WearPoint::flat(position), seed);
+        }
         if self.is_planar() {
             // Flattened onto the x–z plane. A scratch or a thread is a surface
             // feature, and a 3D field would put it *through* the part rather
@@ -836,9 +914,13 @@ impl Procedural {
                 noise::perlin(vec3(radius * frequency.max(1e-4), cu * around, cv * around), seed) * 0.5 + 0.5
             }
 
-            // Flat patterns are answered above, before this match.
+            // Flat patterns are answered above, before this match, and so
+            // are the wear patterns.
             Procedural::Scratches { .. } | Procedural::Weave { .. } | Procedural::Mesh { .. } => {
                 unreachable!("planar procedurals are evaluated on their plane")
+            }
+            Procedural::WearScratches(_) | Procedural::Dust(_) | Procedural::Fingerprints(_) | Procedural::Scuffs(_) | Procedural::EdgeWear(_) => {
+                unreachable!("wear patterns are evaluated at the point")
             }
         }
     }
@@ -1071,6 +1153,15 @@ mod tests {
             | Procedural::BrushedRadial { frequency, .. }
             | Procedural::Weave { frequency, .. }
             | Procedural::Mesh { frequency, .. } => 0.08 / frequency,
+            // The wear patterns are sparse: steps wide enough for the plane
+            // to hold some of each - a scratch's width, a twentieth of a
+            // speck's cell, a print's ridge, a fiftieth of a scuff's cell -
+            // and the edge wear's breakup.
+            Procedural::WearScratches(s) => s.width / s.frequency * 5.0,
+            Procedural::Dust(d) => 0.05 / d.speck_frequency,
+            Procedural::Fingerprints(s) => 0.01 / s.frequency,
+            Procedural::Scuffs(s) => 0.02 / s.frequency,
+            Procedural::EdgeWear(e) => 0.08 / e.frequency,
         }
     }
 
@@ -1079,12 +1170,19 @@ mod tests {
     /// A plane rather than a cube: `Scratches` is a field in x and z with y
     /// unused, so a cube spends most of its samples re-measuring the same
     /// line, and a plane of the same size covers far more of the pattern.
+    ///
+    /// Through [`Procedural::evaluate_at`], with a curvature that comes and
+    /// goes along x, so the edge wear has edges to wear; everything else
+    /// reads only the position, as through [`Procedural::evaluate`].
     fn samples(p: Procedural, seed: u32, count: i32) -> Vec<f32> {
         let step = step_for(p);
         let mut out = Vec::with_capacity((count * count) as usize);
         for i in 0..count {
             for k in 0..count {
-                out.push(p.evaluate(vec3(i as f32 * step, 0.037, k as f32 * step), seed));
+                let position = vec3(i as f32 * step, 0.037, k as f32 * step);
+                let curvature = 400.0 * (0.5 + 0.5 * (i as f32 * 0.05).sin());
+                let point = crate::wear::WearPoint { curvature, ..crate::wear::WearPoint::flat(position) };
+                out.push(p.evaluate_at(&point, seed));
             }
         }
         out
@@ -1147,6 +1245,20 @@ mod tests {
                 a.iter().zip(&b).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.len() as f32;
 
             assert!(spread > 1e-3, "{} has no structure at all", procedural.label());
+            // Scratches, prints and scuffs are sparser still: marks on a
+            // mostly untouched surface, a few thousandths of it, against
+            // which a mean change says little. What matters there is that
+            // the marks are somewhere else: most of the points marked under
+            // either seed change. Edge wear is where the edges are, whatever
+            // the seed, which moves only its ragged border: a good share of
+            // what it marks, not most.
+            if procedural.is_wear() && change <= spread * 0.2 {
+                let marked = a.iter().zip(&b).filter(|(x, y)| **x > 0.01 || **y > 0.01).count();
+                let moved = a.iter().zip(&b).filter(|(x, y)| (**x - **y).abs() > 0.01).count();
+                let share = if matches!(procedural, Procedural::EdgeWear(_)) { 5 } else { 2 };
+                assert!(marked > 0 && moved * share > marked, "{}: {moved} of {marked} marked points moved", procedural.label());
+                continue;
+            }
             assert!(
                 change > spread * 0.2,
                 "{} changed by {change} against a spread of {spread}; the seed \

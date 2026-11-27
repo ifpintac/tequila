@@ -1082,6 +1082,25 @@ fn every_procedural_survives_a_round_trip() {
             size: 0.45,
             softness: 0.2,
         },
+        Procedural::WearScratches(tequila_texture::wear::Scratches {
+            frequency: 33.0,
+            density: 0.71,
+            length: 0.55,
+            length_variation: 0.25,
+            width: 0.0071,
+            taper: 0.35,
+            fade: 0.45,
+            bend: 0.6,
+            wobble: 0.15,
+            direction: tequila_texture::wear::ScratchDirection::Swirl,
+            spread: 0.12,
+            depth_variation: 0.3,
+            layers: 3,
+        }),
+        Procedural::Dust(tequila_texture::wear::Dust { frequency: 17.0, amount: 0.65, patchiness: 0.8, specks: 0.3, speck_frequency: 1300.0, up_bias: 0.4 }),
+        Procedural::Fingerprints(tequila_texture::wear::Fingerprints { frequency: 31.0, prints: 0.8, smears: 0.55, ridges: 0.35, softness: 0.65 }),
+        Procedural::Scuffs(tequila_texture::wear::Scuffs { frequency: 9.0, coverage: 0.62, stretch: 0.85, streaks: 0.2, softness: 0.3 }),
+        Procedural::EdgeWear(tequila_texture::wear::EdgeWear { radius: 0.0035, amount: 0.7, breakup: 0.25, frequency: 410.0, softness: 0.55 }),
     ];
     // One of every kind, so a kind added without a writer and reader fails
     // here rather than resetting to noise the first time a file is reopened.
@@ -1129,6 +1148,27 @@ fn every_procedural_survives_a_round_trip() {
         );
         assert_eq!(seed, 4242, "{} lost its seed", procedural.label());
     }
+}
+
+/// A wear pattern written by a version that had fewer of its settings - or
+/// none, only its kind - reads with each missing setting at the pattern's
+/// own default, rather than failing or turning to noise.
+#[test]
+fn a_wear_pattern_missing_settings_reads_with_their_defaults() {
+    use tequila_texture::procedural::Procedural;
+    use tequila_texture::wear::{Dust, EdgeWear, ScratchDirection, Scratches, Scuffs, Fingerprints};
+    let read = |text: &str| tequila_format::procedural_from_json(&tequila_format::json::parse(text.as_bytes()).expect("json")).expect("a procedural");
+    assert_eq!(read(r#"{"kind": "wear_scratches"}"#), Procedural::WearScratches(Scratches::default()));
+    assert_eq!(
+        read(r#"{"kind": "wear_scratches", "frequency": 12, "direction": "y"}"#),
+        Procedural::WearScratches(Scratches { frequency: 12.0, direction: ScratchDirection::AlongY, ..Scratches::default() })
+    );
+    // A direction this version does not know is the default one.
+    assert_eq!(read(r#"{"kind": "wear_scratches", "direction": "sideways"}"#), Procedural::WearScratches(Scratches::default()));
+    assert_eq!(read(r#"{"kind": "dust", "amount": 0.9}"#), Procedural::Dust(Dust { amount: 0.9, ..Dust::default() }));
+    assert_eq!(read(r#"{"kind": "fingerprints"}"#), Procedural::Fingerprints(Fingerprints::default()));
+    assert_eq!(read(r#"{"kind": "scuffs"}"#), Procedural::Scuffs(Scuffs::default()));
+    assert_eq!(read(r#"{"kind": "edge_wear"}"#), Procedural::EdgeWear(EdgeWear::default()));
 }
 
 /// A procedural on a *colour* parameter gets a ramp between the two, and both

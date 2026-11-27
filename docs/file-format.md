@@ -555,7 +555,13 @@ A node:
 
 Kind-specific fields: `value` on a constant, `mapping` on a mapping node,
 `texture` and `fallback` on an image texture, `from`/`to` on a remap,
-`low`/`high` on a clamp, `group` on a node group. A node group is one of
+`low`/`high` on a clamp, `group` on a node group, and `procedural` and
+`seed` on one of Tequila's patterns: the pattern's `kind` and that kind's own
+settings by name, as `material.set_procedural` takes them. The wear patterns
+(`wear_scratches`, `dust`, `fingerprints`, `scuffs`, `edge_wear`;
+`docs/02-MATERIAL-SYSTEM.md` §6.2) read a setting missing from the file at
+the pattern's default, so a file from before a setting was added still
+opens as it was. A node group is one of
 Tequila's built-in groups, named - `fdm_layer_lines`, a filament print's
 surface - with its inputs as literals or links like any node's. What is
 inside it is not written: it is the group as the Tequila opening the file

@@ -97,6 +97,7 @@ mod thumbnail;
 mod toast;
 mod ui_capture;
 mod update;
+mod wear_ui;
 mod windows;
 mod material_lab;
 mod view_timing;

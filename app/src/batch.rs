@@ -6479,6 +6479,13 @@ mod tests {
             ("Spunbond Sheet Black", 0.025),
             ("Wood Walnut Burl", 0.025),
             ("Wood Bamboo", 0.05),
+            // Worn finishes, of 2026-11-27: the wear patterns on them, on
+            // the same pixels in both.
+            ("Aluminium Brushed Scratched", 0.025),
+            ("Chrome Swirl Marks", 0.025),
+            ("ABS Black Worn", 0.025),
+            ("Automotive Black Dusty", 0.025),
+            ("Display Glass Black Fingerprinted", 0.025),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();
@@ -6972,6 +6979,168 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "patterns that differ: {wrong:#?}");
+    }
+
+    /// The wear patterns render the same in both renderers: not alike on
+    /// average, as Tequila's random patterns are, but the same scratches,
+    /// specks, prints, scuffs and worn edges on the same pixels of the
+    /// sphere, lit, read through a black-to-white ramp. Each is written once
+    /// over Cycles' own nodes (`tequila_texture::wear`), and its random
+    /// numbers are Cycles' own hashes. The edge wear reads the sphere's
+    /// curvature, which both renderers take from the mesh. Skipped where
+    /// Cycles is not installed.
+    #[test]
+    fn wear_patterns_render_the_same_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_texture::gradient::Gradient;
+        use tequila_texture::procedural::Procedural;
+        use tequila_texture::wear::{Dust, EdgeWear, ScratchDirection, Scratches, Scuffs, Fingerprints};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut wrong = Vec::new();
+        for (name, procedural) in [
+            ("wear-scratches", Procedural::WearScratches(Scratches { frequency: 1.5, width: 0.03, density: 0.9, layers: 2, ..Scratches::default() })),
+            (
+                "wear-swirls",
+                Procedural::WearScratches(Scratches { frequency: 3.0, width: 0.03, density: 1.0, direction: ScratchDirection::Swirl, layers: 1, ..Scratches::default() }),
+            ),
+            ("wear-dust", Procedural::Dust(Dust { frequency: 2.0, amount: 0.5, speck_frequency: 12.0, specks: 0.9, up_bias: 0.7, ..Dust::default() })),
+            ("wear-fingerprints", Procedural::Fingerprints(Fingerprints { frequency: 1.2, prints: 1.0, ridges: 0.3, ..Fingerprints::default() })),
+            ("wear-scuffs", Procedural::Scuffs(Scuffs { frequency: 1.2, coverage: 1.0, streaks: 0.3, ..Scuffs::default() })),
+            ("wear-edges", Procedural::EdgeWear(EdgeWear { radius: 0.8, amount: 0.5, breakup: 1.0, frequency: 4.0, softness: 0.3 })),
+        ] {
+            let [tequila, cycles] = both_engines(name, |scene| {
+                procedural_material(scene, procedural, Gradient::two(Spectrum::splat(0.02), Spectrum::splat(0.9)));
+                edges_on_the_sphere(scene);
+            });
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, sa), (mb, sb)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(&b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            let correlation = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+            eprintln!("{name}: correlation {correlation:.3}, mean {ma:.1} vs {mb:.1}, spread {sa:.1} vs {sb:.1}");
+            if sa < 10.0 || correlation < 0.9 || (mb / ma - 1.0).abs() > 0.1 {
+                wrong.push(format!("{name}: correlation {correlation:.2}, Tequila {ma:.1} bright (spread {sa:.1}), Cycles {mb:.1} (spread {sb:.1})"));
+            }
+        }
+        assert!(wrong.is_empty(), "patterns that differ: {wrong:#?}");
+    }
+
+    /// The demo sphere as though it had edges: a curvature that comes and
+    /// goes across it, for the edge wear to read in both renderers. Its own
+    /// mesh carries none (the snapshot measures a document's, not the demo's).
+    fn edges_on_the_sphere(scene: &mut tequila_render_core::scene::SceneSnapshot) {
+        let index = scene.instances[0].mesh.index();
+        let mesh = &scene.meshes[index];
+        let curvature = mesh.positions.iter().map(|p| 0.6 + 0.6 * (5.0 * p.x).sin() * (3.0 * p.y).cos()).collect();
+        scene.meshes[index] = Arc::new((**mesh).clone().with_curvature(curvature));
+    }
+
+    /// The wear presets and patterns on the library's ball in both
+    /// renderers, side by side - Tequila's on the left, Cycles' on the right
+    /// - for a person to look at: `TEQUILA_WEAR_OUT=<folder> cargo test -p
+    /// tequila-app --release wear_side_by_side -- --ignored`.
+    /// `TEQUILA_WEAR_ONLY` keeps the ones whose name has it in.
+    #[test]
+    #[ignore = "renders pictures for a person to look at"]
+    fn wear_side_by_side() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Background;
+        use tequila_texture::gradient::Gradient;
+        use tequila_texture::procedural::Procedural;
+        use tequila_texture::wear::{Dust, EdgeWear, Fingerprints, ScratchDirection, Scratches, Scuffs};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = std::path::PathBuf::from(std::env::var("TEQUILA_WEAR_OUT").expect("TEQUILA_WEAR_OUT names a folder"));
+        std::fs::create_dir_all(&folder).expect("a folder");
+        let only = std::env::var("TEQUILA_WEAR_ONLY").ok().map(|s| s.to_lowercase());
+        let (width, height, samples) = (480, 360, 256);
+        let side_by_side = |name: &str, graph: tequila_materials::graph::MaterialGraph, scale: f32| {
+            if only.as_ref().is_some_and(|only| !name.to_lowercase().contains(only.as_str())) {
+                return;
+            }
+            let mut images = Vec::new();
+            for engine in [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu] {
+                let directory = scratch(&format!("tequila-wear-{}-{}", tequila_format::library::file_stem(name), engine.key()));
+                let renderer = BatchRenderer::new();
+                let mut render = job(1, &directory, RenderSettings { engine, width, height, max_samples: samples, denoise: false, reject_fireflies: true, ..Default::default() });
+                let mut scene = (*render.scene).clone();
+                scene.environment = Arc::new(tequila_scene::demo::preview_environment());
+                scene.background = Background::Environment;
+                scene.instances.truncate(1);
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                scene = scene.with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                edges_on_the_sphere(&mut scene);
+                let resize = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(scale, scale, scale))).expect("invertible");
+                for instance in &mut scene.instances {
+                    instance.transform = resize * instance.transform;
+                }
+                // Close on the sphere, from above and to one side, so the
+                // light's reflection crosses it.
+                render.camera = tequila_render_core::camera::Camera::look_at(vec3(1.3, 2.1, 2.2) * scale, vec3(0.0, 1.0, 0.0) * scale, Vec3::Y);
+                render.scene = Arc::new(scene);
+                render.config = IntegratorConfig::product();
+                renderer.submit(render);
+                match wait_for_finish(&renderer) {
+                    BatchEvent::Finished { preview, .. } => images.push(preview),
+                    BatchEvent::Failed { message, .. } => panic!("{message}"),
+                    _ => unreachable!(),
+                }
+            }
+            let mut joined = vec![0u8; width * 2 * height * 4];
+            for (side, image) in images.iter().enumerate() {
+                for y in 0..height {
+                    let from = &image[y * width * 4..(y + 1) * width * 4];
+                    let at = (y * width * 2 + side * width) * 4;
+                    joined[at..at + width * 4].copy_from_slice(from);
+                }
+            }
+            let path = folder.join(format!("{}.png", tequila_format::library::file_stem(name)));
+            let file = std::fs::File::create(&path).expect("writable");
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), (width * 2) as u32, height as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().and_then(|mut w| w.write_image_data(&joined)).expect("written");
+            eprintln!("{}", path.display());
+        };
+        // The presets, on the library's five-centimetre ball.
+        let entries = tequila_format::library::read_directory(&crate::library_tab::standard_library_path()).0;
+        for name in ["Aluminium Brushed Scratched", "Chrome Swirl Marks", "ABS Black Worn", "Automotive Black Dusty", "Display Glass Black Fingerprinted"] {
+            let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
+            side_by_side(name, entry.graph.clone(), 0.025);
+        }
+        // Each pattern alone, read through a black-to-white ramp, on a
+        // ball twenty centimetres across.
+        for (name, procedural) in [
+            // Before: the first, flat scratches, which lie in the x-z plane
+            // and run down the ball's sides as stripes.
+            ("Pattern Flat Scratches", Procedural::Scratches { frequency: 30.0, width: 0.03, density: 0.5, spread: 0.25 }),
+            ("Pattern Scratches", Procedural::WearScratches(Scratches { frequency: 30.0, width: 0.008, ..Scratches::default() })),
+            ("Pattern Swirls", Procedural::WearScratches(Scratches { frequency: 60.0, width: 0.008, density: 1.0, direction: ScratchDirection::Swirl, spread: 0.1, layers: 1, ..Scratches::default() })),
+            ("Pattern Dust", Procedural::Dust(Dust { speck_frequency: 400.0, ..Dust::default() })),
+            ("Pattern Fingerprints", Procedural::Fingerprints(Fingerprints { frequency: 12.0, prints: 0.8, ..Fingerprints::default() })),
+            ("Pattern Scuffs", Procedural::Scuffs(Scuffs { frequency: 8.0, coverage: 0.8, ..Scuffs::default() })),
+            ("Pattern Edge Wear", Procedural::EdgeWear(EdgeWear { radius: 0.12, amount: 0.5, breakup: 0.8, frequency: 60.0, softness: 0.2 })),
+        ] {
+            use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+            use tequila_materials::material_type::{MaterialType, Param};
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            let pattern = graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(procedural), seed: 7 }));
+            let ramp = graph.add_node(Node::new(NodeKind::Gradient { gradient: Box::new(Gradient::two(Spectrum::splat(0.03), Spectrum::splat(0.85))) }));
+            graph.connect(pattern, ramp, Socket::Input(0));
+            let output = graph.output();
+            graph.connect(ramp, output, Socket::Param(Param::BaseColor));
+            side_by_side(name, graph, 0.1);
+        }
     }
 
     /// Tequila's random patterns come out of Cycles as Tequila's renderer

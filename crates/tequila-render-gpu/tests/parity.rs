@@ -1158,7 +1158,8 @@ fn the_measured_headphones_are_the_processors_picture() {
 }
 
 /// Every Tequila procedural the card runs, at the menu's settings
-/// (`Procedural::catalog`; Wood (Advanced) is not on the card): the
+/// (`Procedural::catalog`; Wood (Advanced) and the wear patterns are not on
+/// the card): the
 /// Headphones' parts, each material its constants with one pattern mixing
 /// its base colour between two and, on every other part, bumping it too;
 /// in the part's space, and on every third part through a planar mapping.
@@ -1169,7 +1170,7 @@ fn the_patterned_headphones_are_the_processors_picture() {
     use tequila_texture::procedural::Procedural;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
     let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
-    let patterns: Vec<Procedural> = Procedural::catalog().into_iter().filter(|p| !matches!(p, Procedural::WoodAdvanced { .. })).collect();
+    let patterns: Vec<Procedural> = Procedural::catalog().into_iter().filter(|p| !matches!(p, Procedural::WoodAdvanced { .. }) && !p.is_wear()).collect();
     let colour = |r: f32, g: f32, b: f32| Value::Color(tequila_core::spectrum::Spectrum { r, g, b });
     let keys: Vec<_> = document.materials.keys().collect();
     let mut names = Vec::new();

@@ -1,0 +1,442 @@
+{
+  "base_color": [0.0092, 0.0092, 0.0102],
+  "category": "Plastic",
+  "description": "Black ABS after a hard life: scuffed grey and dull where it has rubbed, fine pale scratches, and edges worn smooth and a little lighter by hands, as on an old remote or a tool's case.",
+  "edge_radius": 0.00035,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:2",
+        "to": 7
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 10
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 14
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 7,
+        "socket": "input:2",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "input:2",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 10,
+        "socket": "input:2",
+        "to": 11
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 12,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 13,
+        "socket": "input:0",
+        "to": 15
+      },
+      {
+        "from": 14,
+        "socket": "input:2",
+        "to": 15
+      },
+      {
+        "from": 15,
+        "socket": "input:0",
+        "to": 16
+      },
+      {
+        "from": 16,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 30
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.25
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.34
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 4,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "coverage": 0.5,
+          "frequency": 14,
+          "kind": "scuffs",
+          "softness": 0.55,
+          "streaks": 0.55,
+          "stretch": 0.6
+        },
+        "seed": 2
+      },
+      {
+        "id": 5,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "bend": 0.2,
+          "density": 0.45,
+          "depth_variation": 0.7,
+          "direction": "random",
+          "fade": 0.3,
+          "frequency": 34,
+          "kind": "wear_scratches",
+          "layers": 2,
+          "length": 0.8,
+          "length_variation": 0.6,
+          "spread": 0.3,
+          "taper": 0.6,
+          "width": 0.005,
+          "wobble": 0.2
+        },
+        "seed": 4
+      },
+      {
+        "id": 6,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "amount": 0.45,
+          "breakup": 0.7,
+          "frequency": 260,
+          "kind": "edge_wear",
+          "radius": 0.0015,
+          "softness": 0.35
+        },
+        "seed": 6
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -0.12
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 10,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.8
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 12,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.0092, 0.0092, 0.0102]
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "color": [0.06865793, 0.06852921, 0.07177798]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 2600
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 14,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -1.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 15,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.000003,
+        "id": 16,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "ABS Black Worn",
+  "specular_ior": 1.54,
+  "specular_roughness": 0.3,
+  "tags": [
+    "abs",
+    "black",
+    "worn",
+    "scuffed",
+    "scratched",
+    "used",
+    "wear",
+    "acrylonitrile butadiene styrene",
+    "scuffs",
+    "scuff marks",
+    "aged",
+    "weathered",
+    "abraded",
+    "housing",
+    "case",
+    "moulded",
+    "electronics",
+    "tools",
+    "appliances",
+    "audio"
+  ],
+  "type": "plastic"
+}
+
