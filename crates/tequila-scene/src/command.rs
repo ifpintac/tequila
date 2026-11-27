@@ -352,6 +352,15 @@ pub enum Command {
     /// `material.unlink` — a node given its own copy of its material, so it
     /// can be edited alone.
     UnlinkMaterial { node: NodeId },
+    /// `material.paste` — a copy of `material` put on these nodes as a
+    /// material of their own, in one step: Paste material. The copy is named
+    /// as an unlinked one is (`Paint 2`) and shared by the parts it was
+    /// pasted on together, so editing it changes none of the parts the
+    /// original is on. A group stands for every part in it.
+    PasteMaterial {
+        material: MaterialKey,
+        nodes: Vec<NodeId>,
+    },
     /// `material.set_parameter` — one parameter of a material, by its key
     /// (`base_color`, `specular_roughness`, ...).
     SetMaterialParameter {
@@ -653,6 +662,7 @@ pub enum EnvParam {
     GroundShadows,
     GroundShadowColor,
     GroundOcclusion,
+    GroundProductLight,
     GroundReflections,
     GroundReflectionBlur,
     GroundReflectionLength,
@@ -714,7 +724,7 @@ pub struct EnvUi {
 }
 
 impl EnvParam {
-    pub const ALL: [EnvParam; 26] = [
+    pub const ALL: [EnvParam; 27] = [
         EnvParam::Rotation,
         EnvParam::Brightness,
         EnvParam::Contrast,
@@ -728,6 +738,7 @@ impl EnvParam {
         EnvParam::GroundShadows,
         EnvParam::GroundShadowColor,
         EnvParam::GroundOcclusion,
+        EnvParam::GroundProductLight,
         EnvParam::GroundReflections,
         EnvParam::GroundReflectionBlur,
         EnvParam::GroundReflectionLength,
@@ -774,6 +785,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => "ground_reflection_length",
             EnvParam::GroundReflectionFadeDistance => "ground_reflection_fade_distance",
             EnvParam::GroundReflectionFresnel => "ground_reflection_fresnel",
+            EnvParam::GroundProductLight => "ground_product_light",
             EnvParam::GroundReflectionAlpha => "ground_reflection_alpha",
             EnvParam::GroundReflectionFadeBy => "ground_reflection_fade_by",
             EnvParam::GroundBounce => "ground_bounce",
@@ -819,6 +831,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => ("ground", "reflection_length"),
             EnvParam::GroundReflectionFadeDistance => ("ground", "reflection_fade_distance"),
             EnvParam::GroundReflectionFresnel => ("ground", "reflection_fresnel"),
+            EnvParam::GroundProductLight => ("ground", "product_light"),
             EnvParam::GroundReflectionAlpha => ("ground", "reflection_alpha"),
             EnvParam::GroundReflectionFadeBy => ("ground", "reflection_fade_by"),
             EnvParam::GroundBounce => ("ground", "bounce"),
@@ -904,6 +917,10 @@ impl EnvParam {
                 label: "Fainter seen from above",
                 range: (0.0, 0.0),
             },
+            EnvParam::GroundProductLight => EnvUi {
+                label: "Light from the product",
+                range: (0.0, 0.0),
+            },
             EnvParam::GroundReflectionAlpha => EnvUi {
                 label: "Reflection alpha",
                 range: (0.0, 0.0),
@@ -960,6 +977,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => EnvValue::Scalar(settings.ground.reflection_length),
             EnvParam::GroundReflectionFadeDistance => EnvValue::Scalar(settings.ground.reflection_fade_distance),
             EnvParam::GroundReflectionFresnel => EnvValue::Flag(settings.ground.reflection_fresnel),
+            EnvParam::GroundProductLight => EnvValue::Flag(settings.ground.product_light),
             EnvParam::GroundReflectionAlpha => EnvValue::Choice(settings.ground.reflection_alpha.key()),
             EnvParam::GroundReflectionFadeBy => EnvValue::Choice(settings.ground.reflection_fade_by.key()),
             EnvParam::GroundBounce => EnvValue::Flag(settings.ground.bounce),
@@ -1036,6 +1054,7 @@ impl EnvParam {
                 }
             }
             (EnvParam::GroundReflectionFresnel, EnvValue::Flag(f)) => settings.ground.reflection_fresnel = *f,
+            (EnvParam::GroundProductLight, EnvValue::Flag(f)) => settings.ground.product_light = *f,
             (EnvParam::GroundReflectionAlpha, EnvValue::Choice(c)) => {
                 if let Some(alpha) = crate::document::ReflectionAlpha::from_key(c) {
                     settings.ground.reflection_alpha = alpha;
@@ -1201,6 +1220,7 @@ impl Command {
             Command::SetUnits { .. } => "scene.set_units",
             Command::AssignMaterial { .. } => "material.assign",
             Command::UnlinkMaterial { .. } => "material.unlink",
+            Command::PasteMaterial { .. } => "material.paste",
             Command::SetMaterialParameter { .. } => "material.set_parameter",
             Command::AddDecal { .. } => "material.add_decal",
             Command::SetDecals { .. } => "material.set_decals",
@@ -1245,7 +1265,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 77] = [
+    pub const CATALOG: [&'static str; 78] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1286,6 +1306,7 @@ impl Command {
         "scene.set_units",
         "material.assign",
         "material.unlink",
+        "material.paste",
         "material.set_parameter",
         "material.rename",
         "material.set_graph",
@@ -1361,7 +1382,7 @@ impl Command {
             Command::SetVisibility { .. } | Command::SetLayerVisibility { .. } | Command::SetRays { .. } | Command::SetValues { .. } => {
                 SceneChange::VisibilityToggle
             }
-            Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
+            Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } | Command::PasteMaterial { .. } => {
                 SceneChange::MaterialAssignment
             }
             Command::SetMaterialParameter { .. } => SceneChange::MaterialParameter,
@@ -1589,6 +1610,11 @@ enum Undo {
     Unlinked {
         node: NodeId,
         previous: Option<MaterialKey>,
+        created: MaterialKey,
+    },
+    /// Paste put the copy it created on these parts, which wore these.
+    Pasted {
+        previous: Vec<(NodeId, Option<MaterialKey>)>,
         created: MaterialKey,
     },
     MaterialParameter(MaterialKey, MaterialParameter),
@@ -2165,7 +2191,7 @@ impl Reissue {
                 split: None,
                 composite: None,
             },
-            Undo::Unlinked { created, .. } => Reissue {
+            Undo::Unlinked { created, .. } | Undo::Pasted { created, .. } => Reissue {
                 node: None,
                 material: Some(*created),
                 split: None,
@@ -3000,6 +3026,41 @@ fn execute(
             })
         }
 
+        Command::PasteMaterial { material, nodes } => {
+            if document.materials.get(*material).is_none() {
+                return Err(CommandError::NoSuchMaterial(*material));
+            }
+            for &node in nodes {
+                document.tree.try_get(node)?;
+            }
+            // On the parts: a group's own material is never drawn.
+            let parts = crate::apply::parts_of(document, nodes.iter().copied());
+            if parts.is_empty() {
+                return Err(CommandError::InvalidValue("a material is pasted onto parts, and none was named"));
+            }
+            let mut previous = Vec::with_capacity(parts.len());
+            for &node in &parts {
+                check_unlocked(document, node)?;
+                previous.push((node, document.tree.try_get(node)?.material));
+            }
+            let created = match reissue.material {
+                Some(key) => {
+                    if document.materials.get(key).is_some() {
+                        return Err(CommandError::InconsistentHistory(
+                            "redo would reissue a material key that is already in use",
+                        ));
+                    }
+                    document.materials.unlink_with_key(*material, key)
+                }
+                None => document.materials.unlink(*material),
+            }
+            .ok_or(CommandError::NoSuchMaterial(*material))?;
+            for &node in &parts {
+                document.tree.get_mut(node)?.material = Some(created);
+            }
+            Ok(Undo::Pasted { previous, created })
+        }
+
         Command::AddDecal { material, source, name } => {
             let previous = document.materials.get(*material)
                 .ok_or(CommandError::NoSuchMaterial(*material))?.clone();
@@ -3776,6 +3837,14 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             created,
         } => {
             document.tree.get_mut(*node)?.material = *previous;
+            document.materials.remove(*created);
+            Ok(())
+        }
+
+        Undo::Pasted { previous, created } => {
+            for &(node, material) in previous {
+                document.tree.get_mut(node)?.material = material;
+            }
             document.materials.remove(*created);
             Ok(())
         }

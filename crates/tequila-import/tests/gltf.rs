@@ -736,6 +736,54 @@ fn a_missing_image_warns_and_imports_anyway() {
     assert_eq!(document.tree.len(), 1, "the geometry should still arrive");
 }
 
+/// A model named in Chinese, Japanese, Korean, Hindi and Spanish, in a
+/// folder named so, its part and material named so and its pictures too -
+/// one percent-encoded, as a URI should be, and one written as it is, as
+/// many exporters do - comes in whole, every picture found; and a picture
+/// packed into a GLB and named in Chinese is written out under its name.
+#[test]
+fn a_model_named_in_any_language_brings_its_pictures_in() {
+    let dir = std::env::temp_dir().join(format!("tequila-测试 日本語 한국어 हिन्दी Español-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let (colour, normal) = ("皮革 レザー.png", "가죽 चमड़ा normal.png");
+    let encoded: String = colour
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b == b'.' { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    let gltf = textured_gltf(&encoded, normal).replace("\"Part\"", "\"左镜片\"").replace("\"Painted\"", "\"フレーム素材 Cuero\"");
+    for image in [colour, normal] {
+        std::fs::write(dir.join(image), one_pixel_png()).expect("an image file");
+    }
+    let model = dir.join("眼镜 メガネ 안경 चश्मा Gafas.gltf");
+    std::fs::write(&model, gltf).expect("the model");
+
+    let mut document = SceneDocument::new();
+    let (command, report) = tequila_import::import(&document, None, &model, &ImportOptions::default()).expect("imports");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let mut bus = CommandBus::new();
+    bus.apply(&mut document, command).expect("applies");
+    assert!(document.tree.iter().any(|n| n.name == "左镜片"), "{:?}", document.tree.iter().map(|n| &n.name).collect::<Vec<_>>());
+    assert!(document.materials.iter().any(|(_, m)| m.name == "フレーム素材 Cuero"));
+    let mut paths: Vec<_> = document.textures.iter().map(|(_, s)| s.path.clone()).collect();
+    paths.sort();
+    let mut expected = vec![dir.join(colour), dir.join(normal)];
+    expected.sort();
+    assert_eq!(paths, expected);
+    assert!(paths.iter().all(|p| tequila_texture::image::Image::load(p).is_ok()));
+
+    let packed = dir.join("零件 部品.glb");
+    std::fs::write(&packed, glb_with_embedded_image(Some("皮革"))).expect("the model");
+    let mut document = SceneDocument::new();
+    let (command, report) = tequila_import::import(&document, None, &packed, &ImportOptions::default()).expect("imports");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    CommandBus::new().apply(&mut document, command).expect("applies");
+    let (_, source) = document.textures.iter().next().expect("a texture");
+    assert_eq!(source.path, dir.join("零件 部品.textures").join("皮革_0.png"));
+    assert!(tequila_texture::image::Image::load(&source.path).is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An image URI is a URI, so a space arrives percent-encoded.
 #[test]
 fn a_percent_encoded_image_name_is_decoded() {

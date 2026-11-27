@@ -4,6 +4,7 @@ use super::view::{connected, layout, NodeLayout};
 use tequila_core::math::Vec2 as GraphVec2;
 use tequila_materials::graph::{MaterialGraph, NodeId};
 use tequila_materials::material_type::Param;
+use tequila_scene::tree::MaterialKey;
 use std::collections::HashMap;
 
 /// A group's title bar, which is where it is picked up.
@@ -33,6 +34,47 @@ pub fn layouts(graph: &MaterialGraph, exposed: &[Param], previews: bool) -> Hash
 pub fn unplaced(graph: &MaterialGraph) -> bool {
     let mut places = std::collections::HashSet::new();
     graph.nodes().any(|(_, node)| !places.insert((node.position.x.to_bits(), node.position.y.to_bits())))
+}
+
+/// The layout the editor shows of a graph nobody laid out, and the graph it
+/// was made from.
+pub struct Arranged {
+    material: MaterialKey,
+    exposed: Vec<Param>,
+    from: MaterialGraph,
+    to: MaterialGraph,
+}
+
+/// What the editor shows of `graph`, the document's graph of `material`:
+/// laid out when nobody has laid it out ([`unplaced`]), as it is otherwise.
+/// Looking does not change the document: the layout is saved with the
+/// first real edit.
+///
+/// The layout is made once and kept in `kept` for as long as the graph is
+/// the one it was made from, so a pan, a box being drawn and a node held
+/// all go on showing it. It was made afresh every frame, and not at all
+/// while anything was being dragged - meant for a node being moved, which
+/// may pass exactly over another - so for as long as the button was held,
+/// in a pan with the middle button or Alt, every node of a library
+/// material went back to where the library keeps them, all on one spot; a
+/// box selected what was on that spot; and a node moved took the others
+/// there with it and sprang back when let go. Only an edit that saved the
+/// layout, such as adding a node, put it right.
+///
+/// `moving`: nodes are being moved. A graph that comes to have two at one
+/// place then is not taken for one nobody laid out.
+pub fn shown(kept: &mut Option<Arranged>, material: MaterialKey, graph: MaterialGraph, exposed: &[Param], moving: bool) -> MaterialGraph {
+    if let Some(arranged) = kept.as_ref().filter(|a| a.material == material && a.exposed == exposed && a.from == graph) {
+        return arranged.to.clone();
+    }
+    *kept = None;
+    if moving || !unplaced(&graph) {
+        return graph;
+    }
+    let mut to = graph.clone();
+    arrange(&mut to, exposed);
+    *kept = Some(Arranged { material, exposed: exposed.to_vec(), from: graph, to: to.clone() });
+    to
 }
 
 /// Whether any two nodes sit on top of each other.
@@ -180,6 +222,43 @@ mod tests {
         graph.node_mut(a).unwrap().position = GraphVec2 { x: onto.x + 24.0, y: onto.y + 24.0 };
         assert!(overlapping(&graph, &exposed));
         assert!(!unplaced(&graph), "an overlap is not a graph nobody laid out");
+    }
+
+    /// A graph nobody laid out is laid out once and shown so for as long as
+    /// it is that graph, nodes being moved or not; changed, it is shown as
+    /// it now is. One somebody laid out is shown as it is, even when a node
+    /// being moved comes to sit exactly on another.
+    #[test]
+    fn a_layout_is_kept_while_the_graph_is_the_same() {
+        let mut graph = MaterialGraph::from_material(Default::default());
+        let surface = graph.output();
+        let a = graph.add_node(Node::new(NodeKind::Constant(Value::Float(0.3))));
+        let b = graph.add_node(Node::new(NodeKind::Invert));
+        graph.connect(a, b, Socket::Input(0));
+        graph.connect(b, surface, Socket::Param(Param::SpecularRoughness));
+        let exposed = [Param::BaseColor, Param::SpecularRoughness];
+        let (key, other) = (MaterialKey(1), MaterialKey(2));
+        assert!(unplaced(&graph));
+
+        let mut kept = None;
+        let first = shown(&mut kept, key, graph.clone(), &exposed, false);
+        assert!(!unplaced(&first), "shown laid out");
+        let mut by_hand = graph.clone();
+        arrange(&mut by_hand, &exposed);
+        assert_eq!(first, by_hand, "laid out as Tidy lays it out");
+        assert_eq!(shown(&mut kept, key, graph.clone(), &exposed, true), first, "a drag lost the layout");
+        assert_eq!(shown(&mut kept, key, graph.clone(), &exposed, false), first);
+        assert_eq!(shown(&mut kept, other, graph.clone(), &exposed, true), graph, "another material's graph was shown with this one's layout");
+
+        // Moved on the layout, as the first frame of a drag commits it: the
+        // graph as it now is, and so on through the drag.
+        let mut moved = first.clone();
+        moved.node_mut(a).unwrap().position.y += 240.0;
+        assert_eq!(shown(&mut kept, key, moved.clone(), &exposed, true), moved);
+        let mut over = moved.clone();
+        over.node_mut(a).unwrap().position = over.node(b).unwrap().position;
+        assert!(unplaced(&over));
+        assert_eq!(shown(&mut kept, key, over.clone(), &exposed, true), over, "a node held exactly over another laid the whole graph out again");
     }
 
     /// Tidying moves the nodes; a group moves with the nodes it held and

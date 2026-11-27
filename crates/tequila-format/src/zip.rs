@@ -76,6 +76,68 @@ pub struct ZipWriter {
 /// USDZ writer gives it.
 const PADDING_FIELD: u16 = 0x1986;
 
+/// The general-purpose flag that says a member's name is UTF-8 (APPNOTE
+/// 6.3, bit 11). Without it a name is in IBM code page 437, and Windows'
+/// Explorer and 7-Zip show a UTF-8 name as that: 鞋.png as "Θ₧ï.png".
+const UTF8_NAME: u16 = 1 << 11;
+
+/// The extra field Info-ZIP and 7-Zip add with a name's UTF-8 spelling
+/// when they write the name itself in the computer's code page.
+const UNICODE_PATH_FIELD: u16 = 0x7075;
+
+/// The flags a member called `name` is written with: the UTF-8 flag when
+/// the name has any character outside ASCII, and none otherwise, so an
+/// archive of ASCII names is byte for byte what it always was.
+fn name_flags(name: &str) -> u16 {
+    if name.is_ascii() {
+        0
+    } else {
+        UTF8_NAME
+    }
+}
+
+/// A member's name, from the bytes its directory entry holds, its
+/// general-purpose `flags` and its `extra` field.
+///
+/// UTF-8 where the flag says so, or where an Info-ZIP Unicode Path field
+/// spells it for the same name; UTF-8 too where the bytes are valid UTF-8,
+/// as macOS's and Linux's archivers write names without the flag. Anything
+/// else is code page 437, as the format defines: one character a byte, so
+/// two names that differ stay two names rather than both becoming "�.png".
+pub fn member_name(raw: &[u8], flags: u16, extra: &[u8]) -> String {
+    let mut at = 0;
+    while at + 4 <= extra.len() {
+        let id = u16::from_le_bytes([extra[at], extra[at + 1]]);
+        let size = u16::from_le_bytes([extra[at + 2], extra[at + 3]]) as usize;
+        let Some(field) = extra.get(at + 4..at + 4 + size) else { break };
+        // Version 1, then the CRC of the name it stands for: a stale field
+        // (the name changed since it was written) is ignored.
+        if id == UNICODE_PATH_FIELD && field.len() > 5 && field[0] == 1 && field[1..5] == crc32(raw).to_le_bytes() {
+            if let Ok(name) = std::str::from_utf8(&field[5..]) {
+                return name.to_string();
+            }
+        }
+        at += 4 + size;
+    }
+    match std::str::from_utf8(raw) {
+        Ok(name) => name.to_string(),
+        Err(_) if flags & UTF8_NAME != 0 => String::from_utf8_lossy(raw).into_owned(),
+        Err(_) => raw.iter().map(|&b| if b < 0x80 { b as char } else { CP437_HIGH[b as usize - 0x80] }).collect(),
+    }
+}
+
+/// Code page 437's characters for 0x80 to 0xFF.
+const CP437_HIGH: [char; 128] = [
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', //
+    'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', //
+    'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»', //
+    '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐', //
+    '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧', //
+    '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀', //
+    'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩', //
+    '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{A0}', //
+];
+
 impl ZipWriter {
     pub fn new() -> ZipWriter {
         ZipWriter::default()
@@ -115,6 +177,7 @@ impl ZipWriter {
             let offset = out.len() as u32;
             let crc = crc32(data);
             let name_bytes = name.as_bytes();
+            let flags = name_flags(name);
             // The padding that puts the data on the alignment: an extra
             // field is at least its four-byte header, so a gap of one to
             // three bytes takes a whole alignment more.
@@ -129,7 +192,7 @@ impl ZipWriter {
 
             out.extend_from_slice(&LOCAL_HEADER.to_le_bytes());
             out.extend_from_slice(&20u16.to_le_bytes()); // version needed
-            out.extend_from_slice(&0u16.to_le_bytes()); // flags
+            out.extend_from_slice(&flags.to_le_bytes());
             out.extend_from_slice(&STORED.to_le_bytes());
             out.extend_from_slice(&FIXED_DOS_TIME.to_le_bytes());
             out.extend_from_slice(&FIXED_DOS_DATE.to_le_bytes());
@@ -149,7 +212,7 @@ impl ZipWriter {
             directory.extend_from_slice(&CENTRAL_HEADER.to_le_bytes());
             directory.extend_from_slice(&20u16.to_le_bytes()); // version made by
             directory.extend_from_slice(&20u16.to_le_bytes()); // version needed
-            directory.extend_from_slice(&0u16.to_le_bytes());
+            directory.extend_from_slice(&flags.to_le_bytes());
             directory.extend_from_slice(&STORED.to_le_bytes());
             directory.extend_from_slice(&FIXED_DOS_TIME.to_le_bytes());
             directory.extend_from_slice(&FIXED_DOS_DATE.to_le_bytes());
@@ -241,7 +304,9 @@ impl ZipArchive {
                     "a member name runs past the file".into(),
                 ));
             }
-            let name = String::from_utf8_lossy(&bytes[at + 46..name_end]).into_owned();
+            let flags = u16::from_le_bytes([bytes[at + 8], bytes[at + 9]]);
+            let extra = bytes.get(name_end..name_end + extra_length).unwrap_or(&[]);
+            let name = member_name(&bytes[at + 46..name_end], flags, extra);
 
             if method != STORED && method != DEFLATED {
                 return Err(ZipError::Unsupported(format!(
@@ -538,6 +603,66 @@ mod tests {
     #[test]
     fn two_writes_of_the_same_content_are_byte_identical() {
         assert_eq!(archive(), archive());
+    }
+
+    /// A member named in Chinese, Japanese, Korean, Hindi or Spanish is
+    /// written with the flag that says its name is UTF-8, in its local
+    /// header and its directory entry, so Explorer and 7-Zip show the name
+    /// rather than code page 437's reading of its bytes; and reads back as
+    /// it was. ASCII names are written without the flag, as before.
+    #[test]
+    fn a_name_in_any_language_is_marked_as_utf8() {
+        // 鞋 シューズ 신발 जूता Zapatón.png
+        let name = "textures/\u{978B} \u{30B7}\u{30E5}\u{30FC}\u{30BA} \u{C2E0}\u{BC1C} \u{091C}\u{0942}\u{0924}\u{093E} Zapat\u{00F3}n.png";
+        let mut writer = ZipWriter::new();
+        writer.add("plain.json", b"{}".to_vec());
+        writer.add(name, b"png".to_vec());
+        let bytes = writer.finish();
+        let flags_at = |signature: u32| -> Vec<u16> {
+            bytes
+                .windows(4)
+                .enumerate()
+                .filter(|(_, w)| *w == signature.to_le_bytes())
+                .map(|(at, _)| {
+                    let at = at + if signature == LOCAL_HEADER { 6 } else { 8 };
+                    u16::from_le_bytes([bytes[at], bytes[at + 1]])
+                })
+                .collect()
+        };
+        assert_eq!(flags_at(LOCAL_HEADER), [0, UTF8_NAME]);
+        assert_eq!(flags_at(CENTRAL_HEADER), [0, UTF8_NAME]);
+        let read = ZipArchive::read(&bytes).unwrap();
+        assert_eq!(read.names(), ["plain.json", name]);
+        assert_eq!(read.get(name).unwrap(), b"png");
+    }
+
+    /// Names other archivers wrote: UTF-8 with the flag or without it, an
+    /// Info-ZIP Unicode Path field's spelling of a name written in the
+    /// computer's code page (unless it is stale), and code page 437 for
+    /// bytes that are not UTF-8, two such names staying two names.
+    #[test]
+    fn member_names_read_as_their_archivers_wrote_them() {
+        let utf8 = "\u{6D4B}\u{8BD5}.png".as_bytes();
+        assert_eq!(member_name(utf8, UTF8_NAME, &[]), "\u{6D4B}\u{8BD5}.png");
+        assert_eq!(member_name(utf8, 0, &[]), "\u{6D4B}\u{8BD5}.png");
+        // 测试.png in GBK, as Explorer on a Chinese Windows writes it, with
+        // 7-Zip's Unicode Path field beside it.
+        let gbk = b"\xb2\xe2\xca\xd4.png";
+        let field = |crc: u32| -> Vec<u8> {
+            let mut out = UNICODE_PATH_FIELD.to_le_bytes().to_vec();
+            out.extend(((5 + utf8.len()) as u16).to_le_bytes());
+            out.push(1);
+            out.extend(crc.to_le_bytes());
+            out.extend(utf8);
+            out
+        };
+        let mut extra = vec![0x55, 0x54, 1, 0, 0];
+        extra.extend(field(crc32(gbk)));
+        assert_eq!(member_name(gbk, 0, &extra), "\u{6D4B}\u{8BD5}.png", "after another field");
+        assert_eq!(member_name(gbk, 0, &field(crc32(b"other.png"))), "\u{2593}\u{0393}\u{2569}\u{2558}.png", "a stale field is ignored");
+        assert_eq!(member_name(b"caf\x82.png", 0, &[]), "caf\u{00E9}.png");
+        assert_ne!(member_name(b"a\x81.png", 0, &[]), member_name(b"a\x82.png", 0, &[]));
+        assert_eq!(member_name(b"plain.json", 0, &[0xff]), "plain.json", "a torn extra field");
     }
 
     /// Known-answer, against the standard CRC-32 check value.

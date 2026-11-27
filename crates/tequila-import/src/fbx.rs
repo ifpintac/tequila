@@ -590,7 +590,7 @@ fn texture(map: &ufbx::MaterialMap, role: MapRole) -> Option<RawTexture> {
     if !file.content.is_empty() {
         // Packed: a plain name to write it out under, beside the model.
         let stem = named.rsplit(['/', '\\']).next().unwrap_or("");
-        let mut safe: String = stem.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+        let mut safe = crate::plain_file_name(stem);
         if safe.trim_matches(['_', '.']).is_empty() {
             let content: &[u8] = &file.content;
             let extension = if content.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else if content.starts_with(&[0xFF, 0xD8, 0xFF]) { "jpg" } else { "bin" };

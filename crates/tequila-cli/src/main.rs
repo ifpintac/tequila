@@ -38,6 +38,7 @@ use tequila_scene::snapshot::{snapshot, visible_bounds, MeshCache};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod devices;
 mod farm;
 mod mcp;
 mod noise_bench;
@@ -83,8 +84,12 @@ struct Options {
     /// Render with Cycles (true) or Tequila's own path tracer (false);
     /// unsaid, a project renders with its own engine.
     cycles: Option<bool>,
-    /// The Cycles device: CPU, OPTIX, CUDA, or an id; unsaid, the engine's.
+    /// The Cycles device: CPU, OPTIX, CUDA, or an id; or devices from
+    /// `--devices`' list (`devices.rs`); unsaid, the engine's, on the
+    /// devices Preferences › Rendering chose for final renders here.
     device: Option<String>,
+    /// List the devices here, and stop.
+    list_devices: bool,
     /// Whether `-o` was given, rather than defaulted: an export-only run
     /// renders nothing else.
     output_set: bool,
@@ -189,6 +194,7 @@ impl Default for Options {
             caustics_method: None,
             cycles: None,
             device: None,
+            list_devices: false,
             output_set: false,
             silhouette: false,
             camera: None,
@@ -277,9 +283,15 @@ usage: tequila [options]
                         when tequila_cycles.dll is installed (default: a
                         project's own engine, else tequila)
       --device NAME     Cycles: CPU, OPTIX, CUDA; Tequila's renderer: CPU,
-                        or GPU (experimental, docs/07) (default: the
+                        or GPU (experimental, docs/07) - or the devices
+                        --devices lists, between commas: cpu, gpu:2, or a
+                        card's name; Cycles renders on all of them, and
+                        Tequila's renderer on the first card (default: the
                         engine's - a project's graphics-card engine uses the
-                        card, else the processor)
+                        devices Preferences › Rendering chose for final
+                        renders here, else the processor)
+      --devices         list the processor and graphics cards here, each
+                        with the name --device takes, and stop
       --hdri PATH       light with an HDR or EXR environment
       --hdri-rotation D turn the environment by D degrees
       --no-ground       no floor: the model floats
@@ -440,6 +452,7 @@ fn parse_args() -> Result<Options, String> {
                 options.wireframe = true;
             }
             "--self-test" => options.self_test = true,
+            "--devices" => options.list_devices = true,
             "--cpu-only" => options.cpu_only = true,
             "--facts-only" => options.facts_only = true,
             "--resume" => options.resume = true,
@@ -599,6 +612,7 @@ fn main() {
         },
         None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
         None if options.self_test => test_this_computer(&options),
+        None if options.list_devices => devices::list(),
         None if options.substance_info.is_some() => substance_info(options.substance_info.as_deref().unwrap_or_default()),
         None if options.mcp => mcp::run(options.discovery.as_deref(), options.restricted, options.assistant.as_deref()),
         None if options.serve => serve::run(&options),
@@ -1352,9 +1366,39 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         let wide = project && settings.effective_depth() != tequila_scene::render::BitDepth::Eight;
         return draw_wireframe(output, &device, &scene, &camera, width, height, &look, keep_alpha || silhouette, wide);
     }
-    let (cycles, cycles_device, why) = engine_choice(options.cycles, options.device.as_deref(), project.then_some(&settings), &tequila_render_cycles::devices);
+    // `--device` against the devices here (`devices.rs`).
+    let (asked, listed) = match options.device.as_deref() {
+        Some(text) => {
+            let (asked, listed) = devices::Asked::parse(text, devices::catalogue)?;
+            (Some(asked), listed)
+        }
+        None => (None, None),
+    };
+    let lists = tequila_render_cycles::devices::has_device_lists();
+    let named = match (&asked, &listed) {
+        (Some(devices::Asked::Named(name)), _) => Some(name.clone()),
+        (Some(devices::Asked::Chosen(choice)), Some(catalogue)) => {
+            let plan = devices::plan(catalogue, choice, lists);
+            for note in &plan.notes {
+                println!("  {note}");
+            }
+            Some(plan.device)
+        }
+        _ => None,
+    };
+    let (cycles, mut cycles_device, why) = engine_choice(options.cycles, named.as_deref(), project.then_some(&settings), &tequila_render_cycles::devices);
     if let Some(why) = why {
         println!("  {why}");
+    }
+    // A project's Cycles on the graphics card, with no --device: on what
+    // Preferences › Rendering chose for final renders on this computer, as
+    // the application renders it.
+    if cycles && options.device.is_none() && cycles_device != "CPU" {
+        let plan = devices::plan(&devices::with_cards_renderer(false), &devices::saved_final_choice(), lists);
+        for note in &plan.notes {
+            println!("  {note}");
+        }
+        cycles_device = plan.device;
     }
     let cycles_scene = cycles.then(|| scene.clone());
 
@@ -1396,10 +1440,16 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     // `--device GPU` with Tequila's own renderer: its first transport on the
     // graphics card (docs/07 R2.5), every surface grey and diffuse until R3
     // brings the materials over.
-    let on_card = options.device.as_deref().is_some_and(|d| d.eq_ignore_ascii_case("gpu"));
+    // `--device gpu:2` or a card's name: that card, the first of several.
+    let chosen_card = match (&asked, &listed) {
+        (Some(devices::Asked::Chosen(choice)), Some(catalogue)) => devices::card_for(catalogue, choice),
+        _ => None,
+    };
+    let on_card = options.device.as_deref().is_some_and(|d| d.eq_ignore_ascii_case("gpu")) || chosen_card.is_some();
     let card = if on_card {
-        let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
-            .map_err(|why| format!("--device GPU: {why}"))?;
+        let wanted = chosen_card.as_ref().map(|(name, ordinal)| (name.as_str(), *ordinal));
+        let gpu = tequila_render_gpu::GpuDevice::on(tequila_render_gpu::Needs::RayQueries, wanted)
+            .map_err(|why| format!("--device {}: {why}", options.device.as_deref().unwrap_or("GPU")))?;
         println!(
             "  on the graphics card, {}: materials, glass among them, volumes that scatter, subsurface scattering, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor, the lamps, background colours and backplates, depth of field, shifted, orthographic and 360-degree cameras, pixel filters, a dome of a size, parts hidden from some rays and held out, shadow links, parts and lamps that cast no shadow, IES lamps, the floor's shadows from the lamps, direct lighting off, metallic flakes, thin films, dispersion, rendering by wavelength; caustics, fibres, cutaways and Volume Maps are still to come (docs/07 R3)",
             gpu.describe()
@@ -1669,7 +1719,11 @@ fn render_with_cycles(
 
     println!(
         "rendering {}x{} at {} spp with Cycles on {}",
-        width, height, samples, device
+        width,
+        height,
+        samples,
+        // Several devices are a line each.
+        device.replace('\n', " + ")
     );
     let start = Instant::now();
     let rgba = session.render(width, height, samples, |fraction, _| {

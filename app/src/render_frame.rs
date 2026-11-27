@@ -7,10 +7,12 @@
 //! more than the view did. With the frame on, the picture is drawn at the
 //! render's shape, centred, and the rest of the viewport is left empty, so
 //! the view holds exactly what the render will.
+//!
+//! The render's size is said beside the frame by the viewport's size chip
+//! (`image_size`), which used to be a line of text drawn here.
 
 use crate::theme;
 use eframe::egui;
-use tequila_scene::render::RenderSettings;
 
 /// The largest rectangle of a `width` by `height` image that fits in `area`,
 /// centred, in whole points so the picture is never stretched by a fraction
@@ -29,9 +31,8 @@ pub fn fit(area: egui::Rect, width: usize, height: usize) -> egui::Rect {
     egui::Rect::from_min_size((area.center() - size * 0.5).round(), size)
 }
 
-/// The empty bands either side of the picture, a hairline round it, and the
-/// render's size beside it where there is room.
-pub fn draw(painter: &egui::Painter, area: egui::Rect, frame: egui::Rect, settings: &RenderSettings) {
+/// The empty bands either side of the picture, and a hairline round it.
+pub fn draw(painter: &egui::Painter, area: egui::Rect, frame: egui::Rect) {
     let palette = theme::p();
     let bands = [
         egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, frame.min.y)),
@@ -43,24 +44,6 @@ pub fn draw(painter: &egui::Painter, area: egui::Rect, frame: egui::Rect, settin
         painter.rect_filled(band, 0.0, palette.chrome);
     }
     painter.rect_stroke(frame.expand(0.5), 0.0, egui::Stroke::new(1.0_f32, palette.line_strong));
-
-    // Under the picture's bottom-right corner when the bands are above and
-    // below, beside it when they are left and right.
-    let text = format!("{} × {}", settings.width, settings.height);
-    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), palette.text_dim);
-    let size = galley.size();
-    let below = area.max.y - frame.max.y;
-    let beside = area.max.x - frame.max.x;
-    let at = if below >= size.y + 8.0 {
-        Some(egui::pos2(frame.max.x - size.x - 8.0, frame.max.y + (below.min(28.0) - size.y) * 0.5))
-    } else if beside >= size.x + 16.0 {
-        Some(egui::pos2(frame.max.x + 8.0, frame.max.y - size.y))
-    } else {
-        None
-    };
-    if let Some(at) = at {
-        painter.galley(at, galley, palette.text_dim);
-    }
 }
 
 #[cfg(test)]

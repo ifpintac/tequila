@@ -37,6 +37,12 @@ The name is exactly as the search gave it. The listed parts share one new materi
 {"command": "material.unlink", "node": 12}
 ```
 
+To put a copy of one material on other parts, theirs alone, as the app's Paste material does - one step, one new material shared by those parts:
+
+```json
+{"command": "material.paste", "material": 7, "nodes": [13, 14]}
+```
+
 **A finish, a number, or a plain material's colour** - one parameter by its key:
 
 ```json

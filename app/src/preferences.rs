@@ -64,6 +64,9 @@ pub enum Kind {
     /// One of these: each a key, for the file and a script, and its words.
     Choice(&'static [(&'static str, &'static str)]),
     Folder,
+    /// Which devices render (`render_devices`): `auto`, or devices between
+    /// semicolons. Drawn as one grid with the other setting of its kind.
+    Devices,
 }
 
 /// The window's pages, in its order.
@@ -74,6 +77,7 @@ pub enum Page {
     Viewport,
     Navigation,
     Keyboard,
+    Rendering,
     Import,
     Folders,
     Updates,
@@ -81,8 +85,18 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 9] =
-        [Page::General, Page::Interface, Page::Viewport, Page::Navigation, Page::Keyboard, Page::Import, Page::Folders, Page::Updates, Page::Advanced];
+    pub const ALL: [Page; 10] = [
+        Page::General,
+        Page::Interface,
+        Page::Viewport,
+        Page::Navigation,
+        Page::Keyboard,
+        Page::Rendering,
+        Page::Import,
+        Page::Folders,
+        Page::Updates,
+        Page::Advanced,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -91,6 +105,7 @@ impl Page {
             Page::Viewport => "Viewport",
             Page::Navigation => "Navigation",
             Page::Keyboard => "Keyboard",
+            Page::Rendering => "Rendering",
             Page::Import => "Import",
             Page::Folders => "Folders",
             Page::Updates => "Updates",
@@ -106,6 +121,7 @@ impl Page {
             Page::Viewport => "viewport",
             Page::Navigation => "navigation",
             Page::Keyboard => "keyboard",
+            Page::Rendering => "rendering",
             Page::Import => "import",
             Page::Folders => "folders",
             Page::Updates => "updates",
@@ -124,6 +140,7 @@ impl Page {
             Page::Viewport => "What the view shows, and how the Rendered view draws.",
             Page::Navigation => "How the mouse, a trackpad and a 3D mouse move the view.",
             Page::Keyboard => "Which keys do what. Click a key, then press the one you want.",
+            Page::Rendering => "Which processor and graphics cards render, kept for this computer.",
             Page::Import => "How model files are read.",
             Page::Folders => "Where Tequila keeps things.",
             Page::Updates => "New versions of Tequila.",
@@ -139,6 +156,7 @@ impl Page {
             Page::Viewport => Icon::Eye,
             Page::Navigation => Icon::Camera,
             Page::Keyboard => Icon::Keyboard,
+            Page::Rendering => Icon::Aperture,
             Page::Import => Icon::Import,
             Page::Folders => Icon::FolderOpen,
             Page::Updates => Icon::Download,
@@ -189,6 +207,10 @@ impl Setting {
             }
             (Kind::Folder, Value::Text(text)) => Ok(Value::Text(text.trim().to_string())),
             (Kind::Folder, other) => Err(format!("`{}` is a folder's path, not {}", self.key, other.to_text())),
+            (Kind::Devices, Value::Text(text)) => tequila_render_core::devices::Choice::parse(&text)
+                .map(|choice| Value::Text(choice.to_text()))
+                .map_err(|why| format!("`{}`: {why}", self.key)),
+            (Kind::Devices, other) => Err(format!("`{}` is `auto` or devices between semicolons, not {}", self.key, other.to_text())),
         }
     }
 
@@ -202,7 +224,7 @@ impl Setting {
                 _ => return Err(format!("`{}` is on or off, not `{text}`", self.key)),
             },
             Kind::Number { .. } => Value::Number(text.parse::<f64>().map_err(|_| format!("`{}` is a number, not `{text}`", self.key))?),
-            Kind::Choice(_) | Kind::Folder => Value::Text(text.to_string()),
+            Kind::Choice(_) | Kind::Folder | Kind::Devices => Value::Text(text.to_string()),
         };
         self.checked(value)
     }
@@ -230,6 +252,12 @@ impl Setting {
             (Kind::Toggle, Value::Bool(on)) => if *on { "on" } else { "off" }.to_string(),
             (Kind::Number { decimals, suffix, .. }, Value::Number(n)) => format!("{n:.*}{suffix}", *decimals),
             (Kind::Choice(options), Value::Text(key)) => options.iter().find(|(k, _)| k == key).map_or(key.clone(), |(_, label)| (*label).to_string()),
+            (Kind::Devices, Value::Text(text)) => match tequila_render_core::devices::Choice::parse(text) {
+                Ok(tequila_render_core::devices::Choice::Chosen(keys)) => {
+                    keys.iter().map(|key| tequila_render_core::devices::name_in(key)).collect::<Vec<_>>().join(", ")
+                }
+                _ => "chosen by Tequila".to_string(),
+            },
             (_, value) => value.to_text(),
         }
     }
@@ -289,6 +317,8 @@ pub struct Prefs {
     pub tooltip_delay: f32,
     /// How the material library shows its shelf.
     pub library_view: crate::library_tab::View,
+    /// How wide the library's panel was dragged, in points.
+    pub library_width: f32,
     /// The Material Graph editor's browser, down its left side.
     pub graph_browser: bool,
     /// What a session starts with: its shading and what the view shows.
@@ -298,6 +328,8 @@ pub struct Prefs {
     pub show_render_frame: bool,
     pub show_statistics: bool,
     pub show_model_edges: bool,
+    /// Each light's shape and size over the view (`light_outlines`).
+    pub show_light_outlines: bool,
     pub show_outline: bool,
     pub show_gizmo: bool,
     /// The gizmo's size on screen, in percent of its usual.
@@ -317,6 +349,10 @@ pub struct Prefs {
     /// drags, used when that is Custom (`navigation`).
     pub nav_preset: crate::navigation::Preset,
     pub nav_custom: crate::navigation::Scheme,
+    /// The devices the Rendered view and final renders render on, for this
+    /// computer (`render_devices`).
+    pub view_devices: tequila_render_core::devices::Choice,
+    pub final_devices: tequila_render_core::devices::Choice,
 }
 
 impl Default for Prefs {
@@ -328,6 +364,7 @@ impl Default for Prefs {
             tooltips: true,
             tooltip_delay: 0.5,
             library_view: crate::library_tab::View::default(),
+            library_width: crate::library_tab::PANEL_WIDTH,
             graph_browser: true,
             shading: ViewMode::default(),
             show_grid: false,
@@ -335,6 +372,7 @@ impl Default for Prefs {
             show_render_frame: true,
             show_statistics: false,
             show_model_edges: false,
+            show_light_outlines: true,
             show_outline: true,
             show_gizmo: true,
             gizmo_size: 100.0,
@@ -348,6 +386,8 @@ impl Default for Prefs {
             trackpad_orbits: false,
             nav_preset: crate::navigation::Preset::default(),
             nav_custom: crate::navigation::Preset::default().scheme().expect("Tequila's own has drags"),
+            view_devices: tequila_render_core::devices::Choice::Auto,
+            final_devices: tequila_render_core::devices::Choice::Auto,
         }
     }
 }
@@ -515,6 +555,32 @@ macro_rules! own_number {
 
 const STARTS: &str = "When Tequila starts";
 
+const DEVICES: &str = "Rendering devices";
+
+/// One of the two choices of devices (`render_devices`): for the Rendered
+/// view, which starts again on them, or for final renders, which a render
+/// takes as it starts.
+macro_rules! own_devices {
+    ($key:literal, $label:literal, $help:literal, $field:ident) => {
+        Setting {
+            key: $key,
+            page: Page::Rendering,
+            group: DEVICES,
+            label: $label,
+            help: $help,
+            kind: Kind::Devices,
+            own: true,
+            default: || Value::Text(tequila_render_core::devices::Choice::Auto.to_text()),
+            get: |app| Value::Text(app.prefs.$field.to_text()),
+            set: |app, value| {
+                app.prefs.$field = tequila_render_core::devices::Choice::parse(&text(value))?;
+                app.submit();
+                Ok(())
+            },
+        }
+    };
+}
+
 /// Every setting, in the order the window shows them.
 pub static SETTINGS: &[Setting] = &[
     // ---- General ---------------------------------------------------------
@@ -673,6 +739,24 @@ pub static SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "interface.library_width",
+        page: Page::Interface,
+        group: "Material library",
+        label: "Width",
+        help: "How wide the library beside the view is. Drag its edge to change it: wider, it shows more materials across. A window too narrow for it shows it narrower, and keeps the width for when there is room.",
+        kind: Kind::Number { min: 260.0, max: 720.0, decimals: 0, suffix: " px", logarithmic: false },
+        own: true,
+        default: || Value::Number(crate::library_tab::PANEL_WIDTH as f64),
+        get: |app| Value::Number(app.prefs.library_width as f64),
+        set: |app, value| {
+            if let Value::Number(width) = value {
+                app.prefs.library_width = width as f32;
+                app.library.width = width as f32;
+            }
+            Ok(())
+        },
+    },
     own_toggle!(
         "interface.graph_browser",
         Interface,
@@ -732,6 +816,18 @@ pub static SETTINGS: &[Setting] = &[
         "The parts' edges drawn in Solid and Material Preview.",
         show_model_edges,
         |app, on| app.show_model_edges = on
+    ),
+    // Kept the moment the viewport's button or View › Light outlines is
+    // clicked, as the composition guides beside it are: read where it is
+    // drawn, it has no session field of its own to set.
+    own_toggle!(
+        "viewport.light_outlines",
+        Viewport,
+        STARTS,
+        "Light outlines",
+        "Each light's shape and size drawn over the view, in every shading. They never appear in screenshots or renders.",
+        show_light_outlines,
+        |_app, _on| {}
     ),
     own_toggle!(
         "viewport.selection_outline",
@@ -811,6 +907,19 @@ pub static SETTINGS: &[Setting] = &[
         0,
         "",
         true
+    ),
+    // ---- Rendering -------------------------------------------------------
+    own_devices!(
+        "rendering.view_devices",
+        "Rendered view",
+        "The processor (CPU) and graphics cards (GPUs) the Rendered view renders on. Tequila chooses unless you do: the graphics cards of the best one's class, without the processor. A small card beside a big one holds it back, and several cards need the scene to fit on the smallest.",
+        view_devices
+    ),
+    own_devices!(
+        "rendering.final_devices",
+        "Final renders",
+        "The processor (CPU) and graphics cards (GPUs) final renders render on: the Render window's, the queue's and scripts'. The processor beside the cards can add a little speed to a long render, and takes every core while it does.",
+        final_devices
     ),
     // ---- Navigation ------------------------------------------------------
     Setting {
@@ -926,6 +1035,21 @@ pub static SETTINGS: &[Setting] = &[
         set: |_, value| match crate::import_settings::BlenderLights::from_key(&text(value)) {
             Some(choice) => crate::import_settings::set_blender_lights(choice),
             None => Ok(()),
+        },
+    },
+    Setting {
+        key: "import.ask",
+        page: Page::Import,
+        group: "Models",
+        label: "Show the import options for each model",
+        help: "Ask how to bring each model in: into this scene or a new one, which way up, its unit, how finely to divide a CAD file. Off, models come in as you last chose, and the window shows only how far the import has got.",
+        kind: Kind::Toggle,
+        own: false,
+        default: || Value::Bool(true),
+        get: |_| Value::Bool(crate::import_settings::choices().ask),
+        set: |_, value| match value {
+            Value::Bool(ask) => crate::import_settings::set_choices(crate::import_settings::Choices { ask, ..crate::import_settings::choices() }),
+            _ => Ok(()),
         },
     },
     // ---- Folders ---------------------------------------------------------
@@ -1225,10 +1349,23 @@ impl TequilaApp {
             self.prefs.library_view = self.library.view;
             self.keep_preferences();
         }
+        // And its edge its width: kept when the drag is let go, not at
+        // every step of it.
+        if self.library.width != self.prefs.library_width && !ctx.input(|i| i.pointer.any_down()) {
+            self.prefs.library_width = self.library.width;
+            self.keep_preferences();
+        }
         // So do the graph editor's Browser button and T.
         if self.graph_editor.show_browser != self.prefs.graph_browser {
             self.prefs.graph_browser = self.graph_editor.show_browser;
             self.keep_preferences();
+        }
+        crate::render_devices::set_final_choice(&self.prefs.final_devices);
+        // The Render window's Devices… opens the page that chooses them.
+        if crate::render_devices::preferences_asked() {
+            self.preferences.page = Page::Rendering;
+            self.preferences.search.clear();
+            self.preferences.show();
         }
         self.gizmo.scale = (self.prefs.gizmo_size / 100.0).clamp(0.25, 4.0);
         self.project.set_autosave_every(self.prefs.autosave_every());
@@ -1528,11 +1665,19 @@ fn heading(ui: &mut egui::Ui, title: &str, blurb: &str) {
 /// A page's rows under their headings, then its hand-drawn parts.
 fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Value], defaults: &[Value], blocks: &mut Blocks) {
     let mut group = "";
+    let mut devices_drawn = false;
     for &index in rows {
         let setting = &SETTINGS[index];
         if setting.group != group {
             group = setting.group;
             crate::theme::section(ui, group);
+        }
+        // The two choices of devices are one grid, a column each.
+        if let Kind::Devices = setting.kind {
+            if !std::mem::replace(&mut devices_drawn, true) {
+                devices_grid(ui, values, blocks.acts);
+            }
+            continue;
         }
         row(ui, index, &values[index], &defaults[index], blocks.acts);
     }
@@ -1585,6 +1730,22 @@ fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Val
             }),
             _ => {}
         }
+    }
+}
+
+/// Preferences › Rendering's devices, both choices in one grid
+/// (`render_devices::preferences_grid`).
+fn devices_grid(ui: &mut egui::Ui, values: &[Value], acts: &mut Vec<Act>) {
+    use tequila_render_core::devices::{Choice, Use};
+    let index = |key: &str| SETTINGS.iter().position(|s| s.key == key).expect("a setting of the table");
+    let (view, finals) = (index("rendering.view_devices"), index("rendering.final_devices"));
+    let choice = |i: usize| Choice::parse(&text(values[i].clone())).unwrap_or_default();
+    for change in crate::render_devices::preferences_grid(ui, &choice(view), &choice(finals)) {
+        let of = |purpose: Use| if purpose == Use::View { view } else { finals };
+        acts.push(match change {
+            crate::render_devices::Change::Set(purpose, chosen) => Act::Set(of(purpose), Value::Text(chosen.to_text())),
+            crate::render_devices::Change::Reset(purpose) => Act::Reset(of(purpose)),
+        });
     }
 }
 
@@ -1891,6 +2052,11 @@ pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Re
                 }
                 Kind::Folder => {
                     out.set("kind", "folder");
+                }
+                Kind::Devices => {
+                    // The devices here, by the names a choice takes.
+                    let keys = crate::render_devices::catalogue().keys();
+                    out.set("kind", "devices").set("options", keys.into_iter().map(Json::String).collect::<Vec<_>>());
                 }
             }
             out.build()
@@ -2365,5 +2531,56 @@ mod tests {
         ask(&mut app, r#"{"reset":"viewport"}"#).unwrap();
         assert!(!app.camera_tab.show_grid && app.prefs.moving_picture == MovingPicture::Balanced);
         assert!(ask(&mut app, r#"{"reset":"nowhere"}"#).is_err());
+    }
+
+    /// The library's width as its edge was dragged is kept when the drag
+    /// is let go, and the next session's library opens that wide; a file
+    /// from before there was a width opens at the usual one, and a script
+    /// is held to the widths the edge drags between.
+    #[test]
+    fn the_librarys_width_is_kept_between_sessions() {
+        let folder = std::env::temp_dir().join(format!("tequila-library-width-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("preferences.txt");
+        // Written before the width was a setting.
+        std::fs::write(&file, "interface.library_view=list\n").unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.load_preferences(file.clone());
+        assert_eq!(app.library.width, crate::library_tab::PANEL_WIDTH, "an older file did not open at the usual width");
+        assert_eq!(app.library.view, crate::library_tab::View::List);
+
+        let ctx = egui::Context::default();
+        let frame = |app: &mut TequilaApp, down: bool| {
+            let mut input = egui::RawInput::default();
+            if down {
+                input.events = vec![
+                    egui::Event::PointerMoved(egui::pos2(300.0, 300.0)),
+                    egui::Event::PointerButton { pos: egui::pos2(300.0, 300.0), button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                ];
+            } else {
+                input.events = vec![egui::Event::PointerButton { pos: egui::pos2(300.0, 300.0), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
+            }
+            let _ = ctx.run(input, |ctx| app.apply_preferences(ctx));
+        };
+        // The edge dragged: not written while the button is held.
+        frame(&mut app, true);
+        app.library.width = 452.0;
+        frame(&mut app, true);
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("interface.library_width"), "written in the middle of the drag");
+        frame(&mut app, false);
+        let kept = std::fs::read_to_string(&file).unwrap();
+        assert!(kept.contains("interface.library_width=452\n"), "{kept}");
+
+        let mut next = TequilaApp::for_tests();
+        next.load_preferences(file.clone());
+        assert_eq!(next.library.width, 452.0, "the next session's library is not as wide");
+
+        next.set_preference("interface.library_width", Value::Number(5000.0)).unwrap();
+        assert_eq!(next.library.width, 720.0);
+        // Put back, as the window's reset mark does.
+        next.set_preference("interface.library_width", (setting("interface.library_width").unwrap().default)()).unwrap();
+        assert_eq!(next.library.width, crate::library_tab::PANEL_WIDTH);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

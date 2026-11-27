@@ -61,11 +61,18 @@ FSC_API void fsc_init(const char *kernel_dir);
 /* Devices Cycles can use here, one per line: "TYPE\tdescription\tid". */
 FSC_API const char *fsc_devices(void);
 
-/* A session on a device: "CPU", "OPTIX", "CUDA" or "HIP" (the first device of
- * that type), or an id from fsc_devices(). threads = 0 uses every core.
- * kernel_dir is where precompiled GPU kernels live (may be NULL for CPU).
- * Returns NULL on failure. */
+/* A session on a device: "CPU", "OPTIX", "CUDA", "HIP" or "METAL" (every
+ * device of that type, rendering together), or an id from fsc_devices() (that
+ * device alone) - or several of these, one per line, rendering together: the
+ * graphics cards a person chose and the processor beside them, say. A live
+ * session leaves the processor out of several, as Cycles does for Blender's
+ * viewport. A library has lists when it has fsc_session_devices.
+ * threads = 0 uses every core. kernel_dir is where precompiled GPU kernels
+ * live (may be NULL for CPU). Returns NULL on failure. */
 FSC_API FscSession *fsc_create(const char *device, int threads, const char *kernel_dir);
+/* The devices a session renders on, as fsc_devices lists them: one line, or
+ * one for each of several rendering together. Valid until the next call. */
+FSC_API const char *fsc_session_devices(FscSession *session);
 /* The same, for a final render someone watches: while fsc_render runs,
  * Cycles hands over its picture so far every second or two, as it does for
  * Blender's render window, for fsc_render_preview to copy out. */

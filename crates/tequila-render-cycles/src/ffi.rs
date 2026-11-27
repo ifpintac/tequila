@@ -136,6 +136,9 @@ api! {
         fsc_render_preview: fn(*mut Session, c_int, c_int, *mut f32, c_int, *mut c_int, *mut c_int, *mut c_int, *mut u64) -> c_int;
         fsc_live_set_moving: fn(*mut Session, c_int);
         fsc_live_kernel_loads: fn(*mut Session) -> c_int;
+        // Its presence also says `fsc_create` takes several devices, a line
+        // each (`devices::plan`).
+        fsc_session_devices: fn(*mut Session) -> *const c_char;
     }
 }
 

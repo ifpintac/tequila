@@ -37,23 +37,68 @@ use std::sync::Arc;
 /// leaves the rest for the next, so opening the library never hitches.
 const DISK_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
 
-/// The browser's width. Fixed, not a maximum — see the note where the panel is
-/// created.
-///
-/// **Not covered by a test, and it is worth saying so.** The failure this
-/// guards against is a feedback loop between egui's content-driven panel sizing
-/// and a grid that measures itself against the space it is offered, and it
-/// cannot be reproduced headlessly: pinning the width in a test harness is
-/// exactly what stops the loop from happening. The guarantee here is structural
-/// — a panel created with `exact_width` has no mechanism by which to grow — not
-/// a test. [`columns_for`] is the half that *is* testable, and is tested.
+/// The browser's width as it first opens, and the narrowest its edge drags
+/// to: narrower, the row of filters runs out of room.
 pub const PANEL_WIDTH: f32 = 260.0;
 
-/// The widest the browser's contents may lay themselves out.
+/// The widest the browser's edge drags to: six thumbnails across at the
+/// usual preview size, thirteen at the smallest.
+pub const MAX_PANEL_WIDTH: f32 = 720.0;
+
+/// What a browser dragged wide leaves the viewport, at the least.
+const VIEWPORT_KEEPS: f32 = 480.0;
+
+/// The browser's side panel's name, which egui keeps its width under.
+const PANEL_ID: &str = "library";
+
+/// The widths the browser's edge drags between, in a window leaving the
+/// browser and the viewport `room` points between them.
+pub fn width_range(room: f32) -> egui::Rangef {
+    egui::Rangef::new(PANEL_WIDTH, (room - VIEWPORT_KEEPS).clamp(PANEL_WIDTH, MAX_PANEL_WIDTH))
+}
+
+/// The browser's side panel at `width`, the width it was left at, held to
+/// what the window leaves the viewport; and what it is shown at.
 ///
-/// Kept slightly under [`PANEL_WIDTH`] so the grid never asks for the last few
-/// pixels and starts a fight with the scroll bar.
-pub const MAX_WIDTH: f32 = PANEL_WIDTH - 16.0;
+/// It was a fixed width, and that was a guarantee: a resizable egui panel
+/// takes the width of what it drew the frame before, so contents asking for
+/// a little more widened it a little more each frame, until the viewport
+/// had nothing left. Its edge drags now, and the guarantee is kept another
+/// way: the panel is told its width every frame, and takes a new one only
+/// while its edge is being dragged ([`keep_dragged_width`]). Whatever its
+/// contents draw, it stays as wide as it was put.
+pub fn panel(ctx: &egui::Context, width: f32) -> (egui::SidePanel, Shown) {
+    let range = width_range(ctx.available_rect().width());
+    let shown = Shown { width: width.clamp(range.min, range.max), range };
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(shown.width, 1.0));
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::new(PANEL_ID), egui::containers::panel::PanelState { rect }));
+    (egui::SidePanel::left(PANEL_ID).resizable(true).width_range(range).default_width(shown.width), shown)
+}
+
+/// The width the browser's panel is shown at this frame, and the widths
+/// its edge drags between.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub width: f32,
+    range: egui::Rangef,
+}
+
+/// Keep the width the browser's edge is being dragged to, the panel drawn
+/// at `drawn`: where the pointer is, as egui measures it, and not the
+/// width of what was drawn in it. A browser held narrower by a narrower
+/// window is not being dragged, and keeps its width for when the window
+/// is wide again.
+pub fn keep_dragged_width(ctx: &egui::Context, width: &mut f32, drawn: egui::Rect, shown: Shown) {
+    // egui's name for a side panel's edge (`containers/panel.rs`): a test
+    // drags it, and fails if egui calls it something else.
+    let edge = egui::Id::new(PANEL_ID).with("__resize");
+    if ctx.dragged_id() != Some(edge) {
+        return;
+    }
+    if let Some(at) = ctx.input(|i| i.pointer.interact_pos()) {
+        *width = (at.x - drawn.left()).clamp(shown.range.min, shown.range.max);
+    }
+}
 
 /// A virtual folder, in the order §9 lists them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -191,16 +236,23 @@ impl View {
     /// How many across, how wide each is and how tall a row, in a shelf
     /// `width` wide whose thumbnails are set to `thumbnail` points.
     fn layout(self, width: f32, thumbnail: f32, label: f32) -> Layout {
+        let share = |columns: usize| ((width - GAP * (columns as f32 - 1.0)) / columns as f32).floor();
         let grid = |each: f32, label: f32| {
             let columns = columns_for(width, each);
-            let size = ((width - GAP * (columns as f32 - 1.0)) / columns as f32).floor().max(24.0);
+            let size = share(columns).max(24.0);
             Layout { columns, size, row: size + label, picture: size }
+        };
+        // A list and the cards are one across in the browser as it opens,
+        // and share a browser dragged wide enough for two out between them.
+        let lines = |least: f32, row: f32, picture: f32| {
+            let columns = across(width, least);
+            Layout { columns, size: share(columns), row, picture }
         };
         match self {
             View::Thumbnails => grid(thumbnail, 4.0 + label),
             View::Icons => grid(ICON, 0.0),
-            View::List => Layout { columns: 1, size: width, row: LIST_ROW, picture: LIST_ROW - 6.0 },
-            View::Cards => Layout { columns: 1, size: width, row: CARD_ROW, picture: CARD_ROW - 12.0 },
+            View::List => lines(LIST_LEAST, LIST_ROW, LIST_ROW - 6.0),
+            View::Cards => lines(CARD_LEAST, CARD_ROW, CARD_ROW - 12.0),
         }
     }
 }
@@ -222,6 +274,10 @@ const ICON: f32 = 40.0;
 /// The height of a line of the list, and of a card.
 const LIST_ROW: f32 = 32.0;
 const CARD_ROW: f32 = 72.0;
+/// The narrowest a line of the list and a card are drawn, side by side in
+/// a wide browser.
+const LIST_LEAST: f32 = 220.0;
+const CARD_LEAST: f32 = 260.0;
 
 pub struct LibraryTab {
     entries: Vec<LibraryEntry>,
@@ -285,6 +341,8 @@ pub struct LibraryTab {
     pub section: Section,
     /// Studio presets, the other section.
     pub studios: crate::studio_shelf::StudioShelf,
+    /// How wide the browser's panel was dragged (Preferences keeps it).
+    pub width: f32,
 }
 
 impl LibraryTab {
@@ -357,6 +415,7 @@ impl LibraryTab {
             plugin_folders: Vec::new(),
             section: Section::Materials,
             studios: Default::default(),
+            width: PANEL_WIDTH,
         };
         tab.find_shipped();
         tab
@@ -687,21 +746,23 @@ impl LibraryTab {
             return action;
         }
 
-        // The grid's width is pinned to the panel's, not derived from
-        // `available_width`.
+        // The grid's width is the panel's, and never more than the widest
+        // panel's.
         //
         // A resizable side panel grows to fit whatever its contents ask for,
         // and a grid that sizes itself from the space available asks for more
         // every time it is given more. The two together are a feedback loop:
         // the panel widens, the grid adds a column, the grid asks for more
         // width, the panel widens again — until the library has eaten the
-        // window and the viewport has none left. Clamping here breaks it.
-        let width = ui.available_width().min(MAX_WIDTH);
+        // window and the viewport has none left. The panel is told its width
+        // every frame now (`panel`), and the bound here holds the grid even
+        // where it is not.
+        let width = ui.available_width().min(MAX_PANEL_WIDTH);
         ui.set_max_width(width);
         // The preview size picks how many fit across; the tiles then share
         // the width out between them, so the grid runs edge to edge rather
         // than leaving a ragged strip down the right. A list and the cards
-        // are one across, the width of the shelf.
+        // are one across until the panel is dragged wide enough for two.
         let view = self.view;
         let label_height = ui.fonts(|f| f.row_height(&egui::FontId::proportional(12.0)));
         let Layout { columns, size, row: row_height, picture } = view.layout(width, self.thumbnail_size, label_height);
@@ -1363,11 +1424,18 @@ pub(crate) fn open_folder(folder: &std::path::Path) {
 /// without limit, and in a resizable side panel that is a loop: egui's `Grid`
 /// remembers its column layout between frames, so a first frame measured
 /// against an unconstrained width lays out a hundred columns, the panel grows
-/// to fit them, and the viewport is squeezed out of the window.
+/// to fit them, and the viewport is squeezed out of the window. The bound is
+/// the widest the panel can be dragged.
 fn columns_for(available: f32, thumbnail: f32) -> usize {
-    let usable = available.min(MAX_WIDTH) - 8.0;
+    let usable = available.min(MAX_PANEL_WIDTH) - 8.0;
     let each = (thumbnail + 12.0).max(1.0);
-    ((usable / each).floor() as usize).clamp(1, 8)
+    ((usable / each).floor() as usize).clamp(1, 16)
+}
+
+/// How many things at least `least` wide fit across `width`, with the gap
+/// between them: one at the least.
+fn across(width: f32, least: f32) -> usize {
+    (((width.min(MAX_PANEL_WIDTH) + GAP) / (least + GAP)).floor() as usize).max(1)
 }
 
 /// A key over the material's values, so a preview is reused for identical
@@ -2058,13 +2126,17 @@ mod tests {
     /// measuring the panel measures them rather than the grid.
     #[test]
     fn the_column_count_does_not_follow_an_unbounded_width() {
-        // What an unconstrained first frame offers.
-        assert!(
-            columns_for(9984.0, 64.0) <= 8,
+        // What an unconstrained first frame offers: no more than the widest
+        // panel holds.
+        assert_eq!(
+            columns_for(9984.0, 64.0),
+            columns_for(MAX_PANEL_WIDTH, 64.0),
             "an unbounded width gave {} columns",
             columns_for(9984.0, 64.0)
         );
-        assert!(columns_for(f32::INFINITY, 64.0) <= 8);
+        assert!(columns_for(f32::INFINITY, 64.0) <= 16);
+        assert!(columns_for(f32::INFINITY, 40.0) <= 16);
+        assert_eq!(across(f32::INFINITY, LIST_LEAST), across(MAX_PANEL_WIDTH, LIST_LEAST));
 
         // Realistic panel widths still fit a sensible number.
         assert_eq!(columns_for(240.0, 64.0), 3);
@@ -2172,6 +2244,102 @@ mod tests {
         let visible = tab.visible(&in_project);
         assert_eq!(visible.len(), 1);
         assert_eq!(tab.entries()[visible[0]].name, name);
+    }
+
+    /// Dragged wider, the shelf reflows: three thumbnails across where the
+    /// browser as it opens has two, more icons, and a list and the cards
+    /// two across once there is room for two; every view still runs edge
+    /// to edge.
+    #[test]
+    fn the_shelf_reflows_as_the_browser_widens() {
+        // The shelf in a panel that wide: its margins taken off.
+        let at = |panel: f32, view: View| view.layout(panel - 24.0, 96.0, 15.0);
+        assert_eq!(at(PANEL_WIDTH, View::Thumbnails).columns, 2);
+        assert_eq!(at(380.0, View::Thumbnails).columns, 3);
+        assert_eq!(at(MAX_PANEL_WIDTH, View::Thumbnails).columns, 6);
+        assert!(at(380.0, View::Icons).columns > at(PANEL_WIDTH, View::Icons).columns);
+        assert_eq!((at(PANEL_WIDTH, View::List).columns, at(PANEL_WIDTH, View::Cards).columns), (1, 1));
+        assert_eq!((at(520.0, View::List).columns, at(520.0, View::Cards).columns), (2, 1));
+        assert_eq!((at(600.0, View::List).columns, at(600.0, View::Cards).columns), (2, 2));
+        for panel in [PANEL_WIDTH, 380.0, 520.0, 600.0, MAX_PANEL_WIDTH] {
+            let width = panel - 24.0;
+            for view in View::ALL {
+                let layout = at(panel, view);
+                let used = layout.size * layout.columns as f32 + GAP * (layout.columns as f32 - 1.0);
+                assert!(used <= width && used > width - layout.columns as f32 - 1.0, "{view:?} in {panel}: {used} of {width}, {layout:?}");
+            }
+        }
+    }
+
+    /// Frames of a window with the browser's panel in it, its contents far
+    /// wider than it, and the viewport beside it.
+    struct Window {
+        ctx: egui::Context,
+        time: f64,
+    }
+
+    impl Window {
+        /// A frame of the window `wide` points across, the panel left at
+        /// `width`: the width it was shown at.
+        fn frame(&mut self, width: &mut f32, wide: f32, events: Vec<egui::Event>) -> f32 {
+            self.time += 0.05;
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(wide, 800.0));
+            let input = egui::RawInput { screen_rect: Some(screen), time: Some(self.time), events, ..Default::default() };
+            let mut drawn = 0.0;
+            let _ = self.ctx.run(input, |ctx| {
+                let (panel, shown) = panel(ctx, *width);
+                let rect = panel.show(ctx, |ui| ui.allocate_space(egui::vec2(3000.0, 40.0))).response.rect;
+                keep_dragged_width(ctx, width, rect, shown);
+                egui::CentralPanel::default().show(ctx, |_| {});
+                drawn = shown.width;
+            });
+            drawn
+        }
+
+        /// The panel's edge dragged from `from` to `to` across the window.
+        fn drag(&mut self, width: &mut f32, wide: f32, from: f32, to: f32) {
+            let at = |x: f32| egui::pos2(x, 400.0);
+            let press = |x: f32, pressed: bool| egui::Event::PointerButton { pos: at(x), button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            self.frame(width, wide, vec![egui::Event::PointerMoved(at(from))]);
+            self.frame(width, wide, vec![press(from, true)]);
+            for step in 1..=8 {
+                self.frame(width, wide, vec![egui::Event::PointerMoved(at(from + (to - from) * step as f32 / 8.0))]);
+            }
+            self.frame(width, wide, vec![press(to, false)]);
+        }
+    }
+
+    /// The browser's edge drags it wider and the width is kept, whatever
+    /// its contents ask for; never past the widest, nor narrower than it
+    /// opens; and a window too narrow for it shows it narrower, keeping
+    /// the width for when the window is wide again.
+    #[test]
+    fn the_browsers_edge_drags_and_its_width_is_kept() {
+        let mut window = Window { ctx: egui::Context::default(), time: 0.0 };
+        let mut width = PANEL_WIDTH;
+        for _ in 0..3 {
+            assert_eq!(window.frame(&mut width, 1600.0, Vec::new()), PANEL_WIDTH, "contents three thousand points wide widened the browser");
+        }
+
+        window.drag(&mut width, 1600.0, PANEL_WIDTH - 2.0, 420.0);
+        assert!((width - 420.0).abs() <= 2.5, "the edge dragged to 420 left the browser {width} wide");
+        let dragged = width;
+        for _ in 0..3 {
+            assert_eq!(window.frame(&mut width, 1600.0, Vec::new()), dragged, "the width did not stay");
+        }
+
+        // Past the widest it stops there.
+        let edge = width - 2.0;
+        window.drag(&mut width, 1600.0, edge, 1500.0);
+        assert_eq!(width, MAX_PANEL_WIDTH);
+        // A window too narrow for it: as wide as leaves the viewport its
+        // share, and the width kept for later.
+        assert_eq!(window.frame(&mut width, 1000.0, Vec::new()), 1000.0 - VIEWPORT_KEEPS);
+        assert_eq!(width, MAX_PANEL_WIDTH);
+        assert_eq!(window.frame(&mut width, 1600.0, Vec::new()), MAX_PANEL_WIDTH);
+        // Never narrower than it opens.
+        window.drag(&mut width, 1600.0, MAX_PANEL_WIDTH - 2.0, 40.0);
+        assert_eq!(width, PANEL_WIDTH);
     }
 }
 

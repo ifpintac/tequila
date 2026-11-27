@@ -458,7 +458,7 @@ fn recent_tile(ui: &mut egui::Ui, width: f32, path: &Path, picture: Option<&egui
         ui.painter().rect_filled(frame, 10.0, Color32::from_black_alpha(140));
     }
     ui.painter().rect_stroke(frame, 10.0, Stroke::new(if response.hovered() { 2.0_f32 } else { 1.0 }, if response.hovered() { p.accent } else { p.line }));
-    let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path.file_stem().map(|n| crate::fallback_fonts::drawing_order(&n.to_string_lossy()).into_owned()).unwrap_or_default();
     let detail = if there {
         let folder = path.parent().map(short_folder).unwrap_or_default();
         match modified_ago(path) {

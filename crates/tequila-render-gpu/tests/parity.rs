@@ -657,7 +657,16 @@ fn same_shot(mut scene: Shot) {
     snapshot.background = parity::background(document);
     let camera = scene.camera;
     // As the application renders it: the render's pixel filter too.
-    let config = parity::config(document);
+    let mut config = parity::config(document);
+    // TEQUILA_PARITY_BOUNCES="bounces,through glass": both renderers' limits
+    // set so, to find the depth at which paths first part (a test hook; the
+    // set's own limits are the bar's).
+    if let Ok(limits) = std::env::var("TEQUILA_PARITY_BOUNCES") {
+        let limits: Vec<u32> = limits.split(',').map(|v| v.trim().parse().expect("TEQUILA_PARITY_BOUNCES is two numbers")).collect();
+        config.max_bounces = limits[0];
+        config.max_transmission_bounces = limits[1];
+        eprintln!("{name}: {} bounces, {} through glass (TEQUILA_PARITY_BOUNCES)", limits[0], limits[1]);
+    }
 
     // Nothing in the set is a case the card renders otherwise.
     let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
