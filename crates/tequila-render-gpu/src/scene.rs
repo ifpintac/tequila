@@ -75,8 +75,11 @@ pub struct GpuInstance {
     pub flags: u32,
     /// The solid a medium is keyed by: what a path is inside of, what the
     /// probe counts crossings of, what a shadow ray's walk pairs its way
-    /// into a volume with. The instance here (integrator.rs keys media by
-    /// instance); a solid split into parts would share one.
+    /// into a volume with (`SceneSnapshot::solid`): the instance itself, or
+    /// where one solid is modelled as several parts that close each other's
+    /// open edges - a clear shell split by material - the first of them. A
+    /// walk under a surface is keyed by the instance, as the processor keys
+    /// it.
     pub solid: u32,
     /// Where its triangles start among the glowing triangles' leaves
     /// (`crate::emitters`), [`crate::emitters::EMITTER_NONE`] for a part that
@@ -356,7 +359,7 @@ impl GpuScene {
                     .into_iter()
                     .filter(|(on, _)| *on)
                     .fold(0, |flags, (_, flag)| flags | flag),
-                    solid: n as u32,
+                    solid: scene.solid(tequila_core::ids::InstanceId(n as u32)).0,
                     emitter: emitter_first.get(n).copied().unwrap_or(crate::emitters::EMITTER_NONE),
                     object_color: [inst.colour.r, inst.colour.g, inst.colour.b, 0.0],
                     inv_length_scale: inst.transform.inv_length_scale(),

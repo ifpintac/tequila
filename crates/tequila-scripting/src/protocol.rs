@@ -524,6 +524,9 @@ pub struct UiChange {
     pub selection_outline: Option<bool>,
     /// The move, turn and scale gizmo on the selection (Shift+G).
     pub gizmo: Option<bool>,
+    /// Each light's shape and size drawn over the view, as the viewport's
+    /// light outlines button shows them, for the session.
+    pub light_outlines: Option<bool>,
     /// Show the viewport at the render's shape, the rest left empty, so
     /// what is in the view is what the render will hold.
     pub frame: Option<bool>,
@@ -588,6 +591,9 @@ pub struct UiChange {
     /// a mouse would, so a script can time what an orbit, a pan or a zoom
     /// with the mouse costs.
     pub drag: Option<PointerDrag>,
+    /// The Camera tab's Pick focus, on or off: armed, a click on the model
+    /// in the viewport focuses there.
+    pub pick_focus: Option<bool>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
     /// into the screenshot folder, with its notice.
     pub save_screenshot: Option<bool>,
@@ -611,6 +617,44 @@ pub struct UiChange {
     /// Whether the Environment page's map stays at the top while the rest
     /// of the page scrolls, as its pin sets it; kept in the settings.
     pub map_in_view: Option<bool>,
+    /// The Render window's view and its Pause, as its toolbar has them.
+    pub render_view: Option<RenderViewChange>,
+}
+
+/// The Render window's stage as a script sets it. Absent fields are left
+/// alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RenderViewChange {
+    /// `Some(None)` fits the picture to the stage (`"fit"`); `Some(Some(z))`
+    /// is `z` screen pixels to a pixel of the render, 1 being 100% (`1`,
+    /// or `"100%"`).
+    pub zoom: Option<Option<f32>>,
+    /// The point of the picture at the middle of the stage, as fractions of
+    /// its width and height.
+    pub at: Option<[f32; 2]>,
+    /// The render in progress paused, or carrying on.
+    pub pause: Option<bool>,
+}
+
+fn render_view_change(value: &Value) -> Result<RenderViewChange, ProtocolError> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(ProtocolError("`render_view` is an object, such as {\"zoom\": \"100%\"}".into()));
+    }
+    let wrong = || ProtocolError("`zoom` is \"fit\", a percentage such as \"100%\", or a number above 0, 1 being 100%".into());
+    let zoom = match value.get("zoom") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) if text.trim().eq_ignore_ascii_case("fit") => Some(None),
+        Some(Value::String(text)) => {
+            let percent = text.trim().strip_suffix('%').ok_or_else(wrong)?.trim().parse::<f32>().map_err(|_| wrong())?;
+            Some(Some(percent / 100.0))
+        }
+        Some(v) => Some(Some(v.as_f32().ok_or_else(wrong)?)),
+    };
+    if zoom.flatten().is_some_and(|z| !z.is_finite() || z <= 0.0) {
+        return Err(wrong());
+    }
+    let at = optional(value, "at", "a point of the picture, [x, y], each from 0 to 1", |v| point(v).filter(|p| p.iter().all(|c| (0.0..=1.0).contains(c))))?;
+    Ok(RenderViewChange { zoom, at, pause: opt_bool(value, "pause")? })
 }
 
 /// Inspector pages' section orders as a script sets them.
@@ -1048,6 +1092,29 @@ pub struct Look {
     pub pitch: Option<f32>,
     pub distance: Option<f32>,
     pub focal_length: Option<f32>,
+    /// A point `[x, y, z]` to focus on, as the Camera tab's Pick focus
+    /// does: the focus distance becomes its depth along the view axis, the
+    /// blur comes on if it was off and Keep focus goes off
+    /// (`tequila_scene::focus`). Taken after the camera has moved.
+    pub focus: Option<[f32; 3]>,
+    /// A part to focus on, by node id: its middle, as `focus`.
+    pub focus_part: Option<u64>,
+}
+
+impl Look {
+    /// The point `focus` or `focus_part` names, in the world: `None` when
+    /// neither is given. A part's (or a group's) is the middle of its
+    /// bounds, the point Frame selected aims at.
+    pub fn focus_point(&self, document: &tequila_scene::SceneDocument) -> Result<Option<tequila_core::math::Vec3>, String> {
+        match (self.focus, self.focus_part) {
+            (Some(_), Some(_)) => Err("give `focus` (a point) or `focus_part` (a part), not both".into()),
+            (Some([x, y, z]), None) => Ok(Some(tequila_core::math::vec3(x, y, z))),
+            (None, Some(id)) => tequila_scene::gizmo::selection_bounds(document, &[tequila_scene::tree::NodeId(id)])
+                .map(|bounds| Some(bounds.center()))
+                .ok_or_else(|| format!("there is no part {id} with a shape to focus on")),
+            (None, None) => Ok(None),
+        }
+    }
 }
 
 /// The read side.
@@ -1665,6 +1732,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             edges: opt_bool(value, "edges")?,
             selection_outline: opt_bool(value, "selection_outline")?,
             gizmo: opt_bool(value, "gizmo")?,
+            light_outlines: opt_bool(value, "light_outlines")?,
             frame: opt_bool(value, "frame")?,
             help: opt_bool(value, "help")?,
             mode: opt_string(value, "mode")?,
@@ -1719,6 +1787,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             },
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
             drag: value.get("drag").filter(|v| !matches!(v, Value::Null)).map(pointer_drag).transpose()?,
+            pick_focus: opt_bool(value, "pick_focus")?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,
             window_size: optional(value, "window_size", "[width, height] in points", |v| match v.as_array() {
@@ -1763,6 +1832,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 },
             },
             map_in_view: opt_bool(value, "map_in_view")?,
+            render_view: value.get("render_view").filter(|v| !matches!(v, Value::Null)).map(render_view_change).transpose()?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1795,6 +1865,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             pitch: opt_number(value, "pitch")?,
             distance: opt_number(value, "distance")?,
             focal_length: opt_number(value, "focal_length")?,
+            focus: opt_vector(value, "focus")?,
+            focus_part: opt_index(value, "focus_part")?.map(|id| id as u64),
         }),
         other => {
             return Err(ProtocolError(format!(
@@ -2251,6 +2323,22 @@ mod tests {
         assert_eq!(change.inspector_scroll, Some(420.0));
         assert!(parse_request(r#"{"id":12,"op":"ui","inspector_scroll":-1}"#).is_err());
         assert!(parse_request(r#"{"id":13,"op":"ui","inspector_scroll":"down"}"#).is_err());
+        // The Render window's zoom, where it looks and its Pause.
+        let view = |json: &str| match parse_request(json).map(|request| request.operation) {
+            Ok(Operation::Ui(change)) => Ok(change.render_view),
+            Ok(_) => panic!("not a ui request"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(
+            view(r#"{"id":20,"op":"ui","render_view":{"zoom":"100%","at":[0.25,0.5],"pause":true}}"#).unwrap(),
+            Some(RenderViewChange { zoom: Some(Some(1.0)), at: Some([0.25, 0.5]), pause: Some(true) })
+        );
+        assert_eq!(view(r#"{"id":21,"op":"ui","render_view":{"zoom":"fit"}}"#).unwrap().unwrap().zoom, Some(None));
+        assert_eq!(view(r#"{"id":22,"op":"ui","render_view":{"zoom":2}}"#).unwrap().unwrap().zoom, Some(Some(2.0)));
+        assert_eq!(view(r#"{"id":23,"op":"ui","render_view":{"pause":false}}"#).unwrap().unwrap().zoom, None, "left alone");
+        for wrong in [r#"{"zoom":0}"#, r#"{"zoom":"close"}"#, r#"{"zoom":"-5%"}"#, r#"{"at":[2,0]}"#, r#""fit""#] {
+            assert!(view(&format!(r#"{{"id":24,"op":"ui","render_view":{wrong}}}"#)).is_err(), "{wrong} was taken");
+        }
         // The inspector's section orders, and a drag held for a picture.
         let request = parse_request(r#"{"id":14,"op":"ui","sections":{"environment":["pins","turn"],"camera":null},"section_drag":["environment","pins",1]}"#).unwrap();
         let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
@@ -2532,6 +2620,9 @@ mod control_tests {
             r#"{"op":"queue","width":"1920"}"#,
             r#"{"op":"ui","console":"yes"}"#,
             r#"{"op":"look","at":[0,1]}"#,
+            r#"{"op":"look","focus":3}"#,
+            r#"{"op":"look","focus_part":[0,0,0]}"#,
+            r#"{"op":"ui","pick_focus":"yes"}"#,
             r#"{"op":"quit","save":1}"#,
         ] {
             assert!(parse_request(line).is_err(), "{line} was accepted");
@@ -2569,9 +2660,26 @@ mod control_tests {
                 assert_eq!(look.at, Some([0.0, 0.5, 0.0]));
                 assert_eq!(look.focal_length, Some(85.0));
                 assert_eq!(look.view, None);
+                assert_eq!((look.focus, look.focus_part), (None, None));
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// `look` focuses on a point or on a part, and the viewport's picking
+    /// is turned on and off by `ui`.
+    #[test]
+    fn look_focuses_on_a_point_or_a_part() {
+        match operation(r#"{"op":"look","focus":[0.1,0.05,-0.2]}"#) {
+            Operation::Look(look) => assert_eq!(look, Look { focus: Some([0.1, 0.05, -0.2]), ..Default::default() }),
+            other => panic!("{other:?}"),
+        }
+        match operation(r#"{"op":"look","view":"front","focus_part":12}"#) {
+            Operation::Look(look) => assert_eq!((look.view.as_deref(), look.focus_part), (Some("front"), Some(12))),
+            other => panic!("{other:?}"),
+        }
+        let request = parse_request(r#"{"op":"ui","pick_focus":true}"#).unwrap();
+        assert!(matches!(request.operation, Operation::Ui(UiChange { pick_focus: Some(true), .. })));
     }
 
     #[test]

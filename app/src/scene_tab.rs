@@ -40,6 +40,11 @@ pub struct SceneTab {
     pub units_request: Option<NodeId>,
     /// A model to improve, drained likewise.
     pub improve_request: Option<NodeId>,
+    /// What the application has copied, for the material entries of a
+    /// row's menu (`part_material`), and what one of them asked for,
+    /// drained by the application, which owns the clipboard.
+    pub material_offer: crate::part_material::Offer,
+    pub material_request: Option<crate::part_material::Action>,
     /// Where each row was drawn this frame, for the tests to aim at.
     #[cfg_attr(not(test), allow(dead_code))]
     rows: Vec<(NodeId, egui::Rect)>,
@@ -831,6 +836,7 @@ impl SceneTab {
                                 tequila_import::step::Tessellation::Medium => "The default: smooth at a normal distance",
                                 tequila_import::step::Tessellation::High => "For close-ups of curved edges",
                                 tequila_import::step::Tessellation::Ultra => "For extreme close-ups; many triangles",
+                                tequila_import::step::Tessellation::Custom { .. } => "Tolerances of your own",
                             })
                             .clicked()
                         {
@@ -841,6 +847,15 @@ impl SceneTab {
                 });
             }
             ui.separator();
+
+            // Edit, Copy and Paste material, as the viewport's menu has them.
+            if matches!(project.document().tree.get(id).map(|n| &n.kind), Some(NodeKind::Part { .. } | NodeKind::Group)) {
+                if let Some(action) = crate::part_material::menu_items(ui, project.document(), &project.selection, &self.material_offer, id) {
+                    self.material_request = Some(action);
+                    ui.close_menu();
+                }
+                ui.separator();
+            }
 
             // One command each, not one per node. On a 4,000-part assembly
             // the difference is a single undo step against four thousand —

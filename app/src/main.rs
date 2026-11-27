@@ -32,6 +32,7 @@ mod scripting_tab;
 mod batch;
 mod camera_tab;
 mod environment_tab;
+mod focus_pick;
 mod gizmo_ui;
 mod label_gizmo;
 mod mapping_gizmo;
@@ -39,6 +40,7 @@ mod graph_editor;
 mod view_mode;
 mod grid;
 mod image_tab;
+mod image_size;
 mod library_actions;
 mod plugins;
 mod previews;
@@ -46,11 +48,13 @@ mod plugins_ui;
 mod library_dialogs;
 mod library_tab;
 mod mac;
+mod light_outlines;
 mod lighting_tab;
 mod material_tab;
 mod measure_tool;
 mod navigation;
 mod improve_model;
+mod import_dialog;
 mod import_settings;
 mod lighting_offer;
 mod model_units;
@@ -66,11 +70,13 @@ mod sky_panel;
 mod orchestrator;
 mod orient;
 mod pattern_panel;
+mod part_material;
 mod profile;
 mod project;
 mod readout;
 mod recent;
 mod render_frame;
+mod render_view;
 mod render_window;
 mod scene_tab;
 mod sections;
@@ -383,6 +389,8 @@ struct TequilaApp {
     toasts: toast::Toasts,
     /// The node a right-click landed on, or `None` for empty space.
     context_target: Option<tequila_scene::tree::NodeId>,
+    /// What Copy material kept (`part_material`).
+    material_clipboard: part_material::Clipboard,
     /// The parts a material being dragged would land on, outlined live.
     ///
     /// §3.1 step 2 asks for the part under the cursor to be highlighted during
@@ -398,6 +406,8 @@ struct TequilaApp {
     /// STEP assembly takes seconds to mesh, and the window stayed frozen
     /// for all of them while it was read here.
     imports: Vec<PendingImport>,
+    /// The import dialog, and the model files waiting their turn at it.
+    import_dialogs: import_dialog::Dialogs,
     /// Imports a script or an AI app asked for over the scripting channel,
     /// read on other threads as `imports` are (`channel::begin_import`).
     script_imports: Vec<channel::PendingImport>,
@@ -540,6 +550,8 @@ struct TequilaApp {
     mapping_gizmo: mapping_gizmo::MappingGizmo,
     pin_gizmo: pin_gizmo::PinGizmo,
     measure: measure_tool::MeasureTool,
+    /// The Camera tab's Pick focus, armed: a click on the model focuses there.
+    focus_pick: focus_pick::FocusPick,
     studio_tab: studio_tab::StudioTab,
     templates_panel: templates_panel::TemplatesPanel,
     /// A 3D mouse, and its preferences (`spacemouse`).
@@ -1114,10 +1126,12 @@ impl TequilaApp {
             spin_pending: Vec::new(),
             toasts: toast::Toasts::default(),
             context_target: None,
+            material_clipboard: Default::default(),
             drag_highlight: Vec::new(),
             project_tab: ProjectTab::Scene,
             pending_unit: None,
             imports: Vec::new(),
+            import_dialogs: Default::default(),
             script_imports: Vec::new(),
             view_left: None,
             view_moves_by_hand: 0,
@@ -1178,6 +1192,7 @@ impl TequilaApp {
             mapping_gizmo: mapping_gizmo::MappingGizmo::default(),
             pin_gizmo: pin_gizmo::PinGizmo::default(),
             measure: measure_tool::MeasureTool::default(),
+            focus_pick: focus_pick::FocusPick::default(),
             studio_tab: studio_tab::StudioTab::default(),
             templates_panel: templates_panel::TemplatesPanel::default(),
             spacemouse: spacemouse::SpaceMouse::default(),
@@ -1495,6 +1510,9 @@ struct PendingImport {
     receiver: std::sync::mpsc::Receiver<Result<Arrived, tequila_import::ImportError>>,
     /// When it started, for the status line's running time.
     started: std::time::Instant,
+    /// What the import dialog asked for once it is in; `None` frames the
+    /// camera on the scene, as an import always did.
+    plan: Option<import_dialog::Plan>,
 }
 
 /// What Presentation mode put aside, to put back.
@@ -1827,16 +1845,11 @@ impl eframe::App for TequilaApp {
             && !self.full_viewport
             && (ctx.screen_rect().width() >= 1100.0 || !self.show_project)
         {
-            egui::SidePanel::left("library")
-                // Exact, not a range.
-                //
-                // A resizable panel sizes itself to its contents, and a range
-                // is only advisory against that — the browser grew past a
-                // 340 px ceiling a hundred pixels a frame until the viewport
-                // had nothing left. The contents are bounded now as well, but
-                // the panel not being able to grow at all is the guarantee
-                // that does not depend on getting every child widget right.
-                .exact_width(library_tab::PANEL_WIDTH)
+            // Its edge drags it wider, for more across; it is told its width
+            // every frame, so nothing inside it can widen it as it once did,
+            // a hundred points a frame (`library_tab::panel`).
+            let (panel, shown) = library_tab::panel(ctx, self.library.width);
+            let drawn = panel
                 .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }))
                 .show(ctx, |ui| {
                     // Named for the section showing: the materials, or the
@@ -1849,7 +1862,10 @@ impl eframe::App for TequilaApp {
                         self.show_library = false;
                     }, "Hide the library · M");
                     profile::time("ui: library", || self.library_panel(ui));
-                });
+                })
+                .response
+                .rect;
+            library_tab::keep_dragged_width(ctx, &mut self.library.width, drawn, shown);
         }
 
         // Under the viewport and between the side panels, as a terminal sits
@@ -1935,17 +1951,16 @@ impl eframe::App for TequilaApp {
             self.crash_window.ui(ctx);
         }
         self.self_test.ui(ctx);
+        self.import_dialog_window(ctx);
         self.update_report_window(ctx);
         self.model_units_window(ctx);
         self.lighting_offer_window(ctx);
         self.improve_model_window(ctx);
         profile::time("ui: queue", || self.pump_queue(ctx));
         let mut window = std::mem::take(&mut self.render_window);
-        window.rendering = self.batch.is_running();
+        window.follow(&self.batch);
         profile::time("ui: render window", || window.show(ctx, &mut self.project));
-        if std::mem::take(&mut window.cancel_requested) {
-            self.batch.cancel();
-        }
+        window.act_on(&self.batch);
         let frames = window.frames_requested.take();
         self.render_window = window;
         if let Some((first, last)) = frames {
@@ -2130,6 +2145,13 @@ impl TequilaApp {
         );
         self.measure = measure;
 
+        // Picking a focus point (the Camera tab's Pick focus) takes clicks
+        // only, as measuring does. Armed, the gizmo takes nothing: a press
+        // on a handle turns the view rather than moving the part.
+        let picking_focus = self.focus_pick.armed();
+        let blur_shown = self.view_mode == view_mode::ViewMode::Rendered;
+        let focused = self.focus_pick.interact(ui, rect, &mut self.camera, &mut self.project, &self.orchestrator, &response, &mut self.toasts, blur_shown);
+
         let mut label_gizmo = std::mem::take(&mut self.label_gizmo);
         let placing_label = label_gizmo.interact(
             ui,
@@ -2145,12 +2167,13 @@ impl TequilaApp {
         self.mapping_gizmo = mapping_gizmo;
 
         let mut gizmo = std::mem::take(&mut self.gizmo);
-        let taken = placing_label || placing_mapping || aiming_pin || measuring;
+        let taken = placing_label || placing_mapping || aiming_pin || measuring || focused;
         // Hidden (Shift+G), the gizmo takes no drag either: a click where
         // a handle would be selects or turns the view, as anywhere else. A
         // drag under way as it was hidden is let finish.
         let gizmo_shown = self.show_gizmo || gizmo.is_dragging();
         let over_gizmo = taken
+            || picking_focus
             || (gizmo_shown && gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &response));
         let gizmo_dragging = taken || gizmo.is_dragging();
         self.gizmo = gizmo;
@@ -2423,6 +2446,7 @@ impl TequilaApp {
         let presenting = self.presenting.is_some();
         if !presenting {
             cutaway_panel::draw_outlines(ui, rect, &self.camera.camera, &self.project);
+            self.draw_light_outlines(ui, rect);
             self.measure.draw(ui, rect, &self.camera.camera, &self.project);
             if self.show_gizmo || self.gizmo.is_dragging() {
                 self.gizmo.draw(ui, rect, &self.camera.camera);
@@ -2430,6 +2454,7 @@ impl TequilaApp {
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.mapping_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
+            self.focus_pick.draw(ui, rect, &self.camera.camera);
             // What the UV editor points at, lit on the part; what the part
             // itself or another part hides found again only when that or
             // the view changes.
@@ -2450,7 +2475,7 @@ impl TequilaApp {
         }
 
         if rect != area {
-            render_frame::draw(ui.painter(), area, rect, self.project.render_settings());
+            render_frame::draw(ui.painter(), area, rect);
         }
 
         if self.show_axis_legend {
@@ -2462,6 +2487,7 @@ impl TequilaApp {
 
         if !presenting {
             self.viewport_overlays(ui, area);
+            self.size_chip(ui, area);
             if self.show_hud {
                 self.hud(ui, area);
             }
@@ -2554,6 +2580,17 @@ impl TequilaApp {
             ui.separator();
         }
 
+        // Edit, Copy and Paste material, and Unlink (`part_material`): the
+        // Scene tree's menu has the same.
+        if let Some(node) = self.context_target {
+            let offer = self.material_offer();
+            if let Some(action) = part_material::menu_items(ui, self.project.document(), &self.project.selection, &offer, node) {
+                self.part_material(action);
+                ui.close_menu();
+            }
+            ui.separator();
+        }
+
         // The group it is in: a CAD body that came as a piece per face
         // colour, or a sub-assembly, to take a material or a move as one.
         let document = self.project.document();
@@ -2625,13 +2662,6 @@ impl TequilaApp {
             self.project_tab = ProjectTab::Scene;
             self.show_project = true;
             self.toasts.info("Press F2 in the Scene tree to rename");
-            ui.close_menu();
-        }
-        if ui.button("Unlink material").clicked() {
-            if let Some(node) = self.context_target {
-                let _ = self.project.apply(Command::UnlinkMaterial { node });
-                self.toasts.info("Material unlinked");
-            }
             ui.close_menu();
         }
         if ui.button("Set pivot here").clicked() {
@@ -3475,6 +3505,9 @@ impl TequilaApp {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
                     }
+                    if let Some(said) = import_settings::ask_menu(ui) {
+                        self.project.status = said;
+                    }
                     ui.menu_button("Up axis of imports", |ui| {
                         ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
                         if let Some(said) = import_settings::menu(ui) {
@@ -3636,6 +3669,8 @@ impl TequilaApp {
                         }
                     }
                     ui.separator();
+                    self.material_menu_items(ui);
+                    ui.separator();
                     for (label, action, enabled) in [
                         ("Select all", shortcuts::Action::SelectAll, true),
                         ("Deselect all", shortcuts::Action::DeselectAll, any),
@@ -3704,11 +3739,12 @@ impl TequilaApp {
                     ui.add(crate::field::Checkbox::new(&mut self.show_gizmo, "Gizmo"))
                         .on_hover_text(format!("{}. The move, turn and scale handles on the selection", self.key_text(shortcuts::Action::Gizmo)));
                     ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
-                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
+                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size with the chip in the view's bottom-right corner, or in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
                         .on_hover_text("Draw the parts' edges in Solid and Material Preview: a CAD part's own B-rep edges, or a mesh's creases and borders");
+                    self.light_outlines_menu_item(ui);
                     let aspect = self.render_aspect();
                     ui.menu_button("Composition guides", |ui| {
                         ui.set_min_width(230.0);
@@ -3988,6 +4024,7 @@ impl TequilaApp {
             .find(|j| j.state == tequila_scene::render::JobState::Rendering)
             .map(render_window::progress);
         let label = match progress {
+            Some(done) if self.batch.is_paused() => format!("Paused {:.0}%", done * 100.0),
             Some(done) => format!("Rendering {:.0}%", done * 100.0),
             None => "Render".to_string(),
         };
@@ -4222,6 +4259,7 @@ impl TequilaApp {
         if changed {
             self.guides_changed();
         }
+        self.light_outlines_button(ui, next(&mut x));
         icons::divider(&painter, egui::pos2(x + gap * 0.5, island.top() + 9.0), egui::pos2(x + gap * 0.5, island.bottom() - 9.0));
         x += gap;
         for mode in view_mode::ViewMode::ALL {
@@ -4843,6 +4881,8 @@ impl TequilaApp {
             }
             Key::DeselectAll => self.project.selection.clear(),
             Key::Duplicate => self.duplicate_selection(),
+            Key::CopyMaterial => self.copy_selected_material(),
+            Key::PasteMaterial => self.paste_onto_selection(),
             Key::Group => {
                 let nodes: Vec<_> = self.project.selection.nodes().collect();
                 if nodes.len() >= 2 {
@@ -5551,25 +5591,9 @@ impl TequilaApp {
     /// differ between the two.
     fn handle_file(&mut self, action: Action, path: std::path::PathBuf) {
         match action {
-            Action::Import => {
-                // Read on another thread; `poll_imports` applies it.
-                let (sender, receiver) = std::sync::mpsc::channel();
-                let reading = path.clone();
-                std::thread::spawn(move || {
-                    let prepared = tequila_import::read_file(&reading).and_then(project::PreparedImport::prepare);
-                    let _ = sender.send(prepared.map(Arrived::Prepared));
-                });
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                self.project.status = format!("Importing {name}\u{2026}");
-                self.imports.push(PendingImport {
-                    name,
-                    path,
-                    receiver,
-                    document_epoch: self.project.document_epoch(),
-                    update: None,
-                    started: std::time::Instant::now(),
-                });
-            }
+            // The import dialog, then the import on another thread, which
+            // lands through `poll_imports`.
+            Action::Import => self.begin_import(path),
             // A KeyShot scene opens as a new project: read and divided on
             // another thread, as an import is; `poll_imports` puts it up.
             Action::Open if tequila_import::is_scene_file(&path) => {
@@ -5591,6 +5615,7 @@ impl TequilaApp {
                     document_epoch: self.project.document_epoch(),
                     update: None,
                     started: std::time::Instant::now(),
+                    plan: None,
                 });
             }
             Action::Open => {
@@ -5745,7 +5770,7 @@ impl TequilaApp {
                         self.model_units = units;
                     }
                     self.file_lighting(&pending.name, &report, None);
-                    self.frame_selection();
+                    self.after_import(pending.plan, &before);
                 }
                 Err(error) => self.project.status = format!("{}: {error}", pending.name),
             }
@@ -5889,6 +5914,7 @@ impl TequilaApp {
             document_epoch: self.project.document_epoch(),
             update: Some(roots),
             started: std::time::Instant::now(),
+            plan: None,
         });
     }
 
@@ -5935,6 +5961,7 @@ impl TequilaApp {
             document_epoch: self.project.document_epoch(),
             update: Some(roots),
             started: std::time::Instant::now(),
+            plan: None,
         });
     }
 
@@ -6310,6 +6337,7 @@ impl TequilaApp {
             }
             ProjectTab::Scene => {
                 let mut tab = std::mem::take(&mut self.scene_tab);
+                tab.material_offer = self.material_offer();
                 tab.show(ui, &mut self.project);
                 let selected = self.project.selection.active();
                 if selected.is_none() {
@@ -6364,7 +6392,11 @@ impl TequilaApp {
                 let retessellate = tab.retessellate_request.take();
                 let units = tab.units_request.take();
                 let improve = tab.improve_request.take();
+                let material = tab.material_request.take();
                 self.scene_tab = tab;
+                if let Some(action) = material {
+                    self.part_material(action);
+                }
                 if let Some(node) = improve {
                     self.improve_model = improve_model::ImproveModel::new(self.project.document(), node);
                     if self.improve_model.is_none() {
@@ -6465,9 +6497,13 @@ impl TequilaApp {
             ProjectTab::Camera => {
                 let aspect = self.aspect();
                 let mut tab = std::mem::take(&mut self.camera_tab);
+                tab.picking_focus = self.focus_pick.armed();
                 if tab.show(ui, &mut self.project, &mut self.camera, aspect) {
                     self.camera.adopt(self.project.camera());
                     resubmit = true;
+                }
+                if std::mem::take(&mut tab.pick_focus_request) {
+                    focus_pick::toggle(self);
                 }
                 self.camera_tab = tab;
             }
@@ -6574,8 +6610,7 @@ impl TequilaApp {
                             egui::TextureOptions::LINEAR,
                         )
                     });
-                    self.render_window.preview_job = Some(id);
-                    self.render_window.preview = texture.clone();
+                    self.render_window.keep_pixels(&path, width, height, preview);
                     self.render_window.add(render_window::GalleryEntry {
                         name,
                         path,
@@ -7380,9 +7415,9 @@ fn frame_pause(since_last: Option<std::time::Duration>) -> Option<std::time::Dur
     since_last.and_then(|since| SHORTEST_FRAME.checked_sub(since)).filter(|pause| !pause.is_zero())
 }
 
-/// The width of the island of tools at the top right of the viewport: ten
+/// The width of the island of tools at the top right of the viewport: eleven
 /// tools, three dividers and its padding.
-const SHADING_ISLAND: f32 = 4.0 * 2.0 + TOOL * 10.0 + 9.0 * 3.0;
+const SHADING_ISLAND: f32 = 4.0 * 2.0 + TOOL * 11.0 + 9.0 * 3.0;
 
 /// Whether the viewport's chip has room for its second half - what lights
 /// the view, or the engine - beside the island of tools at the other end,
@@ -8035,6 +8070,7 @@ mod undo_tests {
             document_epoch: app.project.document_epoch(),
             update: None,
             started: std::time::Instant::now(),
+            plan: None,
         });
         app.poll_imports();
     }

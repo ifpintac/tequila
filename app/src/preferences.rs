@@ -289,6 +289,8 @@ pub struct Prefs {
     pub tooltip_delay: f32,
     /// How the material library shows its shelf.
     pub library_view: crate::library_tab::View,
+    /// How wide the library's panel was dragged, in points.
+    pub library_width: f32,
     /// The Material Graph editor's browser, down its left side.
     pub graph_browser: bool,
     /// What a session starts with: its shading and what the view shows.
@@ -298,6 +300,8 @@ pub struct Prefs {
     pub show_render_frame: bool,
     pub show_statistics: bool,
     pub show_model_edges: bool,
+    /// Each light's shape and size over the view (`light_outlines`).
+    pub show_light_outlines: bool,
     pub show_outline: bool,
     pub show_gizmo: bool,
     /// The gizmo's size on screen, in percent of its usual.
@@ -328,6 +332,7 @@ impl Default for Prefs {
             tooltips: true,
             tooltip_delay: 0.5,
             library_view: crate::library_tab::View::default(),
+            library_width: crate::library_tab::PANEL_WIDTH,
             graph_browser: true,
             shading: ViewMode::default(),
             show_grid: false,
@@ -335,6 +340,7 @@ impl Default for Prefs {
             show_render_frame: true,
             show_statistics: false,
             show_model_edges: false,
+            show_light_outlines: true,
             show_outline: true,
             show_gizmo: true,
             gizmo_size: 100.0,
@@ -673,6 +679,24 @@ pub static SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "interface.library_width",
+        page: Page::Interface,
+        group: "Material library",
+        label: "Width",
+        help: "How wide the library beside the view is. Drag its edge to change it: wider, it shows more materials across. A window too narrow for it shows it narrower, and keeps the width for when there is room.",
+        kind: Kind::Number { min: 260.0, max: 720.0, decimals: 0, suffix: " px", logarithmic: false },
+        own: true,
+        default: || Value::Number(crate::library_tab::PANEL_WIDTH as f64),
+        get: |app| Value::Number(app.prefs.library_width as f64),
+        set: |app, value| {
+            if let Value::Number(width) = value {
+                app.prefs.library_width = width as f32;
+                app.library.width = width as f32;
+            }
+            Ok(())
+        },
+    },
     own_toggle!(
         "interface.graph_browser",
         Interface,
@@ -732,6 +756,18 @@ pub static SETTINGS: &[Setting] = &[
         "The parts' edges drawn in Solid and Material Preview.",
         show_model_edges,
         |app, on| app.show_model_edges = on
+    ),
+    // Kept the moment the viewport's button or View › Light outlines is
+    // clicked, as the composition guides beside it are: read where it is
+    // drawn, it has no session field of its own to set.
+    own_toggle!(
+        "viewport.light_outlines",
+        Viewport,
+        STARTS,
+        "Light outlines",
+        "Each light's shape and size drawn over the view, in every shading. They never appear in screenshots or renders.",
+        show_light_outlines,
+        |_app, _on| {}
     ),
     own_toggle!(
         "viewport.selection_outline",
@@ -926,6 +962,21 @@ pub static SETTINGS: &[Setting] = &[
         set: |_, value| match crate::import_settings::BlenderLights::from_key(&text(value)) {
             Some(choice) => crate::import_settings::set_blender_lights(choice),
             None => Ok(()),
+        },
+    },
+    Setting {
+        key: "import.ask",
+        page: Page::Import,
+        group: "Models",
+        label: "Show the import options for each model",
+        help: "Ask how to bring each model in: into this scene or a new one, which way up, its unit, how finely to divide a CAD file. Off, models come in as you last chose, and the window shows only how far the import has got.",
+        kind: Kind::Toggle,
+        own: false,
+        default: || Value::Bool(true),
+        get: |_| Value::Bool(crate::import_settings::choices().ask),
+        set: |_, value| match value {
+            Value::Bool(ask) => crate::import_settings::set_choices(crate::import_settings::Choices { ask, ..crate::import_settings::choices() }),
+            _ => Ok(()),
         },
     },
     // ---- Folders ---------------------------------------------------------
@@ -1223,6 +1274,12 @@ impl TequilaApp {
         // The library's own buttons choose its view too: kept as chosen.
         if self.library.view != self.prefs.library_view {
             self.prefs.library_view = self.library.view;
+            self.keep_preferences();
+        }
+        // And its edge its width: kept when the drag is let go, not at
+        // every step of it.
+        if self.library.width != self.prefs.library_width && !ctx.input(|i| i.pointer.any_down()) {
+            self.prefs.library_width = self.library.width;
             self.keep_preferences();
         }
         // So do the graph editor's Browser button and T.
@@ -2365,5 +2422,56 @@ mod tests {
         ask(&mut app, r#"{"reset":"viewport"}"#).unwrap();
         assert!(!app.camera_tab.show_grid && app.prefs.moving_picture == MovingPicture::Balanced);
         assert!(ask(&mut app, r#"{"reset":"nowhere"}"#).is_err());
+    }
+
+    /// The library's width as its edge was dragged is kept when the drag
+    /// is let go, and the next session's library opens that wide; a file
+    /// from before there was a width opens at the usual one, and a script
+    /// is held to the widths the edge drags between.
+    #[test]
+    fn the_librarys_width_is_kept_between_sessions() {
+        let folder = std::env::temp_dir().join(format!("tequila-library-width-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("preferences.txt");
+        // Written before the width was a setting.
+        std::fs::write(&file, "interface.library_view=list\n").unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.load_preferences(file.clone());
+        assert_eq!(app.library.width, crate::library_tab::PANEL_WIDTH, "an older file did not open at the usual width");
+        assert_eq!(app.library.view, crate::library_tab::View::List);
+
+        let ctx = egui::Context::default();
+        let frame = |app: &mut TequilaApp, down: bool| {
+            let mut input = egui::RawInput::default();
+            if down {
+                input.events = vec![
+                    egui::Event::PointerMoved(egui::pos2(300.0, 300.0)),
+                    egui::Event::PointerButton { pos: egui::pos2(300.0, 300.0), button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                ];
+            } else {
+                input.events = vec![egui::Event::PointerButton { pos: egui::pos2(300.0, 300.0), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
+            }
+            let _ = ctx.run(input, |ctx| app.apply_preferences(ctx));
+        };
+        // The edge dragged: not written while the button is held.
+        frame(&mut app, true);
+        app.library.width = 452.0;
+        frame(&mut app, true);
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("interface.library_width"), "written in the middle of the drag");
+        frame(&mut app, false);
+        let kept = std::fs::read_to_string(&file).unwrap();
+        assert!(kept.contains("interface.library_width=452\n"), "{kept}");
+
+        let mut next = TequilaApp::for_tests();
+        next.load_preferences(file.clone());
+        assert_eq!(next.library.width, 452.0, "the next session's library is not as wide");
+
+        next.set_preference("interface.library_width", Value::Number(5000.0)).unwrap();
+        assert_eq!(next.library.width, 720.0);
+        // Put back, as the window's reset mark does.
+        next.set_preference("interface.library_width", (setting("interface.library_width").unwrap().default)()).unwrap();
+        assert_eq!(next.library.width, crate::library_tab::PANEL_WIDTH);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

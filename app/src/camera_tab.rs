@@ -37,6 +37,12 @@ pub struct CameraTab {
     /// What the last fit said, so a refusal is visible rather than silent.
     match_report: String,
     pub show_grid: bool,
+    /// Whether the viewport is picking a focus point (`focus_pick`), which
+    /// the Pick focus button shows as on.
+    pub picking_focus: bool,
+    /// The Pick focus button was clicked, for the application to turn the
+    /// picking on or off: the picking is the viewport's, not this tab's.
+    pub pick_focus_request: bool,
 }
 
 impl CameraTab {
@@ -176,8 +182,16 @@ impl CameraTab {
                     crate::field::Fold::new("Focus").id_salt("camera-focus").default_open(true).show(ui, |ui| {
                     // ---- Depth of field --------------------------------------------
                     let mut dof = saved.camera.f_number.is_finite();
-                    if ui
-                        .add(crate::field::Checkbox::new(&mut dof, "Blur what is out of focus"))
+                    // Off, the focus distance is not shown, so Pick focus
+                    // sits at the end of this line instead, in the same
+                    // column: picking turns the blur on.
+                    let checkbox = if dof {
+                        ui.add(crate::field::Checkbox::new(&mut dof, "Blur what is out of focus"))
+                    } else {
+                        let projection = saved.camera.projection;
+                        self.with_pick_focus(ui, &projection, |ui| ui.add(crate::field::Checkbox::new(&mut dof, "Blur what is out of focus")))
+                    };
+                    if checkbox
                         .on_hover_text("Depth of field: sharp at the focus distance and softer in front of it and behind, as a real lens is. Off, everything is sharp.")
                         .changed()
                     {
@@ -200,11 +214,14 @@ impl CameraTab {
                         {
                             saved.camera.f_number = f_number;
                         }
-                        ui.add(
-                            crate::field::Slider::new(&mut saved.camera.focus_distance, 0.01..=10_000.0)
-                                .text("Focus distance")
-                                .logarithmic(true),
-                        );
+                        let projection = saved.camera.projection;
+                        self.with_pick_focus(ui, &projection, |ui| {
+                            ui.add(
+                                crate::field::Slider::new(&mut saved.camera.focus_distance, 0.01..=10_000.0)
+                                    .text("Focus distance")
+                                    .logarithmic(true),
+                            )
+                        });
                         ui.add(crate::field::Checkbox::new(&mut saved.camera.keep_focus, "Keep focus"))
                             .on_hover_text(
                                 "Re-derive the focus distance from the camera's distance to its target \
@@ -289,6 +306,42 @@ impl CameraTab {
             adopt = true;
         }
         adopt
+    }
+
+    /// `control` with the Pick focus button at its line's end, given the
+    /// line's width less the button's, as Sensor width is beside Full frame.
+    fn with_pick_focus(
+        &mut self,
+        ui: &mut egui::Ui,
+        projection: &Projection,
+        control: impl FnOnce(&mut egui::Ui) -> egui::Response,
+    ) -> egui::Response {
+        let side = 26.0;
+        ui.horizontal(|ui| {
+            let response = crate::field::column(ui, ui.available_width() - side - ui.spacing().item_spacing.x, control).inner;
+            // Only a lens that blurs has a focus to pick: neither renderer
+            // blurs an orthographic or a 360° camera.
+            let focusable = tequila_scene::focus::can_focus(projection);
+            let button = ui
+                .add_enabled_ui(focusable, |ui| {
+                    crate::icons::button(ui, crate::icons::Icon::Crosshair, self.picking_focus && focusable, side, egui::Sense::click())
+                })
+                .inner;
+            let button = if focusable {
+                button.on_hover_text(if self.picking_focus {
+                    "Picking: click a point on the model in the view to focus there. Click here or press Esc to stop."
+                } else {
+                    "Pick focus: click a point on the model in the view, and the focus distance becomes its distance from the camera. Turns the blur on if it is off."
+                })
+            } else {
+                button.on_disabled_hover_text("An orthographic or 360° camera keeps everything sharp, so it has no focus to pick.")
+            };
+            if button.clicked() {
+                self.pick_focus_request = true;
+            }
+            response
+        })
+        .inner
     }
 
     fn camera_list(

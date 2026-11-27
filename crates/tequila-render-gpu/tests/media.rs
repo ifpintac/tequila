@@ -520,6 +520,15 @@ fn medium_light_test(@builtin(global_invocation_id) id: vec3<u32>) {
     here.ceiling = 0.0;
     here.sigma = c.xyz;
     here.g = a.w;
+    // Its draws, as the collision takes them before its turn (the sky's,
+    // the lamp chosen by power and the lamp's): direct_light draws none.
+    here.u_sky = sampler_light_sample(&s);
+    if (FEATURE_LAMPS && frame.light_count > 0u) {
+        here.choice = lamps_select(frame.light_count, sampler_light_select(&s));
+        if (here.choice.ok && lamp_lights(scene_lights[here.choice.index], here.instance)) {
+            here.u_lamp = sampler_light_sample(&s);
+        }
+    }
     let lit = direct_light(&s, here).total;
     let next = sampler_next_unstructured(&s);
     frame_samples[4u * k] = vec4<f32>(lit, next);

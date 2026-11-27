@@ -206,7 +206,9 @@ TOOLS = [
           'yaw': {'type': 'number', 'description': 'Degrees around +Y; 0 looks from the front.'},
           'pitch': {'type': 'number', 'description': 'Degrees above the horizon.'},
           'distance': {'type': 'number'},
-          'focal_length': {'type': 'number', 'description': 'Millimetres.'}}),
+          'focal_length': {'type': 'number', 'description': 'Millimetres.'},
+          'focus': {**VECTOR, 'description': 'A point [x, y, z] to focus on: the focus distance becomes its distance from the camera along the view, and the blur comes on if it was off.'},
+          'focus_part': {'type': 'integer', 'description': 'A part (or group) id to focus on, at its middle, as focus does.'}}),
     tool('tequila_screenshot', 'See the application as it is now. Returns an image. After a change the rendered view is dark and grainy for a few seconds while it redraws: '
          'this waits for the picture to finish, up to settle seconds, and says with the image whether it had. Do not judge a look from one it calls unfinished: look again.',
          {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'},

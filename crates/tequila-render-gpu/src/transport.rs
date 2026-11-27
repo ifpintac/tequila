@@ -1576,9 +1576,25 @@ impl GpuRenderer {
 
     /// [`GpuRenderer::run_on_scene`] with the frame `width` by `height`, for
     /// what reads the frame's size: the camera's half-widths, its aspect.
-    pub fn run_on_scene_at(&self, settings: &FrameSettings, (width, height): (usize, usize), kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
-        let device = &self.gpu.device;
+    pub fn run_on_scene_at(&self, settings: &FrameSettings, size: (usize, usize), kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
         let source = format!("{}\n{kernel}\n", crate::shader::source("transport"));
+        self.run_source_on_scene(settings, size, source, &self.scene_group, entry, words, groups)
+    }
+
+    /// [`GpuRenderer::run_on_scene_at`] with the transport's source as
+    /// `edit` makes it first, against the scene's bind group as a frame of
+    /// `settings` takes it: for a test that traces what the transport itself
+    /// does, its records written where the edit puts them, in
+    /// `frame_samples`. The kernel the renderer renders with is untouched.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_on_scene_edited(&self, settings: &FrameSettings, size: (usize, usize), edit: &dyn Fn(String) -> String, kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
+        let source = format!("{}\n{kernel}\n", edit(crate::shader::source("transport")));
+        self.run_source_on_scene(settings, size, source, self.scene_group_for(&settings.config), entry, words, groups)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_source_on_scene(&self, settings: &FrameSettings, (width, height): (usize, usize), source: String, scene_group: &wgpu::BindGroup, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
+        let device = &self.gpu.device;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(source.into()) });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
@@ -1610,7 +1626,7 @@ impl GpuRenderer {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
             pass.set_pipeline(&pipeline);
-            pass.set_bind_group(0, &self.scene_group, &[]);
+            pass.set_bind_group(0, scene_group, &[]);
             pass.set_bind_group(1, &self.tables.bind_group, &[]);
             pass.set_bind_group(2, &self.environment_group, &[]);
             pass.set_bind_group(3, &frame_group, &[]);

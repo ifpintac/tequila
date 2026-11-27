@@ -51,6 +51,7 @@ pub mod stl;
 pub mod substance;
 pub mod texture_set;
 pub mod three_mf;
+pub mod watch;
 
 use tequila_core::math::{Mat4, Transform, Vec3};
 use tequila_core::units::LengthUnit;
@@ -79,6 +80,8 @@ pub enum ImportError {
     Malformed(String),
     /// A file the import depends on — an external buffer, say — is absent.
     Missing(String),
+    /// The person cancelled it (`watch::Watch::cancel`).
+    Cancelled,
 }
 
 impl fmt::Display for ImportError {
@@ -89,6 +92,7 @@ impl fmt::Display for ImportError {
             ImportError::Unsupported(m) => write!(f, "not implemented: {m}"),
             ImportError::Malformed(m) => write!(f, "the file is malformed: {m}"),
             ImportError::Missing(m) => write!(f, "{m}"),
+            ImportError::Cancelled => write!(f, "the import was cancelled"),
         }
     }
 }
@@ -187,6 +191,18 @@ impl UpAxis {
             UpAxis::NegativeY => Some(Mat4::rotation(Vec3::X, PI)),
             UpAxis::NegativeZ => Some(Mat4::rotation(Vec3::X, FRAC_PI_2)),
             UpAxis::NegativeX => Some(Mat4::rotation(Vec3::Z, -FRAC_PI_2)),
+        }
+    }
+
+    /// A box `size` across (width, height, depth) as it stands once this
+    /// axis is turned up: a quarter turn swaps two of its sides.
+    pub fn turned(self, size: Vec3) -> Vec3 {
+        match self.turn() {
+            None => size,
+            Some(turn) => {
+                let v = turn.transform_vector(size);
+                Vec3 { x: v.x.abs(), y: v.y.abs(), z: v.z.abs() }
+            }
         }
     }
 }
@@ -519,8 +535,38 @@ pub fn read_file(path: &Path) -> Result<ReadModel, ImportError> {
     read_file_with(path, step::Tessellation::default())
 }
 
+/// Whether a file with this extension (lower case) holds exact surfaces
+/// that are divided into triangles as it is read, at a
+/// [`step::Tessellation`]: STEP, IGES, Rhino and KeyShot's scenes. The rest
+/// are triangles already. A Rhino file of saved meshes only is not divided
+/// all the same, which only reading it tells.
+pub fn divides_surfaces(extension: &str) -> bool {
+    matches!(extension, "step" | "stp" | "igs" | "iges" | "3dm" | "bip" | "ksp")
+}
+
+/// Whether a file with this extension can be kept with the project for
+/// dividing again ([`ReadModel::brep`]): STEP, IGES and Rhino, up to
+/// [`MOST_KEPT`]. A KeyShot scene's surfaces are its own format's, read
+/// from the scene file itself again.
+pub fn keeps_source(extension: &str) -> bool {
+    matches!(extension, "step" | "stp" | "igs" | "iges" | "3dm")
+}
+
 /// [`read_file`], dividing a CAD file's surfaces at `quality`.
+///
+/// Under a [`watch::Watch`] it says it is reading, and a cancel ends it in
+/// [`ImportError::Cancelled`] as soon as the reader looks (OpenCASCADE's
+/// helper at once), or once it has read.
 pub fn read_file_with(path: &Path, quality: step::Tessellation) -> Result<ReadModel, ImportError> {
+    watch::stage(watch::Stage::Reading);
+    let model = read_file_unwatched(path, quality)?;
+    if watch::stopped() {
+        return Err(ImportError::Cancelled);
+    }
+    Ok(model)
+}
+
+fn read_file_unwatched(path: &Path, quality: step::Tessellation) -> Result<ReadModel, ImportError> {
     let bytes = std::fs::read(path)
         .map_err(|e| ImportError::Io(format!("{} could not be read: {e}", path.display())))?;
     let name = path
@@ -620,10 +666,70 @@ impl Prepared {
     }
 }
 
+/// What a model read is, for the import dialog to show before it goes in:
+/// its size, so a wrong unit or the wrong way up shows before importing,
+/// and what it holds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Preview {
+    /// The size of what it shows, in the file's own numbers, standing as
+    /// the reader stands it, before any up axis is applied.
+    pub size: Vec3,
+    /// The unit the file states, if it states one.
+    pub stated_unit: Option<LengthUnit>,
+    /// The importer's guess from its size (§3.4), for a file that states
+    /// none.
+    pub guessed_unit: LengthUnit,
+    pub parts: usize,
+    pub triangles: usize,
+    /// Its exact surfaces were divided at a quality: a CAD model.
+    pub divided: bool,
+    /// Its CAD source can be kept with the project, to divide it again.
+    pub source_kept: bool,
+    /// It brings cameras and lighting of its own, which an up axis would
+    /// no longer match, so none is applied.
+    pub has_setup: bool,
+}
+
+impl Preview {
+    /// Its size in metres read in `unit` (`None`: as the import reads it),
+    /// stood up `up`.
+    pub fn metres(&self, unit: Option<LengthUnit>, up: UpAxis) -> Vec3 {
+        let unit = unit.or(self.stated_unit).unwrap_or(self.guessed_unit);
+        let size = self.size * unit.to_metres() as f32;
+        if self.has_setup { size } else { up.turned(size) }
+    }
+}
+
 impl ReadModel {
+    /// What the import dialog shows of it.
+    pub fn preview(&self) -> Preview {
+        let scene = &self.scene;
+        let bounds = scene.bounds();
+        let extent = scene
+            .meshes
+            .iter()
+            .map(|m| {
+                let mut b = tequila_core::math::Aabb::EMPTY;
+                m.positions.iter().for_each(|&p| b.extend_point(p));
+                if b.is_empty() { 0.0 } else { b.diagonal().length() }
+            })
+            .fold(0.0f32, f32::max);
+        Preview {
+            size: if bounds.is_empty() { Vec3::ZERO } else { bounds.diagonal() },
+            stated_unit: scene.source_unit.filter(|u| *u != LengthUnit::Unspecified),
+            guessed_unit: guess_from_extent(extent),
+            parts: scene.nodes.iter().filter(|n| n.mesh.is_some()).count(),
+            triangles: scene.meshes.iter().map(|m| m.indices.len() / 3).sum(),
+            divided: scene.tessellation.is_some(),
+            source_kept: self.brep.is_some(),
+            has_setup: scene.setup.is_some(),
+        }
+    }
+
     /// The first half of building an import, which needs no document: see
     /// [`Prepared`].
     pub fn prepare(self, options: &ImportOptions) -> Result<Prepared, ImportError> {
+        watch::stage(watch::Stage::Preparing);
         let model = self;
         let mut scene = model.scene;
         if let Some(file) = &model.path {
@@ -1168,8 +1274,17 @@ fn process(
     report: &mut ImportReport,
 ) -> Result<Processed, ImportError> {
     let mut processed = Vec::with_capacity(scene.meshes.len());
+    // Counted for the import dialog's bar, and stopped between meshes on
+    // its Cancel.
+    let watch = watch::current();
 
     for (i, raw) in scene.meshes.iter().enumerate() {
+        if let Some(watch) = &watch {
+            if watch.is_cancelled() {
+                return Err(ImportError::Cancelled);
+            }
+            watch.count(i, scene.meshes.len());
+        }
         let mut mesh = Mesh::new(raw.positions.clone(), raw.indices.clone());
         mesh.normals = raw.normals.clone();
         if !raw.uvs.is_empty() {
@@ -1322,6 +1437,11 @@ pub fn guess_unit(meshes: &[Mesh]) -> LengthUnit {
         .iter()
         .map(|m| m.bounds().diagonal().length())
         .fold(0.0f32, f32::max);
+    guess_from_extent(extent)
+}
+
+/// [`guess_unit`] for meshes whose largest diagonal is `extent`.
+fn guess_from_extent(extent: f32) -> LengthUnit {
     if extent <= 0.0 || !extent.is_finite() {
         return LengthUnit::Unspecified;
     }
@@ -1725,5 +1845,55 @@ f 4 5 6
         assert_eq!(document.tree.len(), 0);
         assert_eq!(document.geometry.len(), 0, "the mesh must go with the node");
         document.validate().unwrap();
+    }
+
+    /// The import dialog's size line: a part written out as 120 x 60 x 30
+    /// with no unit reads as millimetres, 12 x 6 x 3 cm, and stood Z up its
+    /// height and depth change places. Placed by a node, it is measured
+    /// where the node puts it, and a part switched off is not measured.
+    #[test]
+    fn the_preview_sizes_the_model_as_it_will_come_in() {
+        let box_obj = "v 0 0 0\nv 120 0 0\nv 120 60 0\nv 0 60 30\nf 1 2 3\nf 1 3 4\n";
+        let scene = read_format(box_obj.as_bytes(), "obj", "box", &|_| None).unwrap();
+        let mut scene = scene;
+        // A second, hidden part far away, which the size must ignore.
+        let mut far = scene.meshes[0].clone();
+        far.positions.iter_mut().for_each(|p| *p = *p + vec3(5000.0, 0.0, 0.0));
+        scene.meshes.push(far);
+        let mut hidden = raw::RawNode::part("far", scene.meshes.len() - 1);
+        hidden.hidden = true;
+        scene.nodes.push(hidden);
+        scene.roots.push(scene.nodes.len() - 1);
+        let model = ReadModel { scene, name: "box".into(), directory: None, path: None, brep: None };
+        let preview = model.preview();
+        assert_eq!(preview.stated_unit, None);
+        assert_eq!(preview.guessed_unit, LengthUnit::Millimetre);
+        assert!((preview.size - vec3(120.0, 60.0, 30.0)).length() < 1e-4, "{:?}", preview.size);
+        assert!(!preview.divided && !preview.source_kept && !preview.has_setup);
+        let as_file = preview.metres(None, UpAxis::AsFile);
+        assert!((as_file - vec3(0.12, 0.06, 0.03)).length() < 1e-6, "{as_file:?}");
+        let z_up = preview.metres(None, UpAxis::Z);
+        assert!((z_up - vec3(0.12, 0.03, 0.06)).length() < 1e-6, "{z_up:?}");
+        let inches = preview.metres(Some(LengthUnit::Inch), UpAxis::Y);
+        assert!((inches.x - 120.0 * 0.0254).abs() < 1e-4, "{inches:?}");
+    }
+
+    /// A custom tessellation's name reads back as the same tolerances, and
+    /// tolerances out of reach are held to what is sensible.
+    #[test]
+    fn a_custom_tessellation_round_trips_through_its_name() {
+        use step::Tessellation;
+        for preset in Tessellation::ALL {
+            assert_eq!(Tessellation::from_label(&preset.name()), Some(preset));
+        }
+        let custom = Tessellation::custom(2.5e-4, 15f64.to_radians());
+        assert_eq!(custom.name(), "Custom 0.00025 15°");
+        let back = Tessellation::from_label(&custom.name()).unwrap();
+        assert!((back.chord() - 2.5e-4).abs() < 1e-15 && (back.angle() - 15f64.to_radians()).abs() < 1e-9, "{back:?}");
+        assert_eq!(back.label(), "Custom");
+        let held = Tessellation::custom(1.0, 0.0);
+        assert_eq!((held.chord(), held.angle()), (*Tessellation::CHORDS.end(), *Tessellation::ANGLES.start()));
+        assert_eq!(Tessellation::from_label("Custom sideways"), None);
+        assert_eq!(Tessellation::from_label("Coarse"), None);
     }
 }

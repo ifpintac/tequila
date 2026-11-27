@@ -265,10 +265,6 @@ fn spectral_unbounded(rgb: vec3<f32>) -> vec4<f32> {
     return spectral_of(rgb, true);
 }
 
-fn cy_exact4(v: vec4<f32>) -> vec4<f32> {
-    return bitcast<vec4<f32>>(bitcast<vec4<u32>>(v) | vec4<u32>(cy_zero));
-}
-
 // Wavelengths::to_rgb: what the four values add to the film.
 fn spectral_rgb(v: vec4<f32>) -> vec3<f32> {
     var out = vec3<f32>(0.0);

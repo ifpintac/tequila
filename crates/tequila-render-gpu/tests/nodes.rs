@@ -540,6 +540,42 @@ fn tequilas_noise_is_the_processors() {
     within_budget("Tequila's noise", outside.len(), want.len());
 }
 
+/// The sine and cosine the nodes and patterns read (nodes.wgsl's cy_trig)
+/// against the one implementation the processor's are
+/// (`tequila_texture::trig`): every item to the bit - quarter turns either
+/// side of nought, a thousand out, a million out, every sign, nought, the
+/// largest float, infinity and NaN.
+#[test]
+fn the_shared_sine_is_the_processors_to_the_bit() {
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(25, 1);
+    let mut xs: Vec<f32> = vec![0.0, -0.0, 1.0, -1.0, std::f32::consts::FRAC_PI_4, std::f32::consts::PI, f32::MAX, -f32::MAX, f32::INFINITY, f32::NAN, 1e-30, 2.0e9, -3.0e9];
+    for i in 0..200_000 {
+        let reach = [1.0, 4.0, 1000.0, 1.0e6][i % 4];
+        xs.push(uniform(&mut rng, -reach, reach));
+    }
+    let inputs: Vec<u32> = xs.iter().map(|x| x.to_bits()).collect();
+    let body = "
+    let sc = cy_trig(inf(0u));
+    outf(0u, sc.x);
+    outf(1u, sc.y);";
+    let got = h.run_wgsl(&["nodes"], body, &inputs, 1, 2);
+    let mut apart = Vec::new();
+    for (i, x) in xs.iter().enumerate() {
+        let (s, c) = tequila_texture::trig::sin_cos(*x);
+        let (gs, gc) = (f32::from_bits(got[2 * i]), f32::from_bits(got[2 * i + 1]));
+        let same = |a: f32, b: f32| a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan());
+        if !same(gs, s) || !same(gc, c) {
+            apart.push(format!("  {x:e}: card ({gs:e}, {gc:e}), processor ({s:e}, {c:e})"));
+        }
+    }
+    eprintln!("the shared sine: {} items, {} not to the bit", xs.len(), apart.len());
+    for line in apart.iter().take(12) {
+        eprintln!("{line}");
+    }
+    assert!(apart.is_empty(), "the card's sine is not the processor's");
+}
+
 // ---- Tequila's procedurals ------------------------------------------------
 
 /// A fractal's settings at random.
@@ -794,7 +830,10 @@ fn the_newly_running_bumps_are_the_processors() {
                 .and_then(|(dpdu, _)| (dpdu - n * n.dot(dpdu)).try_normalize())
                 .unwrap_or_else(|| tequila_texture::TangentFrame::from_normal(n).tangent);
             let bitangent = n.cross(tangent);
-            let step = (point.footprint * point.scale * 0.1).max(1e-6);
+            // As bumped_normal steps (#188): a thousandth of the footprint,
+            // never under what an f32 tells apart at the point.
+            let finest = point.position.length() * point.scale * tequila_render_core::surface_bump::PRECISION_STEP;
+            let step = (point.footprint * point.scale * tequila_render_core::surface_bump::BUMP_FILTER_WIDTH).max(finest).max(1e-8);
             let restricted = program.restricted_to(&[bump_param(program).expect("a bump")]);
             let register = restricted.driven[0].1;
             let height = |offset: Vec3| {
