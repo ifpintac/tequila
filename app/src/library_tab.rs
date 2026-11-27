@@ -336,6 +336,10 @@ pub struct LibraryTab {
     /// preset dropped into the folder by hand, or by another copy of the
     /// application, shows up without a restart.
     watched: (std::time::Instant, u64),
+    /// The user's own folder, read beside the standard library:
+    /// [`user_library_path`], or for a test a folder of its own, so that what
+    /// a person has saved on the computer running it is not on its shelf.
+    mine: std::path::PathBuf,
     /// The enabled plugins' material folders, and the plugins' names.
     plugin_folders: Vec<(std::path::PathBuf, String)>,
     pub section: Section,
@@ -372,16 +376,20 @@ impl LibraryTab {
 
     /// The same, keeping thumbnails in `disk`.
     pub fn with_cache(environment: Arc<Environment>, disk: Arc<crate::thumbnail::DiskCache>) -> LibraryTab {
+        LibraryTab::reading(environment, disk, user_library_path())
+    }
+
+    /// The same, the user's own materials read from `mine`.
+    fn reading(environment: Arc<Environment>, disk: Arc<crate::thumbnail::DiskCache>, mine: std::path::PathBuf) -> LibraryTab {
         let (mut entries, mut problems) =
             library::read_directory_from(&standard_library_path(), library::Source::Standard);
         // The user's own, appended and then sorted with the rest — one shelf,
         // not two. A material somebody saved is a material, and putting it in
         // a separate list would mean remembering which list a thing is in
         // before being able to look for it.
-        let (mine, mut mine_problems) =
-            library::read_directory_from(&user_library_path(), library::Source::User);
-        entries.extend(mine);
-        problems.append(&mut mine_problems);
+        let (own, mut own_problems) = library::read_directory_from(&mine, library::Source::User);
+        entries.extend(own);
+        problems.append(&mut own_problems);
         library::sort(&mut entries);
         let mut tab = LibraryTab {
             keys: entries.iter().map(entry_key).collect(),
@@ -411,7 +419,8 @@ impl LibraryTab {
             new_material: Default::default(),
             details: Default::default(),
             confirm_delete: Default::default(),
-            watched: (std::time::Instant::now(), folder_signature(&user_library_path())),
+            watched: (std::time::Instant::now(), folder_signature(&mine)),
+            mine,
             plugin_folders: Vec::new(),
             section: Section::Materials,
             studios: Default::default(),
@@ -518,7 +527,7 @@ impl LibraryTab {
         if self.watched.0.elapsed() < std::time::Duration::from_secs(2) {
             return;
         }
-        let signature = folder_signature(&user_library_path());
+        let signature = folder_signature(&self.mine);
         if signature != self.watched.1 {
             self.reload();
         }
@@ -537,8 +546,7 @@ impl LibraryTab {
     pub fn reload(&mut self) {
         let (mut entries, mut problems) =
             library::read_directory_from(&standard_library_path(), library::Source::Standard);
-        let (mine, mut mine_problems) =
-            library::read_directory_from(&user_library_path(), library::Source::User);
+        let (mine, mut mine_problems) = library::read_directory_from(&self.mine, library::Source::User);
         entries.extend(mine);
         problems.append(&mut mine_problems);
         // A plugin's materials, found by its name as well as their own.
@@ -557,7 +565,7 @@ impl LibraryTab {
         self.queued.clear();
         self.generation += 1;
         self.find_shipped();
-        self.watched = (std::time::Instant::now(), folder_signature(&user_library_path()));
+        self.watched = (std::time::Instant::now(), folder_signature(&self.mine));
     }
 
     /// Record that a material was applied, for the Recent shelf.
@@ -1811,11 +1819,21 @@ mod tests {
 
     /// The shelf, its previews kept in `folder`, rendering what is on screen
     /// and nothing else: no thumbnails shipped, and nothing made behind the
-    /// screen, or every test would path trace the whole library.
+    /// screen, or every test would path trace the whole library. The user's
+    /// own materials are none, as on a computer Tequila has not run on: read
+    /// from a folder that is not there ([`no_materials_of_their_own`]), not
+    /// the person's, whose saved presets changed what the tests found on
+    /// the shelf.
     fn tab_keeping_in(folder: &std::path::Path) -> LibraryTab {
-        let mut tab = LibraryTab::with_cache(
+        tab_reading(folder, no_materials_of_their_own())
+    }
+
+    /// The same, the user's own materials read from `mine`.
+    fn tab_reading(folder: &std::path::Path, mine: std::path::PathBuf) -> LibraryTab {
+        let mut tab = LibraryTab::reading(
             Arc::new(tequila_scene::demo::preview_environment()),
             Arc::new(crate::thumbnail::DiskCache::in_folder(folder, "this-build")),
+            mine,
         );
         tab.shipped = None;
         tab.find_shipped();
@@ -2015,6 +2033,14 @@ mod tests {
         let missing: Vec<&str> = tab.entries.iter().zip(&tab.shipped_files).filter(|(e, f)| e.source == library::Source::Standard && f.is_none()).map(|(e, _)| e.name.as_str()).collect();
         assert!(tab.shipped.is_some(), "no shipped thumbnails for this look");
         assert!(missing.is_empty(), "{} presets have no shipped thumbnail, such as {:?}", missing.len(), &missing[..missing.len().min(8)]);
+    }
+
+    /// A user's folder for the tests' shelves: one that does not exist, as a
+    /// first run's does not, and that nothing makes.
+    fn no_materials_of_their_own() -> std::path::PathBuf {
+        let folder = std::env::temp_dir().join(format!("tequila-library-none-{}", std::process::id())).join("library");
+        assert!(!folder.exists(), "{} was made", folder.display());
+        folder
     }
 
     /// A folder of its own for each test, emptied first.
@@ -2230,6 +2256,30 @@ mod tests {
             content_key(&changed),
             "a changed material reused its old preview"
         );
+    }
+
+    /// The user's own materials are read from the shelf's folder for them,
+    /// and again from there when it changes; a test's shelf has none of the
+    /// person's, whatever the computer running it has saved. The person's
+    /// came first on the shelf and under the same names as the standard
+    /// library's, and failed the tests below on one computer and not on
+    /// another.
+    #[test]
+    fn the_users_materials_are_read_from_the_shelfs_folder() {
+        let tab = tab();
+        assert!(tab.entries().iter().all(|e| e.source == library::Source::Standard), "a test's shelf has the person's materials");
+        let folder = scratch_cache("mine");
+        let mut mine = tab_reading(&scratch_cache("mine-previews"), folder.clone());
+        assert_eq!(mine.entries().len(), tab.entries().len(), "the folder is not there yet: nothing of their own");
+        let preset = tab.entries().iter().find(|e| e.textures.is_empty()).expect("a preset without pictures");
+        std::fs::create_dir_all(&folder).unwrap();
+        let saved = folder.join("Saved.json");
+        std::fs::copy(&preset.path, &saved).unwrap();
+        mine.reload();
+        let own: Vec<&LibraryEntry> = mine.entries().iter().filter(|e| e.source == library::Source::User).collect();
+        assert_eq!(own.len(), 1, "{:?}", own.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(std::path::Path::new(&own[0].path), saved);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// The "in project" shelf reflects the document, not the library.
