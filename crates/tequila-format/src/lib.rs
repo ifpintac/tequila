@@ -56,6 +56,13 @@ pub fn procedural_to_json(procedural: &tequila_texture::procedural::Procedural) 
     graph::procedural_to_json(procedural)
 }
 
+/// A procedural read back from what [`procedural_to_json`] writes, a
+/// setting missing from it at its kind's default; `None` for a kind this
+/// version does not know.
+pub fn procedural_from_json(value: &json::Value) -> Option<tequila_texture::procedural::Procedural> {
+    graph::procedural_from_json(value)
+}
+
 /// One node of a material graph as the project file and `material.set_graph`
 /// write it: its `id`, its `kind`, that kind's own fields, its `literals`
 /// and where it sits. What the `graph` request shows of a node and reads

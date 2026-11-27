@@ -347,8 +347,9 @@ pub fn generate(program: &CompiledGraph) -> Option<Generated> {
             }
             Instruction::Project { .. } => Some(value_lit(&Value::Vector(tequila_core::math::Vec3::ZERO))),
             // Tequila's own procedurals, not written for the graphics card:
-            // their middle value.
-            Instruction::Evaluate { .. } => Some(value_lit(&Value::Float(0.5))),
+            // their middle value - and a wear pattern's average, which is
+            // mostly nothing, so a scratched gloss previews as a gloss.
+            Instruction::Evaluate { procedural, .. } => Some(value_lit(&Value::Float(procedural.stand_in()))),
         };
         body.push_str(&memo.lines);
         memo.lines.clear();

@@ -137,6 +137,40 @@ depth:
 }
 ```
 
+### Wear: scratches, dust, fingerprints, scuffs, worn edges
+
+Five patterns are for the marks of use rather than the material itself:
+`wear_scratches`, `dust`, `fingerprints`, `scuffs` and `edge_wear`. They
+need no UVs - a scratch is laid along whatever surface it falls on, dust
+settles on what faces up, edge wear reads how sharply the part bends - and
+each reads 0 on the untouched surface, rising on the mark. So a wear
+pattern goes on a roughness with a `range` up from the clean value, on a
+colour through `colors`, and on the bump turned over by a `range` of
+`[1, 0]`, so a groove goes in:
+
+```json
+{
+  "name": "Satin Steel Scratched",
+  "type": "metal",
+  "metal_preset": "Iron",
+  "specular_roughness": 0.2,
+  "patterns": [
+    { "param": "specular_roughness", "procedural": { "kind": "wear_scratches", "density": 0.6, "layers": 2 }, "size": 0.025, "range": [0.2, 0.45] },
+    { "param": "bump", "procedural": { "kind": "wear_scratches", "density": 0.6, "layers": 2 }, "size": 0.025, "range": [1, 0], "depth": 5e-6 }
+  ]
+}
+```
+
+The same pattern and seed on both parameters is the same scratches, so the
+groove and its dullness line up. `size` sets the scale: for scratches, a
+scratch is at most four fifths of it long. `"direction": "swirl"` makes the
+arcs a polishing pad leaves - on chrome and car paint they ring a highlight
+in circles. Far off, where a pixel holds many scratches, the pattern fades
+into its average, so a scratched part across a room is a little duller, not
+glittering. The library's **Aluminium Brushed Scratched**, **Chrome Swirl
+Marks**, **ABS Black Worn**, **Automotive Black Dusty** and **Display Glass
+Black Fingerprinted** are made with them (`examples/standard_library/worn.rs`).
+
 ### The full node graph
 
 Anything the node editor makes is saved as a `graph`: Blender's shader nodes

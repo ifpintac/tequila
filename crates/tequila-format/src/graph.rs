@@ -916,6 +916,55 @@ pub(crate) fn procedural_to_json(p: &tequila_texture::procedural::Procedural) ->
                 .set("size", *size)
                 .set("softness", *softness);
         }
+        Procedural::WearScratches(s) => {
+            object
+                .set("frequency", s.frequency)
+                .set("density", s.density)
+                .set("length", s.length)
+                .set("length_variation", s.length_variation)
+                .set("width", s.width)
+                .set("taper", s.taper)
+                .set("fade", s.fade)
+                .set("bend", s.bend)
+                .set("wobble", s.wobble)
+                .set("direction", s.direction.key())
+                .set("spread", s.spread)
+                .set("depth_variation", s.depth_variation)
+                .set("layers", s.layers as f64);
+        }
+        Procedural::Dust(d) => {
+            object
+                .set("frequency", d.frequency)
+                .set("amount", d.amount)
+                .set("patchiness", d.patchiness)
+                .set("specks", d.specks)
+                .set("speck_frequency", d.speck_frequency)
+                .set("up_bias", d.up_bias);
+        }
+        Procedural::Fingerprints(s) => {
+            object
+                .set("frequency", s.frequency)
+                .set("prints", s.prints)
+                .set("smears", s.smears)
+                .set("ridges", s.ridges)
+                .set("softness", s.softness);
+        }
+        Procedural::Scuffs(s) => {
+            object
+                .set("frequency", s.frequency)
+                .set("coverage", s.coverage)
+                .set("stretch", s.stretch)
+                .set("streaks", s.streaks)
+                .set("softness", s.softness);
+        }
+        Procedural::EdgeWear(e) => {
+            object
+                .set("radius", e.radius)
+                .set("amount", e.amount)
+                .set("breakup", e.breakup)
+                .set("frequency", e.frequency)
+                .set("softness", e.softness);
+        }
     }
     object.build()
 }
@@ -983,6 +1032,68 @@ pub(crate) fn procedural_from_json(value: &Value) -> Option<tequila_texture::pro
             density: number("density", 0.3),
             spread: number("spread", 0.05),
         },
+        // The wear patterns: a setting missing from the file takes the
+        // pattern's own default, so a file written before a setting was
+        // added still reads.
+        "wear_scratches" => {
+            let d = tequila_texture::wear::Scratches::default();
+            Procedural::WearScratches(tequila_texture::wear::Scratches {
+                frequency: number("frequency", d.frequency),
+                density: number("density", d.density),
+                length: number("length", d.length),
+                length_variation: number("length_variation", d.length_variation),
+                width: number("width", d.width),
+                taper: number("taper", d.taper),
+                fade: number("fade", d.fade),
+                bend: number("bend", d.bend),
+                wobble: number("wobble", d.wobble),
+                direction: tequila_texture::wear::ScratchDirection::from_key(name("direction")).unwrap_or(d.direction),
+                spread: number("spread", d.spread),
+                depth_variation: number("depth_variation", d.depth_variation),
+                layers: number("layers", d.layers as f32).clamp(1.0, 3.0) as u32,
+            })
+        }
+        "dust" => {
+            let d = tequila_texture::wear::Dust::default();
+            Procedural::Dust(tequila_texture::wear::Dust {
+                frequency: number("frequency", d.frequency),
+                amount: number("amount", d.amount),
+                patchiness: number("patchiness", d.patchiness),
+                specks: number("specks", d.specks),
+                speck_frequency: number("speck_frequency", d.speck_frequency),
+                up_bias: number("up_bias", d.up_bias),
+            })
+        }
+        "fingerprints" => {
+            let d = tequila_texture::wear::Fingerprints::default();
+            Procedural::Fingerprints(tequila_texture::wear::Fingerprints {
+                frequency: number("frequency", d.frequency),
+                prints: number("prints", d.prints),
+                smears: number("smears", d.smears),
+                ridges: number("ridges", d.ridges),
+                softness: number("softness", d.softness),
+            })
+        }
+        "scuffs" => {
+            let d = tequila_texture::wear::Scuffs::default();
+            Procedural::Scuffs(tequila_texture::wear::Scuffs {
+                frequency: number("frequency", d.frequency),
+                coverage: number("coverage", d.coverage),
+                stretch: number("stretch", d.stretch),
+                streaks: number("streaks", d.streaks),
+                softness: number("softness", d.softness),
+            })
+        }
+        "edge_wear" => {
+            let d = tequila_texture::wear::EdgeWear::default();
+            Procedural::EdgeWear(tequila_texture::wear::EdgeWear {
+                radius: number("radius", d.radius),
+                amount: number("amount", d.amount),
+                breakup: number("breakup", d.breakup),
+                frequency: number("frequency", d.frequency),
+                softness: number("softness", d.softness),
+            })
+        }
         "marble" => Procedural::Marble {
             axis: axis_from_name(name("axis")),
             frequency: number("frequency", 3.0),

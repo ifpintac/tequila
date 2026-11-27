@@ -13,7 +13,7 @@ The quickest change, and one undo step: a procedural pattern drives one paramete
 ```
 
 - `param` is a parameter key (`base_color`, `specular_roughness`, `base_metalness`, `bump`, `coat_weight`, `geometry_opacity`…). `frequency` is repeats per metre: 100 is a 1 cm feature.
-- The kinds: `noise`, `noise_texture`, `ridged`, `cellular`, `spots`, `granite`, `marble`, `wood`, `wood_advanced`, `brushed`, `brushed_radial`, `scratches`, `leather`, `weave`, `camouflage`, `contour`, `mesh` (their settings are on page `recipes`).
+- The kinds: `noise`, `noise_texture`, `ridged`, `cellular`, `spots`, `granite`, `marble`, `wood`, `wood_advanced`, `brushed`, `brushed_radial`, `scratches`, `leather`, `weave`, `camouflage`, `contour`, `mesh`, and the wear patterns, which need no UVs: `wear_scratches`, `dust`, `fingerprints`, `scuffs`, `edge_wear` (their settings are on page `recipes`).
 - `"procedural": null` detaches it again and leaves the plain value.
 - On a **colour** parameter the pattern is read through a colour ramp, grey to start with. Set the ramp next - it only exists once the parameter has a pattern:
 

@@ -71,6 +71,13 @@ pub fn evaluate(textures: &TextureTable, extent: f32, graph: &MaterialGraph, id:
         preview.connect_output(id, output, surface, Socket::Param(Param::BaseColor));
     }
     let program = preview.compile().ok()?;
+    // A wear pattern's marks are millimetres to centimetres across: over a
+    // whole model they are under a pixel and preview as their average, flat.
+    // It is shown over a stretch of a few of its own marks instead; and edge
+    // wear, which reads how sharply the surface bends, over a square that
+    // runs from flat at its left to sharp at its right.
+    let extent = crate::wear_ui::preview_extent(&graph.node(id)?.kind).map_or(extent, |most| extent.min(most));
+    let edge = crate::wear_ui::preview_edge(graph);
     // The square is tilted to cut all three axes. Square to one axis, it
     // would miss whatever a pattern does along that axis: a flat pattern
     // (x–z) seen in x–y is one line of itself, and marble banded along the
@@ -98,7 +105,7 @@ pub fn evaluate(textures: &TextureTable, extent: f32, graph: &MaterialGraph, id:
                 footprint: extent / h as f32,
                 scale: 1.0,
                 uv_footprint: None,
-                curvature: 0.0,
+                curvature: edge.map_or(0.0, |radius| sx / (2.0 * half_width) * 2.0 / radius),
                 occlusion: 0.0,
                 vertex_color: tequila_core::spectrum::Spectrum::ONE,
                 // Seen face on, at the middle of a part of this size.

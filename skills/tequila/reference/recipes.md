@@ -62,11 +62,17 @@ Each is `{"kind": "<name>", ...settings}`; settings left out take sensible defau
 | `camouflage` | Stacked blotches in steps | `layers` 2-5 |
 | `contour` | Lines at even heights | `width`, `softness`, `distortion` |
 | `mesh` | A perforated sheet, 0 in a hole | `shape`: `round`, `square`, `hex`; `size` of the hole |
+| `wear_scratches` | Scratches along any surface, no UVs: 0 untouched, up to 1 in the deepest | `density`, `length`, `width` (0.001-0.02 of a cell), `bend`, `wobble`, `taper`, `direction`: `random`, `x`, `y`, `z`, `swirl`; `layers` 1-3 of hairlines |
+| `dust` | A dust film with specks, on what faces up | `amount`, `patchiness`, `specks`, `up_bias`, each 0-1; `speck_frequency` |
+| `fingerprints` | Fingerprints with ridges, and smears | `prints`, `smears`, `ridges`, each 0-1 |
+| `scuffs` | Rubbed patches with fine rub lines | `coverage`, `stretch`, `streaks`, each 0-1 |
+| `edge_wear` | Worn convex edges, from the mesh's curvature | `radius` (metres, 0.001-0.005), `amount`, `breakup` 0-1 |
 
 The traps:
 
 - noise-like patterns and marble run smoothly 0-1; **spots, mesh and contour are 1 on the feature**; **scratches are 1 except in a scratch** (so wear layers invert their mask, and a metalness range runs `[1, 0]`); weave and leather are heights.
 - weave and mesh are flat: they lie in the part's own x-z plane.
+- The wear patterns are 0 on the untouched surface and rise on the mark: put them on roughness with a `range` up from the clean value, on `base_color` through `colors`, and on `bump` with `"range": [1, 0]`, so a groove goes in. They read which way the surface faces and how sharply it bends, so they need no UVs and are best left without a mapping.
 - Chips of different colours (terrazzo, confetti): colour a layer with `cellular` `"output": "id"` through a stepped ramp, masked by `spots` of the **same size and seed** - they share their cells.
 
 ## Rules of thumb

@@ -40,6 +40,7 @@ mod product;
 mod recipe;
 mod suede;
 mod wood;
+mod worn;
 
 use tequila_core::spectrum::Spectrum;
 use tequila_format::library::{self, LibraryEntry, Source};
@@ -206,7 +207,7 @@ fn words_of(own: &[&str], listing: &Listing) -> Vec<String> {
 
 fn main() {
     let mut listings = catalogue();
-    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all(), leather::all()].into_iter().flatten().collect();
+    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all(), leather::all(), worn::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
     let mut written = Vec::new();
