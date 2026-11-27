@@ -524,6 +524,9 @@ pub struct UiChange {
     pub selection_outline: Option<bool>,
     /// The move, turn and scale gizmo on the selection (Shift+G).
     pub gizmo: Option<bool>,
+    /// Each light's shape and size drawn over the view, as the viewport's
+    /// light outlines button shows them, for the session.
+    pub light_outlines: Option<bool>,
     /// Show the viewport at the render's shape, the rest left empty, so
     /// what is in the view is what the render will hold.
     pub frame: Option<bool>,
@@ -1729,6 +1732,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             edges: opt_bool(value, "edges")?,
             selection_outline: opt_bool(value, "selection_outline")?,
             gizmo: opt_bool(value, "gizmo")?,
+            light_outlines: opt_bool(value, "light_outlines")?,
             frame: opt_bool(value, "frame")?,
             help: opt_bool(value, "help")?,
             mode: opt_string(value, "mode")?,

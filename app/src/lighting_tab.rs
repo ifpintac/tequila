@@ -399,6 +399,7 @@ pub fn light_panel(
 
     crate::theme::section(ui, "Light");
     ui.add(crate::field::Checkbox::new(&mut light.enabled, "On"));
+    hide_in_final_render(ui, &mut light);
     // Where a photographer starts: the highlight, not the numbers.
     let aiming = aim.armed_light() == Some(node);
     if ui
@@ -567,9 +568,11 @@ pub fn light_panel(
                 crate::field::Fold::new("Visibility")
                     .default_open(false)
                     .show(ui, |ui| {
-                        ui.add(crate::field::Checkbox::new(&mut light.visibility.camera, "Visible to camera"));
+                        // Whether the camera sees it is *Hide in final render*,
+                        // at the top of the page.
                         ui.add(crate::field::Checkbox::new(&mut light.visibility.diffuse, "Affects diffuse"));
-                        ui.add(crate::field::Checkbox::new(&mut light.visibility.specular, "Affects specular"));
+                        ui.add(crate::field::Checkbox::new(&mut light.visibility.specular, "Seen in reflections"))
+                            .on_hover_text(SEEN_IN_REFLECTIONS);
                         ui.add(crate::field::Checkbox::new(&mut light.visibility.shadow, "Casts shadows"));
                         let mut layer = light.layer;
                         ui.add(crate::field::Slider::new(&mut layer, 0..=7).text("Light layer"))
@@ -615,6 +618,44 @@ pub fn light_panel(
     }
     true
 }
+
+/// What *Seen in reflections* says when pointed at.
+const SEEN_IN_REFLECTIONS: &str =
+    "Its reflection in shiny surfaces, and with it the highlight it gives them: a light's highlight is its reflection. Off, it lights by diffuse light alone.";
+
+/// *Hide in final render*: the light still lights the scene and gives the
+/// product its highlights, and its shape is not seen by the camera - the community's
+/// request beside the viewport's light outlines, which still show where it
+/// is. It is the light's camera visibility (`Visibility::camera`, the file's
+/// `visible_to_camera`), which every renderer already honours.
+///
+/// Camera only, not reflections too: a softbox stands beside a product for
+/// its reflection, the highlight down a bottle or along a car's flank, and a
+/// light hidden from reflections gives no highlight at all. What is wanted
+/// out of the picture is the panel standing in the frame. Reflections are
+/// the Visibility section's *Seen in reflections*, as KeyShot keeps the two
+/// apart.
+///
+/// Only a panel has a shape the camera sees (`docs/01-RENDERER-CORE.md`
+/// §5.4: "an area lamp; the camera sees no sun"): on a point, a bulb, a
+/// spot and the sun the box is greyed out, as a box that changes nothing
+/// reads as broken.
+fn hide_in_final_render(ui: &mut egui::Ui, light: &mut LightSettings) {
+    let has_shape = matches!(light.shape, LightShape::Area { .. });
+    let mut hidden = !light.visibility.camera;
+    let response = ui
+        .add_enabled(has_shape, crate::field::Checkbox::new(&mut hidden, "Hide in final render"))
+        .on_hover_text(HIDE_IN_FINAL_RENDER)
+        .on_disabled_hover_text(
+            "Only a panel or a disc is seen by the camera: a point, a bulb, a spot and the sun light the scene with no shape in the picture.",
+        );
+    if response.changed() {
+        light.visibility.camera = !hidden;
+    }
+}
+
+/// What *Hide in final render* says when pointed at.
+const HIDE_IN_FINAL_RENDER: &str = "The camera does not see the light itself, in the Rendered view or the final render. It still lights the scene, and the highlights it gives the product stay. Its outline in the viewport still shows where it is.";
 
 /// A light's links, for its light or for its shadow: everything, only
 /// some parts, or all but some. `title` is the fold's name and id.
@@ -710,6 +751,163 @@ mod tests {
             assert!((at - middle).length() > 0.01, "{piece:?} sits on the product");
             project.undo();
             assert_eq!(project.document().tree.iter().count(), nodes, "{piece:?}: one undo takes it all back");
+        }
+    }
+
+    /// Ticked, *Hide in final render* is the light's camera visibility off,
+    /// and it stays so through a save and a load, the light beside it still
+    /// seen.
+    #[test]
+    fn a_light_hidden_in_the_final_render_stays_hidden_after_a_save_and_a_load() {
+        let folder = std::env::temp_dir().join(format!("tequila-hidden-light-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let file = folder.join("hidden.tequila");
+        let mut project = Project::with_document(
+            tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3),
+            std::sync::Arc::new(tequila_scene::demo::studio_environment()),
+        );
+        for name in ["Hidden", "Seen"] {
+            project
+                .apply(Command::AddLight { parent: None, name: name.into(), settings: Box::new(LightSettings::default()) })
+                .expect("added");
+        }
+        let light = |project: &Project, name: &str| {
+            let node = project.document().tree.iter().find(|n| n.name == name).expect("the light");
+            match &node.kind {
+                NodeKind::Light { settings } => (node.id, (**settings).clone()),
+                _ => panic!("{name} is not a light"),
+            }
+        };
+        let (node, before) = light(&project, "Hidden");
+        assert!(before.visibility.camera, "a new light is seen, as today");
+        let hidden = LightSettings { visibility: tequila_render_core::light::Visibility { camera: false, ..before.visibility }, ..before };
+        project.apply(Command::SetLight { node, settings: Box::new(hidden.clone()) }).expect("hidden");
+        project.save(&file).expect("saved");
+
+        let mut opened = Project::with_document(tequila_scene::SceneDocument::new(), std::sync::Arc::new(tequila_scene::demo::studio_environment()));
+        opened.open(&file).expect("opened");
+        assert_eq!(light(&opened, "Hidden").1, hidden, "the light came back changed");
+        let seen = light(&opened, "Seen").1;
+        assert!(seen.visibility.camera && seen.visibility.specular, "the other light was hidden too: {:?}", seen.visibility);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A panel in the picture, before a ball it lights, rendered by
+    /// Tequila's renderer and by Cycles: hidden in the final render, where
+    /// the panel was shows what is behind it, as with the light off, and the
+    /// ball is lit as it was. Cycles is skipped where it is not installed.
+    #[test]
+    fn a_light_hidden_in_the_final_render_still_lights_the_scene_in_both_renderers() {
+        use tequila_core::math::{vec3, Vec3};
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        let (width, height) = (160usize, 100usize);
+        let camera = tequila_render_core::camera::Camera::look_at(vec3(0.0, 1.2, 7.0), vec3(0.0, 1.0, 0.0), Vec3::Y);
+        let panel = vec3(-1.6, 2.1, 0.5);
+        let middle = vec3(0.0, 1.0, 0.0);
+        // The ball's face towards the panel, which the camera sees.
+        let lit = middle + (panel - middle).normalize();
+        let mean_round = |image: &[u8], point: Vec3| {
+            let film = camera.project(point, width as f32 / height as f32).expect("in view");
+            let (x, y) = ((film.x * width as f32) as usize, (film.y * height as f32) as usize);
+            let mut sum = 0.0;
+            for py in y - 2..=y + 2 {
+                for px in x - 2..=x + 2 {
+                    let i = (py * width + px) * 4;
+                    sum += 0.2126 * f64::from(image[i]) + 0.7152 * f64::from(image[i + 1]) + 0.0722 * f64::from(image[i + 2]);
+                }
+            }
+            sum / 25.0
+        };
+        for engine in engines {
+            let [seen, hidden, off] = [(true, true), (true, false), (false, true)].map(|(on, camera_sees)| {
+                let mut project = panel_before_a_ball(panel, on, camera_sees);
+                render(&mut project, engine, camera, (width, height), &format!("{}-{on}-{camera_sees}", engine.key()))
+            });
+            let at_panel = [&seen, &hidden, &off].map(|image| mean_round(image, panel));
+            let on_ball = [&seen, &hidden, &off].map(|image| mean_round(image, lit));
+            println!("{}: where the panel is {at_panel:.1?}, the ball's lit face {on_ball:.1?} (seen, hidden, off)", engine.label());
+            assert!(at_panel[0] > at_panel[1] + 60.0, "{}: the panel was not seen, or not hidden: {at_panel:.1?}", engine.label());
+            assert!((at_panel[1] - at_panel[2]).abs() < 8.0, "{}: hidden, the panel's place is not what is behind it: {at_panel:.1?}", engine.label());
+            assert!((on_ball[0] - on_ball[1]).abs() < (on_ball[0] * 0.06).max(6.0), "{}: hiding the panel changed its light: {on_ball:.1?}", engine.label());
+            assert!(on_ball[1] > on_ball[2] + 20.0, "{}: hidden, the panel lights nothing: {on_ball:.1?}", engine.label());
+        }
+    }
+
+    /// The demo's ball, a metre round, in a dim even light, and a 0.8 m
+    /// panel at `at`, `on` or off, `seen` by the camera or not, facing a
+    /// point between the ball and the camera: the camera sees the side that
+    /// shines, and so does the ball.
+    fn panel_before_a_ball(at: tequila_core::math::Vec3, on: bool, seen: bool) -> Project {
+        use tequila_core::math::{vec3, Mat4, Transform, Vec3};
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Diffuse, 1.0);
+        let environment = tequila_render_core::environment::Environment::uniform(tequila_core::spectrum::Spectrum::splat(0.03));
+        let mut project = Project::with_document(document, std::sync::Arc::new(environment));
+        let settings = LightSettings {
+            shape: LightShape::Area { width: 0.8, height: 0.8, disc: false, two_sided: false },
+            // Bright beside the room's own light, so what it gives the ball
+            // stands well clear of the noise.
+            intensity: Intensity::Nits(20.0),
+            enabled: on,
+            visibility: tequila_render_core::light::Visibility { camera: seen, ..Default::default() },
+            ..LightSettings::default()
+        };
+        project.apply(Command::AddLight { parent: None, name: "Panel".into(), settings: Box::new(settings) }).expect("added");
+        let node = project.document().tree.iter().find(|n| n.name == "Panel").expect("the panel").id;
+        let towards = vec3(0.0, 1.0, 1.5);
+        let facing = Mat4::look_at(at, at + (at - towards), Vec3::Y);
+        project.apply(Command::set_transform(node, Transform::from_matrix(facing).expect("invertible"))).expect("placed");
+        project
+    }
+
+    /// `project` rendered by `engine` from `camera`, as the Render window
+    /// renders it: the developed picture.
+    fn render(
+        project: &mut Project,
+        engine: tequila_scene::render::RenderEngine,
+        camera: tequila_render_core::camera::Camera,
+        (width, height): (usize, usize),
+        name: &str,
+    ) -> Vec<u8> {
+        use std::time::{Duration, Instant};
+        let folder = std::env::temp_dir().join(format!("tequila-hide-in-final-render-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let settings = tequila_scene::render::RenderSettings {
+            engine,
+            width,
+            height,
+            max_samples: 32,
+            max_seconds: None,
+            denoise: false,
+            adaptive: false,
+            filename_template: name.into(),
+            output_directory: folder.display().to_string(),
+            ..project.render_settings().clone()
+        };
+        let saved = tequila_scene::lighting::SavedCamera { name: "Test".into(), camera, target: tequila_core::math::vec3(0.0, 1.0, 0.0) };
+        let id = project.enqueue_camera(name, saved, settings);
+        let job = project.take_queued_snapshot(id).expect("the render's job");
+        let renderer = crate::batch::BatchRenderer::new();
+        renderer.submit(job);
+        let deadline = Instant::now() + Duration::from_secs(900);
+        loop {
+            for event in renderer.drain() {
+                match event {
+                    crate::batch::BatchEvent::Finished { preview, path, .. } => {
+                        println!("{name}: {path}");
+                        return preview;
+                    }
+                    crate::batch::BatchEvent::Failed { message, .. } => panic!("{name}: {message}"),
+                    _ => {}
+                }
+            }
+            assert!(Instant::now() < deadline, "{name} never finished");
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
 }

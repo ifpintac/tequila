@@ -955,6 +955,11 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(gizmo) = change.gizmo {
         app.show_gizmo = gizmo;
     }
+    // For the session, as the button would show them, without keeping the
+    // person's choice for the next one.
+    if let Some(outlines) = change.light_outlines {
+        app.prefs.show_light_outlines = outlines;
+    }
     if let Some(frame) = change.frame {
         app.show_render_frame = frame;
     }
@@ -1171,6 +1176,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("edges", app.show_model_edges)
         .set("selection_outline", app.show_selection_outline)
         .set("gizmo", app.show_gizmo)
+        .set("light_outlines", app.prefs.show_light_outlines)
         .set("pick_focus", app.focus_pick.armed())
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
