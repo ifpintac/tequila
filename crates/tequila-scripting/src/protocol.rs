@@ -588,6 +588,9 @@ pub struct UiChange {
     /// a mouse would, so a script can time what an orbit, a pan or a zoom
     /// with the mouse costs.
     pub drag: Option<PointerDrag>,
+    /// The Camera tab's Pick focus, on or off: armed, a click on the model
+    /// in the viewport focuses there.
+    pub pick_focus: Option<bool>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
     /// into the screenshot folder, with its notice.
     pub save_screenshot: Option<bool>,
@@ -1086,6 +1089,29 @@ pub struct Look {
     pub pitch: Option<f32>,
     pub distance: Option<f32>,
     pub focal_length: Option<f32>,
+    /// A point `[x, y, z]` to focus on, as the Camera tab's Pick focus
+    /// does: the focus distance becomes its depth along the view axis, the
+    /// blur comes on if it was off and Keep focus goes off
+    /// (`tequila_scene::focus`). Taken after the camera has moved.
+    pub focus: Option<[f32; 3]>,
+    /// A part to focus on, by node id: its middle, as `focus`.
+    pub focus_part: Option<u64>,
+}
+
+impl Look {
+    /// The point `focus` or `focus_part` names, in the world: `None` when
+    /// neither is given. A part's (or a group's) is the middle of its
+    /// bounds, the point Frame selected aims at.
+    pub fn focus_point(&self, document: &tequila_scene::SceneDocument) -> Result<Option<tequila_core::math::Vec3>, String> {
+        match (self.focus, self.focus_part) {
+            (Some(_), Some(_)) => Err("give `focus` (a point) or `focus_part` (a part), not both".into()),
+            (Some([x, y, z]), None) => Ok(Some(tequila_core::math::vec3(x, y, z))),
+            (None, Some(id)) => tequila_scene::gizmo::selection_bounds(document, &[tequila_scene::tree::NodeId(id)])
+                .map(|bounds| Some(bounds.center()))
+                .ok_or_else(|| format!("there is no part {id} with a shape to focus on")),
+            (None, None) => Ok(None),
+        }
+    }
 }
 
 /// The read side.
@@ -1757,6 +1783,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             },
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
             drag: value.get("drag").filter(|v| !matches!(v, Value::Null)).map(pointer_drag).transpose()?,
+            pick_focus: opt_bool(value, "pick_focus")?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,
             window_size: optional(value, "window_size", "[width, height] in points", |v| match v.as_array() {
@@ -1834,6 +1861,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             pitch: opt_number(value, "pitch")?,
             distance: opt_number(value, "distance")?,
             focal_length: opt_number(value, "focal_length")?,
+            focus: opt_vector(value, "focus")?,
+            focus_part: opt_index(value, "focus_part")?.map(|id| id as u64),
         }),
         other => {
             return Err(ProtocolError(format!(
@@ -2587,6 +2616,9 @@ mod control_tests {
             r#"{"op":"queue","width":"1920"}"#,
             r#"{"op":"ui","console":"yes"}"#,
             r#"{"op":"look","at":[0,1]}"#,
+            r#"{"op":"look","focus":3}"#,
+            r#"{"op":"look","focus_part":[0,0,0]}"#,
+            r#"{"op":"ui","pick_focus":"yes"}"#,
             r#"{"op":"quit","save":1}"#,
         ] {
             assert!(parse_request(line).is_err(), "{line} was accepted");
@@ -2624,9 +2656,26 @@ mod control_tests {
                 assert_eq!(look.at, Some([0.0, 0.5, 0.0]));
                 assert_eq!(look.focal_length, Some(85.0));
                 assert_eq!(look.view, None);
+                assert_eq!((look.focus, look.focus_part), (None, None));
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// `look` focuses on a point or on a part, and the viewport's picking
+    /// is turned on and off by `ui`.
+    #[test]
+    fn look_focuses_on_a_point_or_a_part() {
+        match operation(r#"{"op":"look","focus":[0.1,0.05,-0.2]}"#) {
+            Operation::Look(look) => assert_eq!(look, Look { focus: Some([0.1, 0.05, -0.2]), ..Default::default() }),
+            other => panic!("{other:?}"),
+        }
+        match operation(r#"{"op":"look","view":"front","focus_part":12}"#) {
+            Operation::Look(look) => assert_eq!((look.view.as_deref(), look.focus_part), (Some("front"), Some(12))),
+            other => panic!("{other:?}"),
+        }
+        let request = parse_request(r#"{"op":"ui","pick_focus":true}"#).unwrap();
+        assert!(matches!(request.operation, Operation::Ui(UiChange { pick_focus: Some(true), .. })));
     }
 
     #[test]

@@ -69,7 +69,14 @@ Render from a saved camera without switching to it: `tequila_queue {"camera": 1}
 
 ## 4. Depth of field
 
-Blur in front of and behind the point of focus is part of the camera block. Read the camera, change `dof`, send the whole camera back with its index:
+The quick way to focus on something is `tequila_look` with `focus_part` (a part's id) or `focus` (a point): the focus distance becomes its distance from the camera along the view, the blur comes on at f/2.8 if it was off, and Keep focus goes off. It is what the Camera tab's Pick focus does with a click on the model.
+
+```json
+tequila_look {"focus_part": 12}
+tequila_look {"focus": [0.02, 0.06, 0.04]}
+```
+
+For the rest, blur in front of and behind the point of focus is part of the camera block. Read the camera, change `dof`, send the whole camera back with its index:
 
 ```json
 {"command": "camera.set", "index": 0, "camera": {…the camera as read, with "dof": {"enabled": true, "f_number": 2.8, "focus_distance": 0.6, "aperture": "Circular", "keep_focus": false}…}}

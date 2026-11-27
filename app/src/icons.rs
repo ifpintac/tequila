@@ -213,6 +213,8 @@ pub enum Icon {
     ZoomIn,
     ZoomOut,
     Stop,
+    /// The Camera tab's Pick focus: a point clicked in the view.
+    Crosshair,
 }
 
 impl Icon {
@@ -366,6 +368,7 @@ impl Icon {
             Icon::ZoomOut => 0xe1b6,
             // Lucide's square: the stop of every player.
             Icon::Stop => 0xe16a,
+            Icon::Crosshair => 0xe0b0,
         };
         char::from_u32(code)
     }
@@ -1172,6 +1175,13 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             }
         }
         Icon::Stop => rounded_fill(3.5, 3.5, 12.5, 12.5, 1.5),
+        Icon::Crosshair => {
+            circle(8.0, 8.0, 6.0);
+            line((8.0, 1.5), (8.0, 4.5));
+            line((8.0, 11.5), (8.0, 14.5));
+            line((1.5, 8.0), (4.5, 8.0));
+            line((11.5, 8.0), (14.5, 8.0));
+        }
     }
 }
 
@@ -1745,7 +1755,7 @@ mod tests {
             Icon::SelectMenu, Icon::Pipette, Icon::Checker,
             Icon::StraightLine, Icon::QuadGrid, Icon::Rectangle, Icon::ProjectFaces,
             Icon::Relax, Icon::Circle, Icon::Grow, Icon::Shrink, Icon::Weld, Icon::MatchSeams, Icon::CutAngle,
-            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick, Icon::ZoomIn, Icon::ZoomOut, Icon::Stop,
+            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick, Icon::ZoomIn, Icon::ZoomOut, Icon::Stop, Icon::Crosshair,
         ]
     }
 
