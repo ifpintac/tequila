@@ -2002,7 +2002,7 @@ pub(crate) fn procedural_controls(
                 ui.add(crate::field::Slider::new(size, 0.0..=1.0).text("Hole size"));
                 ui.add(crate::field::Slider::new(softness, 0.0..=1.0).text("Softness"));
             }
-            Procedural::WearScratches(s) => crate::wear_ui::scratches(ui, s),
+            Procedural::WearScratches(s) => crate::wear_ui::scratches(ui, s, param.key()),
             Procedural::Dust(d) => crate::wear_ui::dust(ui, d),
             Procedural::Fingerprints(s) => crate::wear_ui::fingerprints(ui, s),
             Procedural::Scuffs(s) => crate::wear_ui::scuffs(ui, s),

@@ -46,7 +46,9 @@ fn share(ui: &mut egui::Ui, value: &mut f32, label: &str, hover: &str) {
     ui.add(crate::field::Slider::new(value, 0.0..=1.0).text(label)).on_hover_text(hover);
 }
 
-pub(crate) fn scratches(ui: &mut egui::Ui, s: &mut Scratches) {
+/// `salt` tells apart the same pattern's controls shown in more than one
+/// place at once (under each parameter it feeds).
+pub(crate) fn scratches(ui: &mut egui::Ui, s: &mut Scratches, salt: impl std::hash::Hash) {
     scale(ui, &mut s.frequency, 1.0..=2000.0, "Scratches per metre, roughly: higher is smaller and more of them.");
     share(ui, &mut s.density, "Density", "How many places hold a scratch.");
     share(ui, &mut s.length, "Length", "How long the scratches are, for their scale.");
@@ -59,7 +61,7 @@ pub(crate) fn scratches(ui: &mut egui::Ui, s: &mut Scratches) {
     share(ui, &mut s.wobble, "Wobble", "How hand-made a scratch is: its line wanders and its width comes and goes.");
     ui.horizontal(|ui| {
         ui.label("Direction");
-        egui::ComboBox::from_id_salt(ui.id().with("wear_scratch_direction"))
+        egui::ComboBox::from_id_salt(("wear_scratch_direction", salt))
             .selected_text(s.direction.label())
             .show_ui(ui, |ui| {
                 for direction in ScratchDirection::ALL {
@@ -184,7 +186,7 @@ mod tests {
             let mut edited = p;
             let _ = ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| match &mut edited {
-                    Procedural::WearScratches(s) => scratches(ui, s),
+                    Procedural::WearScratches(s) => scratches(ui, s, 0),
                     Procedural::Dust(d) => dust(ui, d),
                     Procedural::Fingerprints(s) => fingerprints(ui, s),
                     Procedural::Scuffs(s) => scuffs(ui, s),
