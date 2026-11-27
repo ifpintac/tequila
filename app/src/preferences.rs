@@ -964,6 +964,21 @@ pub static SETTINGS: &[Setting] = &[
             None => Ok(()),
         },
     },
+    Setting {
+        key: "import.ask",
+        page: Page::Import,
+        group: "Models",
+        label: "Show the import options for each model",
+        help: "Ask how to bring each model in: into this scene or a new one, which way up, its unit, how finely to divide a CAD file. Off, models come in as you last chose, and the window shows only how far the import has got.",
+        kind: Kind::Toggle,
+        own: false,
+        default: || Value::Bool(true),
+        get: |_| Value::Bool(crate::import_settings::choices().ask),
+        set: |_, value| match value {
+            Value::Bool(ask) => crate::import_settings::set_choices(crate::import_settings::Choices { ask, ..crate::import_settings::choices() }),
+            _ => Ok(()),
+        },
+    },
     // ---- Folders ---------------------------------------------------------
     Setting {
         key: "folders.screenshots",

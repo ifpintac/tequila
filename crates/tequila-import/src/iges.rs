@@ -1889,6 +1889,9 @@ pub fn read(bytes: &[u8], name: &str) -> Result<RawScene, ImportError> {
 /// a reader that changed under it would cost every part its material.
 pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawScene, ImportError> {
     let own = read_own(bytes, name, quality);
+    if crate::watch::stopped() {
+        return Err(ImportError::Cancelled);
+    }
     let short = match &own {
         Ok((_, None)) => return own.map(|(scene, _)| scene),
         Ok((_, Some(short))) => short.clone(),
@@ -1898,7 +1901,10 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
         return own.map(|(scene, _)| scene);
     };
     let reading = crate::step::Reading::start();
-    let read = crate::occt::read(&helper, bytes, crate::occt::Format::Iges, quality.chord(), quality.angle(), &reading.report());
+    let read = crate::occt::read(&helper, bytes, crate::occt::Format::Iges, quality.chord(), quality.angle(), &reading.report(), &|| reading.stopped());
+    if reading.stopped() {
+        return Err(ImportError::Cancelled);
+    }
     match read.map(|read| crate::step::from_occt_iges(read, name, quality)) {
         Ok(Ok(mut scene)) => {
             scene.warnings.insert(0, format!("Tequila's own reader {short}, so OpenCASCADE read the file"));
@@ -2076,7 +2082,7 @@ fn read_own(bytes: &[u8], name: &str, quality: Tessellation) -> Result<(RawScene
         )));
     }
     scene.warnings = warnings;
-    scene.tessellation = Some(quality.label().to_string());
+    scene.tessellation = Some(quality.name());
     Ok((scene, short))
 }
 
