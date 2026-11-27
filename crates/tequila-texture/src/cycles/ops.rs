@@ -241,9 +241,10 @@ impl MathOp {
             MathOp::Snap => safe_divide(a, b).floor() * b,
             MathOp::Wrap => wrapf(a, b, c),
             MathOp::PingPong => pingpongf(a, b),
-            MathOp::Sine => a.sin(),
-            MathOp::Cosine => a.cos(),
-            MathOp::Tangent => a.tan(),
+            // The card's sine (crate::trig), so a pattern is the same on both.
+            MathOp::Sine => crate::trig::sin(a),
+            MathOp::Cosine => crate::trig::cos(a),
+            MathOp::Tangent => crate::trig::tan(a),
             MathOp::Sinh => a.sinh(),
             MathOp::Cosh => a.cosh(),
             MathOp::Tanh => a.tanh(),
@@ -363,9 +364,9 @@ impl VectorMathOp {
             VectorMathOp::Sign => (map3(a, compatible_signf), 0.0),
             VectorMathOp::Minimum => (zip3(a, b, f32::min), 0.0),
             VectorMathOp::Maximum => (zip3(a, b, f32::max), 0.0),
-            VectorMathOp::Sine => (map3(a, f32::sin), 0.0),
-            VectorMathOp::Cosine => (map3(a, f32::cos), 0.0),
-            VectorMathOp::Tangent => (map3(a, f32::tan), 0.0),
+            VectorMathOp::Sine => (map3(a, crate::trig::sin), 0.0),
+            VectorMathOp::Cosine => (map3(a, crate::trig::cos), 0.0),
+            VectorMathOp::Tangent => (map3(a, crate::trig::tan), 0.0),
         }
     }
 }
@@ -861,8 +862,7 @@ impl MappingKind {
 
 /// Rows of the rotation Cycles builds from Euler angles in radians.
 fn euler_rows(e: V3) -> [V3; 3] {
-    let (cx, cy, cz) = (e[0].cos(), e[1].cos(), e[2].cos());
-    let (sx, sy, sz) = (e[0].sin(), e[1].sin(), e[2].sin());
+    let [(sx, cx), (sy, cy), (sz, cz)] = e.map(crate::trig::sin_cos);
     [
         [cy * cz, sy * sx * cz - cx * sz, sy * cx * cz + sx * sz],
         [cy * sz, sy * sx * sz + cx * cz, sy * cx * sz - sx * cz],

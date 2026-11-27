@@ -115,7 +115,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-77 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+78 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -164,6 +164,19 @@ A node given its own copy of its material, so it can be edited alone.
 
 ```json
 { "command": "material.unlink", "node": 2 }
+```
+
+#### `material.paste`
+
+A copy of `material` put on these nodes as a material of their own, in one
+step: Paste material. The copy is named as an unlinked one is (`Paint 2`)
+and shared by the parts it was pasted on together, so editing it changes
+none of the parts the original is on. A group stands for every part in it.
+
+`fs.commands.material.paste(material=..., nodes=...)`
+
+```json
+{ "command": "material.paste", "material": 1, "nodes": [3] }
 ```
 
 #### `material.set_parameter`

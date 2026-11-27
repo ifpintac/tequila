@@ -26,7 +26,7 @@ use tequila_render_cpu::{render_pass_with_aovs, Device, EmbreeIntersector, Rende
 use tequila_scene::render::{AlphaMode, Halt, HiddenLines, RenderEngine, RenderKind, RenderSettings};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Everything one queued render needs.
@@ -52,6 +52,10 @@ pub struct BatchJob {
     /// Render layers: a name and the snapshot that layer is rendered from,
     /// each written beside the main image once it is done.
     pub layers: Vec<(String, Arc<SceneSnapshot>)>,
+    /// The devices Cycles on the graphics card renders it on, as
+    /// Preferences › Rendering chose them for final renders when it started
+    /// (`render_devices`).
+    pub devices: tequila_render_core::devices::Choice,
 }
 
 /// What the renderer says about a job.
@@ -103,6 +107,8 @@ pub struct BatchRenderer {
     jobs: Sender<BatchJob>,
     events: Receiver<BatchEvent>,
     cancel: Arc<AtomicBool>,
+    /// The Render window's Pause ([`BatchRenderer::pause`]).
+    hold: Arc<Hold>,
     running: Arc<AtomicBool>,
     preview: Arc<Mutex<Option<BatchEvent>>>,
     /// The size of picture the Render window shows a render in progress at
@@ -139,6 +145,149 @@ fn pack(size: (usize, usize)) -> u64 {
     ((size.0.min(u32::MAX as usize) as u64) << 32) | size.1.min(u32::MAX as usize) as u64
 }
 
+/// A render held between its passes: the Render window's Pause.
+///
+/// Neither engine can stop in the middle of a pass and carry on later, and
+/// Cycles cannot pause a final render at all (a session made for one, as
+/// Blender's are for an F12, ignores `set_pause`). Between passes, though,
+/// both can be made to wait: Tequila's renderer at the top of its loop, and
+/// Cycles on its own thread, in the progress report it makes after each
+/// stretch of samples. A thread waiting here draws nothing on the processor
+/// or the graphics card, and nothing it has rendered is lost: let go, it
+/// carries on from the samples it had.
+///
+/// The time held is kept apart, so that neither the job's time nor its
+/// "Stop after" counts it ([`Clock`]).
+#[derive(Default)]
+pub(crate) struct Hold {
+    state: Mutex<HoldState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct HoldState {
+    /// Asked to pause.
+    asked: bool,
+    /// The job's threads waiting here now: Cycles' and its floor
+    /// reflection's can both be.
+    waiting: u32,
+    /// Since when at least one of them has been.
+    since: Option<Instant>,
+    /// The time held before that.
+    held: Duration,
+}
+
+impl Hold {
+    fn state(&self) -> std::sync::MutexGuard<'_, HoldState> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn set(&self, paused: bool) {
+        self.state().asked = paused;
+        self.wake.notify_all();
+    }
+
+    pub(crate) fn asked(&self) -> bool {
+        self.state().asked
+    }
+
+    /// Whether the job is held now: asked to pause, and waiting.
+    pub(crate) fn holding(&self) -> bool {
+        self.state().waiting > 0
+    }
+
+    /// The time the job has been held, a hold still going included.
+    pub(crate) fn held(&self) -> Duration {
+        let state = self.state();
+        state.held + state.since.map_or(Duration::ZERO, |since| since.elapsed())
+    }
+
+    /// A new job: not paused, and nothing held yet.
+    fn reset(&self) {
+        let mut state = self.state();
+        state.asked = false;
+        if state.waiting == 0 {
+            state.held = Duration::ZERO;
+            state.since = None;
+        }
+        drop(state);
+        self.wake.notify_all();
+    }
+
+    /// Wait here while asked to pause, until let go or `stop` says the job
+    /// is ending. True when it waited.
+    ///
+    /// `stop` is asked a few times a second, without the hold locked, so it
+    /// may do a little work of its own meanwhile: a picture for the Render
+    /// window, made again at a new size.
+    pub(crate) fn wait(&self, stop: &dyn Fn() -> bool) -> bool {
+        {
+            let mut state = self.state();
+            if !state.asked {
+                return false;
+            }
+            state.waiting += 1;
+            if state.waiting == 1 {
+                state.since = Some(Instant::now());
+            }
+        }
+        // Woken when let go; and a few times a second to look at `stop`,
+        // which is set elsewhere without telling the hold.
+        while !stop() {
+            let state = self.state();
+            if !state.asked {
+                break;
+            }
+            let _ = self.wake.wait_timeout(state, Duration::from_millis(50));
+        }
+        let mut state = self.state();
+        state.waiting -= 1;
+        if state.waiting == 0 {
+            if let Some(since) = state.since.take() {
+                state.held += since.elapsed();
+            }
+        }
+        true
+    }
+}
+
+/// A job's time: since it began, less the time it was held ([`Hold`]). What
+/// it reports, and what its time limit is measured on.
+#[derive(Clone, Copy)]
+pub(crate) struct Clock<'a> {
+    begun: Instant,
+    /// What had been held when it began.
+    from: Duration,
+    hold: &'a Hold,
+}
+
+impl<'a> Clock<'a> {
+    fn start(hold: &'a Hold) -> Clock<'a> {
+        Clock { begun: Instant::now(), from: hold.held(), hold }
+    }
+
+    pub(crate) fn elapsed(&self) -> Duration {
+        self.begun.elapsed().saturating_sub(self.hold.held().saturating_sub(self.from))
+    }
+
+    /// Hold the job here while it is paused, saying so in the queue, and
+    /// then that it is `again`. Ended early by `stop`.
+    /// True when it was asked to pause.
+    fn pause_point(&self, id: u64, events: &Sender<BatchEvent>, again: &'static str, stop: &dyn Fn() -> bool) -> bool {
+        if !self.hold.asked() {
+            return false;
+        }
+        let _ = events.send(BatchEvent::Stage { id, label: PAUSED });
+        self.hold.wait(stop);
+        let _ = events.send(BatchEvent::Stage { id, label: again });
+        true
+    }
+}
+
+/// What a held job says of itself: in the queue, the Render window and
+/// `query jobs`.
+pub const PAUSED: &str = "Paused";
+
 impl std::fmt::Debug for BatchRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BatchRenderer").finish_non_exhaustive()
@@ -156,6 +305,7 @@ impl BatchRenderer {
         let (job_sender, job_receiver) = channel::<BatchJob>();
         let (event_sender, event_receiver) = channel::<BatchEvent>();
         let cancel = Arc::new(AtomicBool::new(false));
+        let hold = Arc::new(Hold::default());
         let running = Arc::new(AtomicBool::new(false));
         let preview = Arc::new(Mutex::new(None));
         let thread_preview = preview.clone();
@@ -163,6 +313,7 @@ impl BatchRenderer {
         let thread_size = preview_size.clone();
 
         let thread_cancel = cancel.clone();
+        let thread_hold = hold.clone();
         let thread_running = running.clone();
         let thread = std::thread::Builder::new()
             .name("tequila-batch".into())
@@ -176,7 +327,7 @@ impl BatchRenderer {
                     let id = job.id;
                     let _ = event_sender.send(BatchEvent::Started { id });
                     let previews = Previews { slot: &thread_preview, size: &thread_size };
-                    let work = || run(job, &event_sender, &thread_cancel, &previews);
+                    let work = || run(job, &event_sender, &thread_cancel, &thread_hold, &previews);
                     let result = match &pool { Some(pool) => pool.install(work), None => work() };
                     match result {
                         Ok(finished) => {
@@ -195,6 +346,7 @@ impl BatchRenderer {
             jobs: job_sender,
             events: event_receiver,
             cancel,
+            hold,
             running,
             preview,
             preview_size,
@@ -211,6 +363,8 @@ impl BatchRenderer {
 
     pub fn submit(&self, job: BatchJob) {
         self.cancel.store(false, Ordering::Release);
+        // A pause is the job's that was running: the next starts unpaused.
+        self.hold.reset();
         self.running.store(true, Ordering::Release);
         if self.jobs.send(job).is_err() { self.running.store(false, Ordering::Release); }
     }
@@ -222,9 +376,26 @@ impl BatchRenderer {
     /// Stop the job in progress. It still reports, with whatever samples it
     /// reached — a cancelled render is not a failed one, and throwing away
     /// forty minutes of work because someone changed their mind about the last
-    /// ten would be its own kind of failure.
+    /// ten would be its own kind of failure. A paused job stops too.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Release);
+    }
+
+    /// Hold the job in progress after the pass it is on, or let it carry
+    /// on ([`Hold`]). The queue waits behind a held job. A job that could
+    /// not carry on where it was ([`pausable`]) is not held.
+    pub fn pause(&self, paused: bool) {
+        self.hold.set(paused);
+    }
+
+    /// Whether the job in progress has been asked to pause.
+    pub fn is_paused(&self) -> bool {
+        self.is_running() && self.hold.asked()
+    }
+
+    /// Whether it is held now: asked, and its pass finished.
+    pub fn is_held(&self) -> bool {
+        self.is_running() && self.hold.holding()
     }
 
     /// Everything the renderer has said since the last call. Never blocks.
@@ -266,11 +437,15 @@ fn run(
     mut job: BatchJob,
     events: &Sender<BatchEvent>,
     cancel: &AtomicBool,
+    hold: &Hold,
     previews: &Previews,
 ) -> Result<BatchEvent, String> {
+    // A job that cannot carry on where it was is not held.
+    let unheld = Hold::default();
+    let hold = if pausable(&job.settings).is_ok() { hold } else { &unheld };
     // The job's time, which is what it reports: from here to its file
-    // saved, every stage included.
-    let begun = Instant::now();
+    // saved, every stage included, and any time it was paused left out.
+    let begun = Clock::start(hold);
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Preparing scene" });
     let settings = &job.settings;
     if settings.width == 0 || settings.height == 0 || settings.max_samples == 0 {
@@ -322,7 +497,11 @@ fn run(
                 // it, is not the card's doing, and rendering again on the
                 // processor for hours only to fail the same way helped
                 // nobody.
-                Err(why) if engine == RenderEngine::CyclesGpu && !cancel.load(Ordering::Acquire) => {
+                Err(why)
+                    if engine == RenderEngine::CyclesGpu
+                        && !cancel.load(Ordering::Acquire)
+                        && crate::render_devices::cycles_plan(engine, &job.devices, tequila_render_core::devices::Use::Final).on_card() =>
+                {
                     eprintln!("Tequila: Cycles could not render on the graphics card, so it renders on the processor: {why}");
                     let _ = events.send(BatchEvent::Stage { id: job.id, label: "The graphics card failed: rendering on the processor" });
                     render_cycles(job, RenderEngine::CyclesCpu, events, cancel, previews, begun)?
@@ -384,12 +563,17 @@ fn run(
     let mut schedule = ProgressiveSchedule::default();
     schedule.update(60_000);
 
-    let started = Instant::now();
+    // The rendering's own time, which the time limit is measured on.
+    let started = Clock::start(hold);
     let halt;
     // In batches rather than one sample at a time, so the progress report and
     // the cancel check cost nothing measurable next to the rendering.
     const BATCH: u32 = 2;
     let mut last_preview = Instant::now();
+    // The size of the last picture made, to make another at once when the
+    // Render window asks for a new size while the render is paused.
+    let shown = std::cell::Cell::new(None);
+    let stopping = || cancel.load(Ordering::Acquire);
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Rendering" });
     loop {
         let (samples, converged) = region_progress(&framebuffer, context.region);
@@ -403,6 +587,21 @@ fn run(
             // reason a time limit stops it, and it still writes what it has.
             halt = Halt::Time;
             break;
+        }
+        // Paused: held here, between passes, with every sample kept, and
+        // then everything above looked at again. Its picture is made again
+        // meanwhile if the Render window wants it at another size - zoomed
+        // in to look at its pixels.
+        let paused = begun.pause_point(job.id, events, "Rendering", &|| {
+            let wanted = preview_size(settings.width, settings.height, previews.fit());
+            if let Some(size) = wanted.filter(|size| shown.get() != Some(*size)) {
+                previews.show(live_preview(&job, &framebuffer, size));
+                shown.set(Some(size));
+            }
+            stopping()
+        });
+        if paused {
+            continue;
         }
 
         let remaining = settings.max_samples.saturating_sub(samples).min(BATCH).max(1);
@@ -419,19 +618,12 @@ fn run(
             samples: region_progress(&framebuffer, context.region).0,
             seconds: begun.elapsed().as_secs_f64(),
         });
-        if samples == 0 || last_preview.elapsed().as_secs_f32() >= 1.0 {
-            // Large enough to fill the Render window's stage without looking soft.
-            let width = settings.width.min(1280);
-            let height = (settings.height * width / settings.width).max(1);
-            let mut color = Vec::with_capacity(width * height);
-            let mut alpha = Vec::with_capacity(width * height);
-            for y in 0..height { for x in 0..width {
-                let p = framebuffer.pixel(x * settings.width / width, y * settings.height / height);
-                color.push(p.mean_foreground()); alpha.push(p.alpha());
-            }}
-            let output = RenderOutput { width, height, color, alpha, layers: Vec::new(),
-                style: job.style, display: job.display.clone(), alpha_mode: OutputAlphaMode::Straight };
-            previews.show(BatchEvent::Preview { id: job.id, width, height, rgba: output.to_rgba8() });
+        if let Some(size) = (samples == 0 || last_preview.elapsed().as_secs_f32() >= 1.0)
+            .then(|| preview_size(settings.width, settings.height, previews.fit()))
+            .flatten()
+        {
+            previews.show(live_preview(&job, &framebuffer, size));
+            shown.set(Some(size));
             last_preview = Instant::now();
         }
     }
@@ -514,6 +706,7 @@ fn run(
         let mut layer = Framebuffer::new(settings.width, settings.height);
         let target = samples.max(1);
         while region_progress(&layer, context.region).0 < target && !region_progress(&layer, context.region).1 {
+            begun.pause_point(job.id, events, "Rendering layers", &stopping);
             if cancel.load(Ordering::Acquire) {
                 break;
             }
@@ -620,7 +813,7 @@ pub(crate) fn wireframe_output(scene: &SceneSnapshot, camera: &Camera, settings:
 
 /// A wireframe job: drawn in a second or two rather than rendered, and
 /// written through the same output, file name and sidecars as a render.
-fn render_wireframe(job: &BatchJob, events: &Sender<BatchEvent>, begun: Instant) -> Result<BatchEvent, String> {
+fn render_wireframe(job: &BatchJob, events: &Sender<BatchEvent>, begun: Clock) -> Result<BatchEvent, String> {
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Drawing the wireframe" });
     let output = wireframe_output(&job.scene, &job.camera, &job.settings)?;
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
@@ -686,6 +879,22 @@ pub(crate) fn engine_for(settings: &RenderSettings, layers: bool) -> (RenderEngi
         }
         Ok(_) => (engine, without),
     }
+}
+
+/// Whether a job of `settings` can be paused and carry on where it was,
+/// and if not, why, in the Render window's words. A wireframe is drawn in
+/// one go. Cycles measures "Stop after" from the start of the render on
+/// its own clock, which a pause cannot hold: a held render would end the
+/// moment it was let go.
+pub(crate) fn pausable(settings: &RenderSettings) -> Result<(), &'static str> {
+    if settings.kind == RenderKind::Wireframe {
+        return Err("A wireframe is drawn in a second or two, so there is nothing to pause.");
+    }
+    let layers = settings.layers.iter().any(|layer| layer.enabled);
+    if settings.max_seconds.is_some() && engine_for(settings, layers).0.is_cycles() {
+        return Err("Cycles times Stop after on its own clock, which keeps running through a pause, so a Cycles render with a time limit can't be paused. Stop keeps the picture so far.");
+    }
+    Ok(())
 }
 
 /// What Cycles rendered, before Tequila lays its floor reflection over it
@@ -827,15 +1036,20 @@ fn render_cycles(
     events: &Sender<BatchEvent>,
     cancel: &AtomicBool,
     previews: &Previews,
-    begun: Instant,
+    begun: Clock,
 ) -> Result<CyclesFrame, String> {
     use tequila_render_cycles::{translate, Session};
     let settings = &job.settings;
-    let started = Instant::now();
+    let started = Clock::start(begun.hold);
 
     // Watched: it hands over its picture so far every second or two, for
     // the Render window. A library from before that renders without.
-    let mut session = Session::watched(engine.cycles_device(), 0, None)
+    // On the devices chosen for final renders (`render_devices`).
+    let plan = crate::render_devices::cycles_plan(engine, &job.devices, tequila_render_core::devices::Use::Final);
+    for note in &plan.notes {
+        eprintln!("Tequila: {note}");
+    }
+    let mut session = Session::watched(&plan.device, 0, None)
         .map_err(|e| format!("Cycles could not start on {}: {e}", engine.label()))?;
     // Passes and light groups, named as Tequila's renderer names them.
     let want_passes = settings.effective_write_passes();
@@ -931,6 +1145,9 @@ fn render_cycles(
             settings.height,
             total,
             |_, samples| {
+                // Paused: Cycles' own thread held here, after a stretch of
+                // samples and before the next, until let go or stopped.
+                begun.pause_point(job.id, events, "Rendering", &|| cancel.load(Ordering::Acquire));
                 reached = reached.max(samples);
                 // Cycles reports often; the queue only needs to hear a few
                 // times a second.
@@ -1019,7 +1236,7 @@ fn finish_cycles(
     events: &Sender<BatchEvent>,
     cancel: &AtomicBool,
     previews: &Previews,
-    begun: Instant,
+    begun: Clock,
 ) -> Result<BatchEvent, String> {
     let settings = &job.settings;
     let CyclesFrame { mut color, mut alpha, passes, transparent, floor_reflection, rendered, halt, stopped } = frame;
@@ -1042,8 +1259,10 @@ fn finish_cycles(
         Some(_) => None,
         None if floor_reflection => {
             let _ = events.send(BatchEvent::Stage { id: job.id, label: "Floor reflection" });
+            let stopping = || cancel.load(Ordering::Acquire);
             let over = |_: u32| {
-                cancel.load(Ordering::Acquire) || settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
+                begun.pause_point(job.id, events, "Floor reflection", &stopping);
+                stopping() || settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
             };
             Some(floor_layer(job, floor_samples(settings), &over, begun)?)
         }
@@ -1224,7 +1443,7 @@ impl<'scope> FloorReflection<'scope> {
         scope: &'scope std::thread::Scope<'scope, 'env>,
         job: &'env BatchJob,
         cancel: &'env AtomicBool,
-        begun: Instant,
+        begun: Clock<'env>,
         progress: &'env FloorProgress,
     ) -> FloorReflection<'scope> {
         let samples = floor_samples(&job.settings);
@@ -1242,9 +1461,11 @@ impl<'scope> FloorReflection<'scope> {
             // to lay over.
             let over = |done: u32| {
                 progress.done.store(done, Ordering::Relaxed);
-                progress.stop.load(Ordering::Acquire)
-                    || cancel.load(Ordering::Acquire)
-                    || job.settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
+                let stopping = || progress.stop.load(Ordering::Acquire) || cancel.load(Ordering::Acquire);
+                // Held between its passes while the job is paused, as
+                // Cycles is.
+                begun.hold.wait(&stopping);
+                stopping() || job.settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
             };
             let from = begun.elapsed().as_secs_f64();
             let layer = match &threads {
@@ -1266,7 +1487,7 @@ impl<'scope> FloorReflection<'scope> {
 
     /// The reflection, once it is done. Until it is, the job says how far
     /// it has got ("Floor reflection 40 / 128") and its time goes on.
-    fn wait(self, job: &BatchJob, events: &Sender<BatchEvent>, begun: Instant) -> Result<FloorLayer, String> {
+    fn wait(self, job: &BatchJob, events: &Sender<BatchEvent>, begun: Clock) -> Result<FloorLayer, String> {
         if let Some(pool) = self.pool.as_ref().filter(|_| !self.thread.is_finished()) {
             // Nothing else of the job is left to make room for.
             pool.spawn_broadcast(|_| set_priority(true));
@@ -1275,7 +1496,10 @@ impl<'scope> FloorReflection<'scope> {
         while !self.thread.is_finished() {
             if told.is_none_or(|t| t.elapsed() >= Duration::from_millis(250)) {
                 let done = self.progress.done.load(Ordering::Relaxed).min(self.samples);
-                let _ = events.send(BatchEvent::Step { id: job.id, label: "Floor reflection", done, of: self.samples, seconds: begun.elapsed().as_secs_f64() });
+                let _ = events.send(match begun.hold.holding() {
+                    true => BatchEvent::Stage { id: job.id, label: PAUSED },
+                    false => BatchEvent::Step { id: job.id, label: "Floor reflection", done, of: self.samples, seconds: begun.elapsed().as_secs_f64() },
+                });
                 told = Some(Instant::now());
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1287,7 +1511,7 @@ impl<'scope> FloorReflection<'scope> {
 /// `samples` of the floor's reflection alone, through the job's camera,
 /// ending early when `over` says, told how many are done; denoised, its
 /// share smoothed, when the render is.
-fn floor_layer(job: &BatchJob, samples: u32, over: &dyn Fn(u32) -> bool, begun: Instant) -> Result<FloorLayer, String> {
+fn floor_layer(job: &BatchJob, samples: u32, over: &dyn Fn(u32) -> bool, begun: Clock) -> Result<FloorLayer, String> {
     let settings = &job.settings;
     let device = tequila_render_cpu::Device::shared().map_err(|e| e.to_string())?;
     let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, (*job.scene).clone()).map_err(|e| e.to_string())?;
@@ -1436,6 +1660,37 @@ fn set_priority(normal: bool) {
         const QOS_CLASS_UTILITY: u32 = 0x11;
         unsafe { pthread_set_qos_class_self_np(if normal { QOS_CLASS_DEFAULT } else { QOS_CLASS_UTILITY }, 0) };
     }
+}
+
+/// A picture of a render by Tequila's renderer so far, `size` pixels, as
+/// large as the Render window shows it: its stage, or every pixel when it
+/// is zoomed in to look at them.
+fn live_preview(job: &BatchJob, framebuffer: &Framebuffer, (width, height): (usize, usize)) -> BatchEvent {
+    use rayon::prelude::*;
+    let settings = &job.settings;
+    let mut color = vec![tequila_core::spectrum::Spectrum::ZERO; width * height];
+    let mut alpha = vec![0.0; width * height];
+    color.par_chunks_mut(width).zip(alpha.par_chunks_mut(width)).enumerate().for_each(|(y, (colours, alphas))| {
+        for (x, (colour, alpha)) in colours.iter_mut().zip(alphas.iter_mut()).enumerate() {
+            let p = framebuffer.pixel(x * settings.width / width, y * settings.height / height);
+            (*colour, *alpha) = (p.mean_foreground(), p.alpha());
+        }
+    });
+    let output = RenderOutput { width, height, color, alpha, layers: Vec::new(),
+        style: job.style, display: job.display.clone(), alpha_mode: OutputAlphaMode::Straight };
+    BatchEvent::Preview { id: job.id, width, height, rgba: output.to_rgba8() }
+}
+
+/// The size of picture of a `width` x `height` render that fits in `fit`:
+/// at the image's shape, and never larger than it. None for a `fit` of
+/// nothing, which is the Render window closed.
+fn preview_size(width: usize, height: usize, fit: (usize, usize)) -> Option<(usize, usize)> {
+    if fit.0 == 0 || fit.1 == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    let scale = (fit.0 as f64 / width as f64).min(fit.1 as f64 / height as f64).min(1.0);
+    let side = |length: usize| ((length as f64 * scale).round() as usize).clamp(1, length);
+    Some((side(width), side(height)))
 }
 
 /// A picture of a Cycles render so far as the Render window shows it:
@@ -4482,7 +4737,7 @@ mod tests {
         let (events, _heard) = std::sync::mpsc::channel();
         let (slot, size) = (Mutex::new(None), AtomicU64::new(0));
         let previews = Previews { slot: &slot, size: &size };
-        let frame = render_cycles(&job, RenderEngine::CyclesCpu, &events, &AtomicBool::new(false), &previews, Instant::now()).expect("Cycles renders");
+        let frame = render_cycles(&job, RenderEngine::CyclesCpu, &events, &AtomicBool::new(false), &previews, Clock::start(&Hold::default())).expect("Cycles renders");
         let passes = frame.passes.as_ref().expect("the passes");
 
         // Along the same rays, through Tequila's own tracer.
@@ -8081,6 +8336,7 @@ mod tests {
             display: DisplayPipeline::default(),
             object_names: vec!["Sphere".into(), "Ground".into()],
             material_names: vec!["Plastic".into(), "Matte".into()],
+            devices: Default::default(),
             fields: NameFields {
                 project: "Test".into(),
                 camera: "Hero".into(),
@@ -8256,7 +8512,8 @@ mod tests {
         let progress = FloorProgress::default();
         let release = AtomicBool::new(false);
         let (events, heard) = channel();
-        let begun = Instant::now() - Duration::from_secs(50);
+        let hold = Hold::default();
+        let begun = Clock { begun: Instant::now() - Duration::from_secs(50), from: Duration::ZERO, hold: &hold };
         let layer = std::thread::scope(|scope| {
             // A reflection that has made 40 of its 128 samples, and finishes
             // when it is let go.
@@ -8565,6 +8822,263 @@ mod tests {
             _ => unreachable!(),
         }
         let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// The hold behind Pause: nothing waits unless asked; asked, a job's
+    /// threads wait until let go, or until the job is stopped; the time held
+    /// is counted once however many of them wait; and a new job starts
+    /// unpaused with none.
+    #[test]
+    fn a_hold_waits_until_let_go_and_counts_its_time_once() {
+        let hold = Hold::default();
+        assert!(!hold.wait(&|| false), "not asked: no wait");
+        hold.set(true);
+        assert!(hold.asked() && !hold.holding(), "asked, and not yet held: the pass finishes first");
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| hold.wait(&|| false));
+            let second = scope.spawn(|| hold.wait(&|| false));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while hold.state().waiting < 2 {
+                assert!(Instant::now() < deadline, "the threads never waited");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(hold.holding());
+            std::thread::sleep(Duration::from_millis(300));
+            hold.set(false);
+            assert!(first.join().unwrap() && second.join().unwrap(), "both waited");
+        });
+        let held = hold.held();
+        assert!(held >= Duration::from_millis(290) && held < Duration::from_secs(5), "held once, not twice: {held:?}");
+        assert!(!hold.holding());
+
+        // Stopped while held: the job ends, its pause still asked.
+        let stop = AtomicBool::new(false);
+        hold.set(true);
+        std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| hold.wait(&|| stop.load(Ordering::Acquire)));
+            std::thread::sleep(Duration::from_millis(100));
+            stop.store(true, Ordering::Release);
+            assert!(waiting.join().unwrap());
+        });
+        assert!(hold.asked());
+        hold.reset();
+        assert!(!hold.asked() && hold.held() == Duration::ZERO, "the next job starts unpaused, with nothing held");
+    }
+
+    /// A job's clock leaves out the time it was held: neither its time nor
+    /// its time limit counts a pause.
+    #[test]
+    fn a_jobs_clock_leaves_out_the_time_paused() {
+        let hold = Hold::default();
+        let clock = Clock::start(&hold);
+        let wall = Instant::now();
+        hold.set(true);
+        std::thread::scope(|scope| {
+            let waiting = scope.spawn(|| hold.wait(&|| false));
+            std::thread::sleep(Duration::from_millis(400));
+            // Mid-pause the clock stands still.
+            let during = clock.elapsed();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(clock.elapsed().saturating_sub(during) < Duration::from_millis(50), "the clock ran while held");
+            hold.set(false);
+            waiting.join().unwrap();
+        });
+        let (elapsed, wall) = (clock.elapsed(), wall.elapsed());
+        assert!(elapsed + Duration::from_millis(400) <= wall + Duration::from_millis(20), "{elapsed:?} of {wall:?}");
+        // A clock started after a hold does not take it off again.
+        let later = Clock::start(&hold);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(later.elapsed() >= Duration::from_millis(45));
+    }
+
+    /// A wireframe is not held, and nor is a Cycles render with a time
+    /// limit, whose own clock a pause cannot hold; anything else is.
+    #[test]
+    fn what_can_be_paused_is_said() {
+        use tequila_scene::render::{RenderEngine, RenderKind};
+        let tequila = RenderSettings { engine: RenderEngine::Tequila, ..Default::default() };
+        assert!(pausable(&tequila).is_ok());
+        assert!(pausable(&RenderSettings { max_seconds: Some(60), ..tequila.clone() }).is_ok(), "Tequila's renderer keeps its time limit");
+        assert!(pausable(&RenderSettings { kind: RenderKind::Wireframe, ..Default::default() }).is_err());
+        let timed_cycles = RenderSettings { engine: RenderEngine::CyclesCpu, max_seconds: Some(60), ..Default::default() };
+        match tequila_render_cycles::available() {
+            Ok(()) => assert!(pausable(&timed_cycles).unwrap_err().contains("Cycles")),
+            // Without Cycles, Tequila's renderer renders it, and can pause.
+            Err(_) => assert!(pausable(&timed_cycles).is_ok()),
+        }
+        assert!(pausable(&RenderSettings { engine: RenderEngine::CyclesCpu, max_seconds: None, ..Default::default() }).is_ok());
+    }
+
+    /// What a running job said, heard for a while.
+    #[derive(Default)]
+    struct Heard {
+        /// Its samples, each time it said.
+        samples: Vec<u32>,
+        /// The last thing it said it was doing.
+        stage: String,
+        ended: Option<BatchEvent>,
+    }
+
+    impl Heard {
+        fn most(&self) -> u32 {
+            self.samples.iter().copied().max().unwrap_or(0)
+        }
+    }
+
+    /// How a job ended, if it did, for a test's message.
+    fn ended(event: &Option<BatchEvent>) -> String {
+        match event {
+            None => "still running".into(),
+            Some(BatchEvent::Finished { samples, stopped, .. }) => format!("finished at {samples} samples, stopped {stopped}"),
+            Some(BatchEvent::Failed { message, .. }) => format!("failed: {message}"),
+            Some(_) => "?".into(),
+        }
+    }
+
+    /// Listen to `renderer` until `until` says, it ends, or `seconds` pass.
+    fn listen(renderer: &BatchRenderer, seconds: f64, until: impl Fn(&Heard) -> bool) -> Heard {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        let mut heard = Heard::default();
+        loop {
+            for event in renderer.drain() {
+                match event {
+                    BatchEvent::Progress { samples, .. } => heard.samples.push(samples),
+                    BatchEvent::Stage { label, .. } => heard.stage = label.to_string(),
+                    BatchEvent::Finished { .. } | BatchEvent::Failed { .. } => heard.ended = Some(event),
+                    _ => {}
+                }
+            }
+            if until(&heard) || heard.ended.is_some() || Instant::now() >= deadline {
+                return heard;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Paused, a render in Tequila's renderer and in Cycles is held after
+    /// the pass it is on: it renders nothing while held, says "Paused", and
+    /// let go it carries on from the samples it had, not from the start.
+    /// The time it was held is not the render's: not its time, and not its
+    /// time limit.
+    #[test]
+    fn a_paused_render_holds_its_samples_and_carries_on() {
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let name = engine.key();
+            let directory = scratch(&format!("tequila-batch-pause-{name}"));
+            let renderer = BatchRenderer::new();
+            // Tequila's renderer with a time limit, which the pause must not
+            // use up; Cycles, which cannot keep one through a pause, with
+            // more samples than it will reach before it is stopped.
+            let tequila = engine == RenderEngine::Tequila;
+            let settings = RenderSettings {
+                engine,
+                width: 128,
+                height: 96,
+                max_samples: 1_000_000,
+                max_seconds: tequila.then_some(3),
+                adaptive: false,
+                denoise: false,
+                ..Default::default()
+            };
+            let submitted = Instant::now();
+            renderer.submit(job(1, &directory, settings));
+            let started = listen(&renderer, 120.0, |heard| heard.most() >= 8);
+            assert!(started.ended.is_none() && started.most() >= 8, "{name}: no samples to pause at: {:?}, {}", started.samples.last(), ended(&started.ended));
+            renderer.pause(true);
+            assert!(renderer.is_paused());
+            let pausing = listen(&renderer, 60.0, |heard| heard.stage == PAUSED);
+            assert!(pausing.ended.is_none() && pausing.stage == PAUSED, "{name}: never held ({}, {:?} samples, {})", pausing.stage, started.samples.last(), ended(&pausing.ended));
+            assert!(renderer.is_held());
+            // Held: whatever the pass it was on reached, and then nothing.
+            let settling = listen(&renderer, 0.3, |_| false);
+            let held = started.most().max(pausing.most()).max(settling.most());
+            let still = listen(&renderer, 2.0, |_| false);
+            assert!(still.ended.is_none(), "{name}: it finished while paused");
+            assert!(still.samples.is_empty(), "{name}: it rendered on while held: {held} then {:?}", still.samples);
+            renderer.pause(false);
+            let resumed = listen(&renderer, 60.0, |heard| heard.most() > held);
+            assert!(resumed.most() > held, "{name}: it did not carry on from {held}");
+            assert!(resumed.samples.iter().all(|&samples| samples >= held), "{name}: it started again: {held} then {:?}", resumed.samples);
+            if !tequila {
+                renderer.cancel();
+            }
+            let carried_on = resumed.most();
+            let finished = resumed.ended.unwrap_or_else(|| wait_for_finish(&renderer));
+            let wall = submitted.elapsed().as_secs_f64();
+            match finished {
+                BatchEvent::Finished { samples, seconds, path, .. } => {
+                    assert!(std::path::Path::new(&path).is_file(), "{name}: {path}");
+                    assert!(samples >= carried_on, "{name}: carried on to {carried_on}, finished at {samples}");
+                    if tequila {
+                        // Three seconds rendering, more than two held.
+                        assert!(wall >= 4.5, "{name}: the pause used up the time limit: {wall:.2} s in all");
+                        assert!(seconds <= wall - 1.8, "{name}: the job's time counts the pause: {seconds:.2} of {wall:.2} s");
+                    }
+                }
+                BatchEvent::Failed { message, .. } => panic!("{name}: {message}"),
+                _ => unreachable!(),
+            }
+            let _ = std::fs::remove_dir_all(&directory);
+        }
+    }
+
+    /// Stopped while paused, a render ends at once and keeps its picture:
+    /// its file is written with the samples it had.
+    #[test]
+    fn a_paused_render_stopped_keeps_its_picture() {
+        let directory = scratch("tequila-batch-pause-stop");
+        let renderer = BatchRenderer::new();
+        let settings = RenderSettings { engine: tequila_scene::render::RenderEngine::Tequila, width: 64, height: 48, max_samples: 1_000_000, max_seconds: None, adaptive: false, denoise: false, ..Default::default() };
+        renderer.submit(job(2, &directory, settings));
+        let started = listen(&renderer, 120.0, |heard| heard.most() >= 4);
+        assert!(started.ended.is_none());
+        renderer.pause(true);
+        let pausing = listen(&renderer, 60.0, |heard| heard.stage == PAUSED);
+        assert_eq!(pausing.stage, PAUSED, "{}", ended(&pausing.ended));
+        let settling = listen(&renderer, 0.3, |_| false);
+        let held = started.most().max(pausing.most()).max(settling.most());
+        renderer.cancel();
+        let stopped_at = Instant::now();
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { samples, stopped, path, halt, .. } => {
+                assert!(stopped && halt == Halt::Time);
+                assert!(stopped_at.elapsed() < Duration::from_secs(20), "it ended promptly");
+                assert_eq!(samples, held, "the samples it had when paused");
+                let image = tequila_texture::image::Image::load_raw(&path).expect("the picture is saved");
+                assert_eq!((image.width, image.height), (64, 48));
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A picture of a render in progress is as large as the Render window
+    /// asks: its stage, or every pixel when it is zoomed in; never larger
+    /// than the render, and none while the window is closed.
+    #[test]
+    fn a_preview_is_the_size_the_window_asks_for() {
+        assert_eq!(preview_size(1920, 1080, (960, 960)), Some((960, 540)));
+        assert_eq!(preview_size(1920, 1080, (1920, 1080)), Some((1920, 1080)), "every pixel");
+        assert_eq!(preview_size(1920, 1080, (8000, 8000)), Some((1920, 1080)), "never more");
+        assert_eq!(preview_size(1080, 1920, (1000, 600)), Some((338, 600)));
+        assert_eq!(preview_size(1920, 1080, (0, 0)), None, "the window closed");
+        let directory = scratch("tequila-live-preview");
+        let job = job(6, &directory, RenderSettings { width: 40, height: 30, ..Default::default() });
+        let framebuffer = Framebuffer::new(40, 30);
+        match live_preview(&job, &framebuffer, (40, 30)) {
+            BatchEvent::Preview { id, width, height, rgba } => {
+                assert_eq!((id, width, height), (6, 40, 30));
+                assert_eq!(rgba.len(), 40 * 30 * 4);
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// Sidecars are written beside the image, with the same stem, and the XMP

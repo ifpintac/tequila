@@ -51,7 +51,7 @@ pub fn api(operations: &[&str], queries: &[&str], limits: &str) -> Value {
         .set("coordinates", "Right-handed, Y up; positions and every other length are in metres; document.units is only how the app shows them. Colors are scene-linear RGB.")
         .set("workflow", "Query context; resolve IDs; inspect shared materials; apply edits; frame; screenshot or render; query context to verify.")
         .set("batches", "Send many operations as {\"op\":\"batch\",\"ops\":[...]}: they are one undo step, and if one fails the whole batch is taken back (\"atomic\":false keeps what worked). Undo, redo and quit cannot be inside a batch.")
-        .set("camera", "look: {\"view\":\"front|back|left|right|top|bottom|iso\"} or {\"at\":[x,y,z],\"yaw\":deg,\"pitch\":deg,\"distance\":d} or {\"from\":[x,y,z],\"at\":[x,y,z]}, plus optional focal_length in mm. Undoable.")
+        .set("camera", "look: {\"view\":\"front|back|left|right|top|bottom|iso\"} or {\"at\":[x,y,z],\"yaw\":deg,\"pitch\":deg,\"distance\":d} or {\"from\":[x,y,z],\"at\":[x,y,z]}, plus optional focal_length in mm, and focus [x,y,z] or focus_part (a part id) to set the focus there and turn the blur on. Undoable.")
         .set("rendering", "render blocks the UI until done and uses the current view; queue renders in the background with the document's render settings (override width, height, samples, folder, filename, denoise, camera) and reports progress through the jobs query; stop ends the running job, which still writes its image.")
         .set("seeing", "screenshot with \"viewport\":true captures just the picture. ui opens and closes panels and switches the viewport between rendered and solid; query ui to see what is open.")
         .set("limits", limits);
@@ -729,7 +729,11 @@ pub fn camera(orbit: &tequila_scene::orbit::OrbitCamera, name: &str) -> Value {
         .set("target", vector(orbit.target))
         .set("yaw", orbit.yaw.to_degrees())
         .set("pitch", orbit.pitch.to_degrees())
-        .set("distance", orbit.distance);
+        .set("distance", orbit.distance)
+        // The focus, as `look`'s `focus` sets it: blurred or not, and at
+        // what distance from the camera.
+        .set("blur", orbit.camera.f_number.is_finite())
+        .set("focus_distance", orbit.camera.focus_distance);
     match orbit.camera.projection {
         tequila_render_core::camera::Projection::Perspective { focal_length_mm } | tequila_render_core::camera::Projection::Shift { focal_length_mm, .. } => {
             out.set("focal_length", focal_length_mm);

@@ -307,6 +307,48 @@ fn a_finer_tessellation_divides_more_finely() {
     assert_eq!(fine.tessellation.as_deref(), Some("High"));
 }
 
+/// The import dialog's own tolerances reach the reader: a custom chord as
+/// fine as High's divides as High does, one as coarse as Draft's as Draft
+/// does, and the model records them so dividing it again knows where it
+/// started.
+#[test]
+fn custom_tolerances_reach_the_reader_and_are_recorded() {
+    use tequila_import::step::{read_with, Tessellation};
+    let count = |s: &RawScene| mesh(s, "Pin").indices.len() / 3;
+    let fine = read_with(TWO_BODIES, "file", Tessellation::custom(Tessellation::High.chord(), Tessellation::High.angle())).unwrap();
+    let coarse = read_with(TWO_BODIES, "file", Tessellation::custom(Tessellation::Draft.chord(), Tessellation::Draft.angle())).unwrap();
+    assert_eq!(count(&fine), count(&read_with(TWO_BODIES, "file", Tessellation::High).unwrap()));
+    assert_eq!(count(&coarse), count(&read_with(TWO_BODIES, "file", Tessellation::Draft).unwrap()));
+    assert!(count(&fine) > count(&coarse) * 2);
+    let recorded = fine.tessellation.as_deref().expect("recorded");
+    assert!(recorded.starts_with("Custom 0.0005 "), "{recorded}");
+    let read_back = Tessellation::from_label(recorded).expect("it reads back");
+    assert!((read_back.chord() - 5.0e-4).abs() < 1e-12 && (read_back.angle() - 0.35).abs() < 1e-3, "{read_back:?}");
+}
+
+/// A cancelled import stops, and says so, rather than handing back half a
+/// model.
+#[test]
+fn a_cancelled_read_ends_cancelled() {
+    use tequila_import::step::Tessellation;
+    let folder = std::env::temp_dir().join(format!("tequila-step-cancel-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("two_bodies.step");
+    std::fs::write(&path, TWO_BODIES).unwrap();
+    let watch = tequila_import::watch::Watch::new();
+    watch.cancel();
+    let read = watch.during(|| tequila_import::read_file_with(&path, Tessellation::Medium));
+    assert!(matches!(read, Err(ImportError::Cancelled)), "{:?}", read.map(|_| ()));
+    // Not cancelled, the same file reads, and its faces were counted.
+    let watch = tequila_import::watch::Watch::new();
+    let model = watch.during(|| tequila_import::read_file_with(&path, Tessellation::Medium)).expect("it reads");
+    assert!(watch.seen().total > 0, "the faces were not counted");
+    let preview = model.preview();
+    assert!(preview.divided && preview.source_kept, "{preview:?}");
+    assert_eq!(preview.stated_unit, Some(LengthUnit::Millimetre));
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// Dividing a model again at another quality, from its kept source, is an
 /// update: the part keeps the material it was given, and takes the new
 /// triangles.

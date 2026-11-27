@@ -614,7 +614,7 @@ impl Procedural {
                 // of 3 this is exactly the classic unit-scale formula.
                 let banded = axis.of(position) * frequency
                     + noise::turbulence(position * (frequency / 3.0), seed, fractal) * distortion;
-                banded.sin() * 0.5 + 0.5
+                crate::trig::sin(banded) * 0.5 + 0.5
             }
 
             Procedural::Wood {
@@ -992,9 +992,9 @@ fn weave(x: f32, y: f32, seed: u32, pattern: WeavePattern, width: f32, variance:
     let weft_scale = 1.0 - variance * hash01(0x1f5b, j, seed ^ 0x4b3f_27a1);
 
     let (top, top_arch, top_scale, under, under_scale) = if warp_on_top {
-        (warp, (PI * fy).sin(), warp_scale, weft, weft_scale)
+        (warp, crate::trig::sin(PI * fy), warp_scale, weft, weft_scale)
     } else {
-        (weft, (PI * fx).sin(), weft_scale, warp, warp_scale)
+        (weft, crate::trig::sin(PI * fx), weft_scale, warp, warp_scale)
     };
     let height = if top > 0.0 {
         0.5 + 0.5 * top * (0.6 + 0.4 * top_arch) * top_scale
@@ -1081,7 +1081,8 @@ fn scratches(
             // Within `spread` of the reference direction, so a brushed finish
             // (spread 0) and random wear (spread 0.25) are the same node.
             let angle = (hash01(cx, cy, seed ^ 0x7c93_1055) - 0.5) * spread.clamp(0.0, 0.5) * TAU;
-            let direction = vec3(angle.cos(), angle.sin(), 0.0);
+            let (sine, cosine) = crate::trig::sin_cos(angle);
+            let direction = vec3(cosine, sine, 0.0);
             let half_length = 0.2 + hash01(cx, cy, seed ^ 0x11a7_3c4d) * 0.3;
 
             // Distance from the point to the segment.

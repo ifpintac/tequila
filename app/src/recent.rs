@@ -53,14 +53,16 @@ pub fn write(file: &Path, list: &[PathBuf]) {
 }
 
 /// The name shown in the menu: the file's name, and its folder after it
-/// when two in the list share a name.
+/// when two in the list share a name. In drawing order, for a name in
+/// Devanagari ([`crate::fallback_fonts::drawing_order`]).
 pub fn label(list: &[PathBuf], project: &Path) -> String {
     let name = project.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| project.display().to_string());
     let twins = list.iter().filter(|p| p.file_stem() == project.file_stem()).count();
-    match project.parent().and_then(|p| p.file_name()) {
+    let label = match project.parent().and_then(|p| p.file_name()) {
         Some(folder) if twins > 1 => format!("{name}  ({})", folder.to_string_lossy()),
         _ => name,
-    }
+    };
+    crate::fallback_fonts::drawing_order(&label).into_owned()
 }
 
 #[cfg(test)]

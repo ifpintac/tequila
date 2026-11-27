@@ -55,8 +55,9 @@ A change answers with what changed, as it now is. The settings come a page at a 
 | `interface.size` | `compact`, `regular`, `large` |
 | `interface.tooltips`, `interface.tooltip_delay` | true or false; seconds |
 | `interface.library_view` | `thumbnails`, `icons`, `list`, `cards` |
+| `interface.library_width` | The Library's width in points, 260 to 720 |
 | `viewport.shading` | The mode a project opens in: `wireframe`, `solid`, `material`, `rendered` |
-| `viewport.grid`, `viewport.axis_legend`, `viewport.render_frame`, `viewport.statistics`, `viewport.model_edges`, `viewport.selection_outline`, `viewport.gizmo` | true or false |
+| `viewport.grid`, `viewport.axis_legend`, `viewport.render_frame`, `viewport.statistics`, `viewport.model_edges`, `viewport.light_outlines`, `viewport.selection_outline`, `viewport.gizmo` | true or false |
 | `viewport.gizmo_size`, `viewport.samples` | A number |
 | `viewport.gizmo_mode` | `all`, `move`, `rotate`, `scale` |
 | `viewport.moving_picture` | While the view moves: `smooth`, `balanced`, `sharp` |
@@ -64,13 +65,14 @@ A change answers with what changed, as it now is. The settings come a page at a 
 | `navigation.orbit_speed`, `navigation.pan_speed`, `navigation.zoom_speed` | A number, 1 as it is |
 | `navigation.invert_zoom` | true or false |
 | `navigation.trackpad` | Two fingers: `pan` or `orbit` |
+| `rendering.view_devices`, `rendering.final_devices` | The processor and graphics cards the Rendered view and final renders render on: `auto` (Tequila chooses), or devices between semicolons - `cpu`, `gpu:` and a card's name - as the setting's `options` list the ones in this computer |
 | `import.up_axis` | `file`, `y`, `z`, `x`, `-y`, `-z`, `-x` |
 | `import.blender_lights` | `ask`, `blender`, `tequila` |
 | `folders.screenshots` | A folder's path |
 | `updates.automatic` | true or false |
 
 - All of a `set` are checked before any is taken; a wrong name or value is refused, naming it.
-- `reset` takes `"all"`, a page (`general`, `interface`, `viewport`, `navigation`, `keyboard`, `import`, `folders`, `updates`), one setting, or a list of settings.
+- `reset` takes `"all"`, a page (`general`, `interface`, `viewport`, `navigation`, `keyboard`, `rendering`, `import`, `folders`, `updates`), one setting, or a list of settings.
 - **"The mouse works like in Blender / KeyShot / SolidWorks":** `navigation.preset`.
 - **"Models always come in lying down":** `import.up_axis` `z`.
 

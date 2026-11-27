@@ -490,6 +490,7 @@ pub fn commands() -> Vec<Command> {
             material,
         },
         Command::UnlinkMaterial { node: ids[1] },
+        Command::PasteMaterial { material, nodes: vec![ids[2]] },
         Command::SetMaterialParameter {
             material,
             parameter: MaterialParameter::color(Param::BaseColor, spectrum(0.2, 0.4, 0.8)),

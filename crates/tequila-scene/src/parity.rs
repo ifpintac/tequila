@@ -727,6 +727,21 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: backlit_translucency,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "split_shell",
+    covers: "the processor's #169 on the card: simple_product on its modelled ground, and in front of it a clear lime \
+             tray - closed towards the camera, open towards the product - modelled as the palma's shell halves come \
+             in, split by material slot into two open parts, its outside with the rim and its inside, that close \
+             each other's open edges: one solid (SceneSnapshot::solid), so a path that goes in through one part and \
+             out through the other leaves the volume, which scatters a little; the media a path starts inside \
+             counted along the line behind the camera",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: split_shell,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2425,6 +2440,80 @@ fn backlit_translucency() -> SceneDocument {
         vec![
             ("Slab", crate::bench::rounded_box(vec3(0.4 * radius, 0.45 * radius, 0.012), 0.003, 8), MaterialType::Translucent, slab, placed(slab_at, eye - slab_at)),
             ("Sheet", crate::bench::rounded_box(vec3(0.35 * radius, 0.5 * radius, 0.002), 0.0008, 8), MaterialType::Translucent, sheet, placed(sheet_at, eye - sheet_at)),
+        ],
+    );
+    document
+}
+
+/// A tray `half` across each way from its middle and `depth` deep, as the
+/// palma P8's shell halves come in: closed towards +Z, open towards -Z,
+/// walls a tenth of `half` thick, modelled as two open surfaces that close
+/// each other along the inner edge of the rim - its outside with the rim,
+/// then its inside. Every corner is worked out the same way in both, so the
+/// edges they share meet exactly (tequila-render-cpu's split_solid test).
+fn split_tray(half: f32, depth: f32) -> (crate::geometry::Mesh, crate::geometry::Mesh) {
+    use tequila_core::math::Vec3;
+    let (outer, inner) = (half, 0.9 * half);
+    let (front, inside_front, back) = (0.5 * depth, 0.5 * depth - 0.1 * half, -0.5 * depth);
+    let p = |x: f32, y: f32, z: f32| vec3(x, y, z);
+    let side = |r: f32| [(-r, -r), (r, -r), (r, r), (-r, r)];
+    let (o, i) = (side(outer), side(inner));
+    let mut outside = vec![[p(-outer, -outer, front), p(outer, -outer, front), p(outer, outer, front), p(-outer, outer, front)]];
+    let mut inside = vec![[p(-inner, -inner, inside_front), p(-inner, inner, inside_front), p(inner, inner, inside_front), p(inner, -inner, inside_front)]];
+    for k in 0..4 {
+        let (a, b) = (o[k], o[(k + 1) % 4]);
+        let (c, d) = (i[k], i[(k + 1) % 4]);
+        // Outer wall, facing out; the rim between the walls, facing back;
+        // the inner wall, facing into the tray.
+        outside.push([p(a.0, a.1, back), p(b.0, b.1, back), p(b.0, b.1, front), p(a.0, a.1, front)]);
+        outside.push([p(a.0, a.1, back), p(c.0, c.1, back), p(d.0, d.1, back), p(b.0, b.1, back)]);
+        inside.push([p(c.0, c.1, back), p(c.0, c.1, inside_front), p(d.0, d.1, inside_front), p(d.0, d.1, back)]);
+    }
+    let mesh = |quads: &[[Vec3; 4]]| {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for quad in quads {
+            let first = positions.len() as u32;
+            positions.extend_from_slice(quad);
+            indices.extend_from_slice(&[first, first + 1, first + 2, first, first + 2, first + 3]);
+        }
+        crate::geometry::Mesh::new(positions, indices)
+    };
+    (mesh(&outside), mesh(&inside))
+}
+
+/// `simple_product` on its modelled ground under the sky, and a clear lime
+/// tray standing in front of it facing the camera, split by material slot
+/// into its outside and its inside ([`split_tray`]): the palma P8's shell,
+/// which rendered an opaque dark green while its media were told apart by
+/// part.
+fn split_shell() -> SceneDocument {
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let eye = product_camera(&document, 320.0 / 180.0).position();
+    let (middle, toward) = (vec3(0.0, 0.0, 0.85), vec3(eye.x, 0.0, eye.z - 0.85).normalize());
+    let half = 0.11;
+    let x = Vec3::Y.cross(toward).normalize();
+    let at = middle + vec3(-0.28, half + 0.002, 0.0);
+    let placed = Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, Vec3::Y, toward)).expect("a frame");
+    // The palma's shell material at this size: a lime all transmission,
+    // its volume reaching its colour in 3 cm and faintly scattering.
+    let lime = Material {
+        transmission_weight: 1.0,
+        transmission_color: Spectrum { r: 0.76, g: 0.96, b: 0.04 },
+        transmission_depth: 0.03,
+        transmission_scatter: Spectrum { r: 0.07, g: 0.09, b: 0.02 },
+        specular_ior: 1.585,
+        medium_priority: 1.0,
+        ..MaterialType::Plastic.defaults()
+    };
+    let (outside, inside) = split_tray(half, 0.08);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Shell Outside", outside, MaterialType::Plastic, lime.clone(), placed),
+            ("Shell Inside", inside, MaterialType::Plastic, lime, placed),
         ],
     );
     document

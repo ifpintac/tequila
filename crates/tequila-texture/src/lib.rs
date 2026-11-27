@@ -28,6 +28,7 @@ pub mod psd;
 pub mod radiance;
 pub mod svg;
 pub mod tga;
+pub mod trig;
 pub mod video;
 pub mod volume;
 pub mod wear;
