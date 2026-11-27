@@ -64,6 +64,9 @@ pub enum Kind {
     /// One of these: each a key, for the file and a script, and its words.
     Choice(&'static [(&'static str, &'static str)]),
     Folder,
+    /// Which devices render (`render_devices`): `auto`, or devices between
+    /// semicolons. Drawn as one grid with the other setting of its kind.
+    Devices,
 }
 
 /// The window's pages, in its order.
@@ -74,6 +77,7 @@ pub enum Page {
     Viewport,
     Navigation,
     Keyboard,
+    Rendering,
     Import,
     Folders,
     Updates,
@@ -81,8 +85,18 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 9] =
-        [Page::General, Page::Interface, Page::Viewport, Page::Navigation, Page::Keyboard, Page::Import, Page::Folders, Page::Updates, Page::Advanced];
+    pub const ALL: [Page; 10] = [
+        Page::General,
+        Page::Interface,
+        Page::Viewport,
+        Page::Navigation,
+        Page::Keyboard,
+        Page::Rendering,
+        Page::Import,
+        Page::Folders,
+        Page::Updates,
+        Page::Advanced,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -91,6 +105,7 @@ impl Page {
             Page::Viewport => "Viewport",
             Page::Navigation => "Navigation",
             Page::Keyboard => "Keyboard",
+            Page::Rendering => "Rendering",
             Page::Import => "Import",
             Page::Folders => "Folders",
             Page::Updates => "Updates",
@@ -106,6 +121,7 @@ impl Page {
             Page::Viewport => "viewport",
             Page::Navigation => "navigation",
             Page::Keyboard => "keyboard",
+            Page::Rendering => "rendering",
             Page::Import => "import",
             Page::Folders => "folders",
             Page::Updates => "updates",
@@ -124,6 +140,7 @@ impl Page {
             Page::Viewport => "What the view shows, and how the Rendered view draws.",
             Page::Navigation => "How the mouse, a trackpad and a 3D mouse move the view.",
             Page::Keyboard => "Which keys do what. Click a key, then press the one you want.",
+            Page::Rendering => "Which processor and graphics cards render, kept for this computer.",
             Page::Import => "How model files are read.",
             Page::Folders => "Where Tequila keeps things.",
             Page::Updates => "New versions of Tequila.",
@@ -139,6 +156,7 @@ impl Page {
             Page::Viewport => Icon::Eye,
             Page::Navigation => Icon::Camera,
             Page::Keyboard => Icon::Keyboard,
+            Page::Rendering => Icon::Aperture,
             Page::Import => Icon::Import,
             Page::Folders => Icon::FolderOpen,
             Page::Updates => Icon::Download,
@@ -189,6 +207,10 @@ impl Setting {
             }
             (Kind::Folder, Value::Text(text)) => Ok(Value::Text(text.trim().to_string())),
             (Kind::Folder, other) => Err(format!("`{}` is a folder's path, not {}", self.key, other.to_text())),
+            (Kind::Devices, Value::Text(text)) => tequila_render_core::devices::Choice::parse(&text)
+                .map(|choice| Value::Text(choice.to_text()))
+                .map_err(|why| format!("`{}`: {why}", self.key)),
+            (Kind::Devices, other) => Err(format!("`{}` is `auto` or devices between semicolons, not {}", self.key, other.to_text())),
         }
     }
 
@@ -202,7 +224,7 @@ impl Setting {
                 _ => return Err(format!("`{}` is on or off, not `{text}`", self.key)),
             },
             Kind::Number { .. } => Value::Number(text.parse::<f64>().map_err(|_| format!("`{}` is a number, not `{text}`", self.key))?),
-            Kind::Choice(_) | Kind::Folder => Value::Text(text.to_string()),
+            Kind::Choice(_) | Kind::Folder | Kind::Devices => Value::Text(text.to_string()),
         };
         self.checked(value)
     }
@@ -230,6 +252,12 @@ impl Setting {
             (Kind::Toggle, Value::Bool(on)) => if *on { "on" } else { "off" }.to_string(),
             (Kind::Number { decimals, suffix, .. }, Value::Number(n)) => format!("{n:.*}{suffix}", *decimals),
             (Kind::Choice(options), Value::Text(key)) => options.iter().find(|(k, _)| k == key).map_or(key.clone(), |(_, label)| (*label).to_string()),
+            (Kind::Devices, Value::Text(text)) => match tequila_render_core::devices::Choice::parse(text) {
+                Ok(tequila_render_core::devices::Choice::Chosen(keys)) => {
+                    keys.iter().map(|key| tequila_render_core::devices::name_in(key)).collect::<Vec<_>>().join(", ")
+                }
+                _ => "chosen by Tequila".to_string(),
+            },
             (_, value) => value.to_text(),
         }
     }
@@ -321,6 +349,10 @@ pub struct Prefs {
     /// drags, used when that is Custom (`navigation`).
     pub nav_preset: crate::navigation::Preset,
     pub nav_custom: crate::navigation::Scheme,
+    /// The devices the Rendered view and final renders render on, for this
+    /// computer (`render_devices`).
+    pub view_devices: tequila_render_core::devices::Choice,
+    pub final_devices: tequila_render_core::devices::Choice,
 }
 
 impl Default for Prefs {
@@ -354,6 +386,8 @@ impl Default for Prefs {
             trackpad_orbits: false,
             nav_preset: crate::navigation::Preset::default(),
             nav_custom: crate::navigation::Preset::default().scheme().expect("Tequila's own has drags"),
+            view_devices: tequila_render_core::devices::Choice::Auto,
+            final_devices: tequila_render_core::devices::Choice::Auto,
         }
     }
 }
@@ -520,6 +554,32 @@ macro_rules! own_number {
 }
 
 const STARTS: &str = "When Tequila starts";
+
+const DEVICES: &str = "Rendering devices";
+
+/// One of the two choices of devices (`render_devices`): for the Rendered
+/// view, which starts again on them, or for final renders, which a render
+/// takes as it starts.
+macro_rules! own_devices {
+    ($key:literal, $label:literal, $help:literal, $field:ident) => {
+        Setting {
+            key: $key,
+            page: Page::Rendering,
+            group: DEVICES,
+            label: $label,
+            help: $help,
+            kind: Kind::Devices,
+            own: true,
+            default: || Value::Text(tequila_render_core::devices::Choice::Auto.to_text()),
+            get: |app| Value::Text(app.prefs.$field.to_text()),
+            set: |app, value| {
+                app.prefs.$field = tequila_render_core::devices::Choice::parse(&text(value))?;
+                app.submit();
+                Ok(())
+            },
+        }
+    };
+}
 
 /// Every setting, in the order the window shows them.
 pub static SETTINGS: &[Setting] = &[
@@ -847,6 +907,19 @@ pub static SETTINGS: &[Setting] = &[
         0,
         "",
         true
+    ),
+    // ---- Rendering -------------------------------------------------------
+    own_devices!(
+        "rendering.view_devices",
+        "Rendered view",
+        "The processor (CPU) and graphics cards (GPUs) the Rendered view renders on. Tequila chooses unless you do: the graphics cards of the best one's class, without the processor. A small card beside a big one holds it back, and several cards need the scene to fit on the smallest.",
+        view_devices
+    ),
+    own_devices!(
+        "rendering.final_devices",
+        "Final renders",
+        "The processor (CPU) and graphics cards (GPUs) final renders render on: the Render window's, the queue's and scripts'. The processor beside the cards can add a little speed to a long render, and takes every core while it does.",
+        final_devices
     ),
     // ---- Navigation ------------------------------------------------------
     Setting {
@@ -1287,6 +1360,13 @@ impl TequilaApp {
             self.prefs.graph_browser = self.graph_editor.show_browser;
             self.keep_preferences();
         }
+        crate::render_devices::set_final_choice(&self.prefs.final_devices);
+        // The Render window's Devices… opens the page that chooses them.
+        if crate::render_devices::preferences_asked() {
+            self.preferences.page = Page::Rendering;
+            self.preferences.search.clear();
+            self.preferences.show();
+        }
         self.gizmo.scale = (self.prefs.gizmo_size / 100.0).clamp(0.25, 4.0);
         self.project.set_autosave_every(self.prefs.autosave_every());
         crate::cycles_view::set_tuning(self.prefs.moving_picture.target_ms(), self.prefs.view_samples);
@@ -1585,11 +1665,19 @@ fn heading(ui: &mut egui::Ui, title: &str, blurb: &str) {
 /// A page's rows under their headings, then its hand-drawn parts.
 fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Value], defaults: &[Value], blocks: &mut Blocks) {
     let mut group = "";
+    let mut devices_drawn = false;
     for &index in rows {
         let setting = &SETTINGS[index];
         if setting.group != group {
             group = setting.group;
             crate::theme::section(ui, group);
+        }
+        // The two choices of devices are one grid, a column each.
+        if let Kind::Devices = setting.kind {
+            if !std::mem::replace(&mut devices_drawn, true) {
+                devices_grid(ui, values, blocks.acts);
+            }
+            continue;
         }
         row(ui, index, &values[index], &defaults[index], blocks.acts);
     }
@@ -1642,6 +1730,22 @@ fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Val
             }),
             _ => {}
         }
+    }
+}
+
+/// Preferences › Rendering's devices, both choices in one grid
+/// (`render_devices::preferences_grid`).
+fn devices_grid(ui: &mut egui::Ui, values: &[Value], acts: &mut Vec<Act>) {
+    use tequila_render_core::devices::{Choice, Use};
+    let index = |key: &str| SETTINGS.iter().position(|s| s.key == key).expect("a setting of the table");
+    let (view, finals) = (index("rendering.view_devices"), index("rendering.final_devices"));
+    let choice = |i: usize| Choice::parse(&text(values[i].clone())).unwrap_or_default();
+    for change in crate::render_devices::preferences_grid(ui, &choice(view), &choice(finals)) {
+        let of = |purpose: Use| if purpose == Use::View { view } else { finals };
+        acts.push(match change {
+            crate::render_devices::Change::Set(purpose, chosen) => Act::Set(of(purpose), Value::Text(chosen.to_text())),
+            crate::render_devices::Change::Reset(purpose) => Act::Reset(of(purpose)),
+        });
     }
 }
 
@@ -1948,6 +2052,11 @@ pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Re
                 }
                 Kind::Folder => {
                     out.set("kind", "folder");
+                }
+                Kind::Devices => {
+                    // The devices here, by the names a choice takes.
+                    let keys = crate::render_devices::catalogue().keys();
+                    out.set("kind", "devices").set("options", keys.into_iter().map(Json::String).collect::<Vec<_>>());
                 }
             }
             out.build()

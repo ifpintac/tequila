@@ -275,13 +275,14 @@ TOOLS = [
           'viewport': {'type': 'string', 'enum': ['wireframe', 'solid', 'material', 'rendered']}}),
     tool('tequila_preferences',
          "Tequila's own settings, as Edit > Preferences shows them, a page at a time. With no arguments, the pages there are. page is one of general, interface, viewport, navigation, "
-         "keyboard (the shortcuts), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. "
+         "keyboard (the shortcuts), rendering (which processor and graphics cards render: rendering.view_devices and rendering.final_devices, \"auto\" or devices between semicolons, "
+         "from the setting's options), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. "
          "set and reset answer with what changed. They are the person's own and kept between sessions: change one only when asked to.",
-         {'page': {'type': 'string', 'enum': ['general', 'interface', 'viewport', 'navigation', 'keyboard', 'import', 'folders', 'updates']},
+         {'page': {'type': 'string', 'enum': ['general', 'interface', 'viewport', 'navigation', 'keyboard', 'rendering', 'import', 'folders', 'updates']},
           'search': {'type': 'string', 'description': 'Words that must all be in a setting\'s key, label or help: "zoom", "autosave".'},
           'set': {'type': 'object', 'description': 'Settings to change, by name: {"viewport.gizmo_size": 150, "navigation.invert_zoom": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {"shortcut.view.screenshot": "F12"}, a list of two keys, or "" for none.'},
           'reset': {'type': ['string', 'array'], 'items': {'type': 'string'},
-                    'description': '"all", a page (general, interface, viewport, navigation, keyboard, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults.'}}),
+                    'description': '"all", a page (general, interface, viewport, navigation, keyboard, rendering, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults.'}}),
     tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), Blender .blend (read by the Blender installed here, materials node for node), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.',
          {'path': {'type': 'string'},
           'up': {'type': 'string', 'enum': ['file', 'y', 'z', 'x', '-y', '-z', '-x'],

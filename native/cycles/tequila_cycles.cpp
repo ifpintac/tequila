@@ -501,12 +501,74 @@ Transform to_transform(const float *m)
   return t;
 }
 
+bool device_from_name(const char *name, int threads, bool background, DeviceInfo &out);
+
+/* Several devices, one name a line, rendering together: the cards a person
+ * chose in Tequila's Preferences, and the processor with them for a final
+ * render. A live session leaves the processor out beside a card, as
+ * Cycles' multi-device does for an interactive render (it would hold the
+ * card back) - here, so that a single card left renders alone rather than
+ * as a multi-device of one. */
+bool devices_from_lines(const string &text, int threads, bool background, DeviceInfo &out)
+{
+  vector<DeviceInfo> devices;
+  size_t start = 0;
+  while (start < text.size()) {
+    size_t end = text.find('\n', start);
+    if (end == string::npos) {
+      end = text.size();
+    }
+    string line = text.substr(start, end - start);
+    start = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+      line.pop_back();
+    }
+    while (!line.empty() && line.front() == ' ') {
+      line.erase(line.begin());
+    }
+    if (line.empty()) {
+      continue;
+    }
+    DeviceInfo named;
+    if (!device_from_name(line.c_str(), threads, background, named)) {
+      return false;
+    }
+    const vector<DeviceInfo> each = named.multi_devices.empty() ? vector<DeviceInfo>{named} :
+                                                                  named.multi_devices;
+    for (const DeviceInfo &info : each) {
+      bool seen = false;
+      for (const DeviceInfo &kept : devices) {
+        seen |= kept.id == info.id;
+      }
+      if (!seen) {
+        devices.push_back(info);
+      }
+    }
+  }
+  if (!background && devices.size() > 1) {
+    devices.erase(std::remove_if(devices.begin(),
+                                 devices.end(),
+                                 [](const DeviceInfo &info) { return info.type == DEVICE_CPU; }),
+                  devices.end());
+  }
+  if (devices.empty()) {
+    fail("no device was named");
+    return false;
+  }
+  out = devices.size() == 1 ? devices.front() : Device::get_multi_device(devices, threads, background);
+  return true;
+}
+
 /* A device by name. A kind - CUDA, OPTIX, HIP, METAL - takes every card of
  * that kind, rendering together as Blender does with several enabled: a
  * second card was left idle. TEQUILA_CYCLES_ONE_DEVICE keeps to the first,
- * for when one of them misbehaves. An id is that device alone. */
+ * for when one of them misbehaves. An id is that device alone. Several
+ * names, a line each, are those devices together (devices_from_lines). */
 bool device_from_name(const char *name, int threads, bool background, DeviceInfo &out)
 {
+  if (strchr(name, '\n') != nullptr) {
+    return devices_from_lines(name, threads, background, out);
+  }
   const DeviceType type = Device::type_from_string(name);
   if (type != DEVICE_NONE) {
     vector<DeviceInfo> devices = Device::available_devices(DEVICE_MASK(type));
@@ -747,6 +809,20 @@ const char *fsc_devices(void)
                    info.id + "\n";
   }
   return device_list.c_str();
+}
+
+const char *fsc_session_devices(FscSession *s)
+{
+  static thread_local std::string listed;
+  listed.clear();
+  const DeviceInfo &device = s->session_params.device;
+  const vector<DeviceInfo> each = device.multi_devices.empty() ? vector<DeviceInfo>{device} :
+                                                                 device.multi_devices;
+  for (const DeviceInfo &info : each) {
+    listed += Device::string_from_type(info.type) + "\t" + info.description + "\t" + info.id +
+              "\n";
+  }
+  return listed.c_str();
 }
 
 FscSession *fsc_create(const char *device, int threads, const char *kernel_dir)

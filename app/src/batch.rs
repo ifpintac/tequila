@@ -52,6 +52,10 @@ pub struct BatchJob {
     /// Render layers: a name and the snapshot that layer is rendered from,
     /// each written beside the main image once it is done.
     pub layers: Vec<(String, Arc<SceneSnapshot>)>,
+    /// The devices Cycles on the graphics card renders it on, as
+    /// Preferences › Rendering chose them for final renders when it started
+    /// (`render_devices`).
+    pub devices: tequila_render_core::devices::Choice,
 }
 
 /// What the renderer says about a job.
@@ -493,7 +497,11 @@ fn run(
                 // it, is not the card's doing, and rendering again on the
                 // processor for hours only to fail the same way helped
                 // nobody.
-                Err(why) if engine == RenderEngine::CyclesGpu && !cancel.load(Ordering::Acquire) => {
+                Err(why)
+                    if engine == RenderEngine::CyclesGpu
+                        && !cancel.load(Ordering::Acquire)
+                        && crate::render_devices::cycles_plan(engine, &job.devices, tequila_render_core::devices::Use::Final).on_card() =>
+                {
                     eprintln!("Tequila: Cycles could not render on the graphics card, so it renders on the processor: {why}");
                     let _ = events.send(BatchEvent::Stage { id: job.id, label: "The graphics card failed: rendering on the processor" });
                     render_cycles(job, RenderEngine::CyclesCpu, events, cancel, previews, begun)?
@@ -1036,7 +1044,12 @@ fn render_cycles(
 
     // Watched: it hands over its picture so far every second or two, for
     // the Render window. A library from before that renders without.
-    let mut session = Session::watched(engine.cycles_device(), 0, None)
+    // On the devices chosen for final renders (`render_devices`).
+    let plan = crate::render_devices::cycles_plan(engine, &job.devices, tequila_render_core::devices::Use::Final);
+    for note in &plan.notes {
+        eprintln!("Tequila: {note}");
+    }
+    let mut session = Session::watched(&plan.device, 0, None)
         .map_err(|e| format!("Cycles could not start on {}: {e}", engine.label()))?;
     // Passes and light groups, named as Tequila's renderer names them.
     let want_passes = settings.effective_write_passes();
@@ -8154,6 +8167,7 @@ mod tests {
             display: DisplayPipeline::default(),
             object_names: vec!["Sphere".into(), "Ground".into()],
             material_names: vec!["Plastic".into(), "Matte".into()],
+            devices: Default::default(),
             fields: NameFields {
                 project: "Test".into(),
                 camera: "Hero".into(),
