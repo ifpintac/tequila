@@ -97,6 +97,7 @@ mod templates_panel;
 mod substance;
 mod texture_pack;
 mod field;
+mod fallback_fonts;
 mod icons;
 mod theme;
 mod thumbnail;

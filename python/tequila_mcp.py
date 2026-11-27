@@ -872,4 +872,9 @@ def _serve(bridge, stdin, stdout):
 
 
 if __name__ == '__main__':
+    # MCP is UTF-8 JSON, a line at a time. Windows hands a program its piped
+    # input in the computer's code page unless told otherwise, which read a
+    # part or a path named 测试 as "æµ‹è¯•".
+    for stream in (sys.stdin, sys.stdout):
+        stream.reconfigure(encoding='utf-8')
     serve(Bridge(restricted='--restricted' in sys.argv[1:]))

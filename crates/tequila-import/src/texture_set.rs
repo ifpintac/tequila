@@ -542,7 +542,9 @@ pub(crate) fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ImportErr
         let comment_len = u16_at(at + 32).ok_or_else(|| malformed("truncated"))? as usize;
         let local = u32_at(at + 42).ok_or_else(|| malformed("truncated"))? as usize;
         let name = bytes.get(at + 46..at + 46 + name_len).ok_or_else(|| malformed("truncated"))?;
-        let name = String::from_utf8_lossy(name).into_owned();
+        let flags = u16_at(at + 8).ok_or_else(|| malformed("truncated"))?;
+        let extra = bytes.get(at + 46 + name_len..at + 46 + name_len + extra_len).unwrap_or(&[]);
+        let name = tequila_format::zip::member_name(name, flags, extra);
         at += 46 + name_len + extra_len + comment_len;
         if name.ends_with('/') {
             continue;

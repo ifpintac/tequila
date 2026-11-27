@@ -683,7 +683,7 @@ impl Builder<'_> {
         match self.package.get(&path) {
             Some(bytes) if !file_name.is_empty() => {
                 // A plain name: it becomes a file beside the model.
-                let safe: String = file_name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect();
+                let safe = crate::plain_file_name(&file_name);
                 let wanted = RawTexture { uri: safe, role: tequila_texture::texture::MapRole::Color, embedded: Some(std::sync::Arc::new(bytes.to_vec())), elsewhere: None };
                 crate::obj::attach_texture(&mut definition, &mut self.scene.textures, wanted, Param::BaseColor, Value::Color(tequila_core::spectrum::Spectrum::ONE));
             }

@@ -660,7 +660,8 @@ impl SceneTab {
             };
             // One line, ellipsised: a wrapped name makes rows of different
             // heights, and a part is found by the start of its name.
-            let mut job = egui::text::LayoutJob::simple_singleline(name.clone(), egui::FontId::proportional(13.0), colour);
+            let shown = crate::fallback_fonts::drawing_order(&name).into_owned();
+            let mut job = egui::text::LayoutJob::simple_singleline(shown, egui::FontId::proportional(13.0), colour);
             job.wrap = egui::text::TextWrapping {
                 max_width: name_at.width().max(0.0),
                 max_rows: 1,

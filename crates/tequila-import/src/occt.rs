@@ -135,26 +135,43 @@ impl Format {
 /// cancelled in the import dialog does not leave OpenCASCADE reading on for
 /// minutes, holding gigabytes, behind it.
 pub(crate) fn read(helper: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step), stop: &dyn Fn() -> bool) -> Result<Read, String> {
+    read_in(&std::env::temp_dir(), helper, bytes, format, (chord, angle), progress, stop)
+}
+
+/// [`read`], through a folder made in `temporary`.
+fn read_in(temporary: &Path, helper: &Path, bytes: &[u8], format: Format, (chord, angle): (f64, f64), progress: &dyn Fn(Step), stop: &dyn Fn() -> bool) -> Result<Read, String> {
     static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let folder = std::env::temp_dir().join(format!(
+    let folder = temporary.join(format!(
         "tequila-occt-{}-{}",
         std::process::id(),
         COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let result = run(helper, &folder, bytes, format, (chord, angle), progress, stop);
+    // Absolute, as it is started in another folder.
+    let helper = std::path::absolute(helper).unwrap_or_else(|_| helper.to_path_buf());
+    let result = run(&helper, &folder, bytes, format, (chord, angle), progress, stop);
     let _ = std::fs::remove_dir_all(&folder);
     result
 }
 
+/// The helper's answer, beside the file it reads.
+const ANSWER: &str = "model.fsocc";
+
 fn run(helper: &Path, folder: &Path, bytes: &[u8], format: Format, (chord, angle): (f64, f64), progress: &dyn Fn(Step), stop: &dyn Fn() -> bool) -> Result<Read, String> {
     let input = folder.join(format.file_name());
-    let output = folder.join("model.fsocc");
+    let output = folder.join(ANSWER);
     std::fs::write(&input, bytes).map_err(|e| format!("{}: {e}", input.display()))?;
     let mut command = Command::new(helper);
+    // Started in the folder, and given the two files by their plain names.
+    // On Windows the helper's `main` gets its arguments in the system's
+    // code page, which has no letters for most of the world: a temporary
+    // folder under C:\Users\张伟 arrived as C:\Users\?? and OpenCASCADE
+    // could not read the file. The folder itself goes to Windows as
+    // UTF-16, which holds any name.
     command
-        .arg(&input)
-        .arg(&output)
+        .current_dir(folder)
+        .arg(format.file_name())
+        .arg(ANSWER)
         .arg(chord.to_string())
         .arg(angle.to_string())
         .stdin(Stdio::null())
@@ -368,6 +385,34 @@ mod tests {
         let older = parse(&answer(2, ONE)).expect("an older helper's answer reads");
         assert_eq!(older.products[0].about, crate::step::About::default());
         assert_eq!(older.bodies[0].about, crate::step::About::default());
+    }
+
+    /// The helper reads a file from a temporary folder named in any
+    /// language - a person's own, under a user name in Chinese - where it
+    /// could not when the folder was in its arguments. Skipped where the
+    /// helper is not installed or built (`TEQUILA_OCCT` names one).
+    #[test]
+    fn the_helper_reads_through_a_folder_named_in_any_language() {
+        let Some(helper) = helper() else {
+            eprintln!("skipped: OpenCASCADE's helper is not here");
+            return;
+        };
+        // 测试 日本語 한국어 हिन्दी Español
+        let temporary = std::env::temp_dir().join(format!(
+            "tequila \u{6D4B}\u{8BD5} \u{65E5}\u{672C}\u{8A9E} \u{D55C}\u{AD6D}\u{C5B4} \u{0939}\u{093F}\u{0928}\u{094D}\u{0926}\u{0940} Espa\u{00F1}ol {}",
+            std::process::id()
+        ));
+        let quality = crate::step::Tessellation::default();
+        let bytes = include_bytes!("../tests/data/two_bodies.step");
+        let read = |folder: &Path| read_in(folder, &helper, bytes, Format::Step, (quality.chord(), quality.angle()), &|_| {}, &|| false);
+        let named = read(&temporary);
+        let _ = std::fs::remove_dir_all(&temporary);
+        let named = named.expect("OpenCASCADE reads the file");
+        // The same answer as through a folder with a plain name.
+        let plain = read(&std::env::temp_dir()).expect("OpenCASCADE reads the file");
+        let shape = |read: &Read| read.bodies.iter().map(|b| (b.name.clone(), b.faces, b.groups.iter().map(|(_, m)| m.indices.len()).sum::<usize>())).collect::<Vec<_>>();
+        assert!(!named.bodies.is_empty());
+        assert_eq!(shape(&named), shape(&plain));
     }
 
     #[test]

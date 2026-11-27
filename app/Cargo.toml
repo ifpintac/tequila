@@ -36,6 +36,10 @@ rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] 
 # GitHub lists for its installer.
 ureq = "3.2.1"
 ring = "0.17"
+# The system's Chinese, Japanese, Korean and Devanagari fonts, mapped rather
+# than read (`fallback_fonts`): the version usvg's font database already
+# brings.
+memmap2 = "0.9"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 # A 3D mouse's HID reports (`spacemouse`): through Windows' own HID calls

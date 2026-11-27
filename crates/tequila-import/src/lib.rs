@@ -760,6 +760,15 @@ impl ReadModel {
     }
 }
 
+/// A packed picture's file name, reduced to what is safe to write beside the
+/// model: letters and digits in any script, `-`, `_` and `.`, anything else
+/// `_`. Two pictures called 皮革.png and 金属.png stay two files: when only
+/// ASCII letters were kept, both were `__.png` and one material wore the
+/// other's picture.
+pub(crate) fn plain_file_name(name: &str) -> String {
+    name.chars().map(|c| if tequila_format::library::keeps_in_file_name(c) || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect()
+}
+
 /// Write an image the model carried inside itself out beside the model.
 ///
 /// `docs/file-format.md` §3.1: the document stores where a texture came from
@@ -1450,6 +1459,18 @@ mod tests {
     use super::*;
     use tequila_core::math::vec3;
     use tequila_scene::CommandBus;
+
+    /// A packed picture keeps its name in any script, so two named in
+    /// Chinese are two files; what could climb out of the folder still
+    /// cannot.
+    #[test]
+    fn a_packed_pictures_name_keeps_its_letters() {
+        assert_eq!(plain_file_name("皮革.png"), "皮革.png");
+        assert_ne!(plain_file_name("皮革.png"), plain_file_name("金属.png"));
+        assert_eq!(plain_file_name("レザー 가죽 चमड़ा cuero.jpg"), "レザー_가죽_चमड़ा_cuero.jpg");
+        assert_eq!(plain_file_name("a/b\\c:d"), "a_b_c_d");
+        assert!(!plain_file_name("..\\..\\x.png").contains(['/', '\\']));
+    }
 
     fn cube_obj(offset: [f32; 3]) -> String {
         let [dx, dy, dz] = offset;
