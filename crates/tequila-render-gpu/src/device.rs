@@ -33,6 +33,16 @@ impl GpuDevice {
     /// integrated one, either before a software one. The error lists every
     /// adapter seen and why it was passed over.
     pub fn new(needs: Needs) -> Result<GpuDevice, String> {
+        GpuDevice::on(needs, None)
+    }
+
+    /// The card a person chose (`tequila_render_core::devices`): the one
+    /// named `wanted.0` - the `wanted.1`th of that name, from 0, where
+    /// there are several - if it has what `needs` asks; with `None`, the
+    /// best, as [`GpuDevice::new`] chooses. The error says why the card
+    /// named cannot render, or lists every adapter seen and why it was
+    /// passed over.
+    pub fn on(needs: Needs, wanted: Option<(&str, usize)>) -> Result<GpuDevice, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: BACKENDS,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -40,8 +50,18 @@ impl GpuDevice {
         let adapters = pollster::block_on(instance.enumerate_adapters(BACKENDS));
         let mut refused = String::new();
         let mut best: Option<(u32, wgpu::Adapter)> = None;
+        let mut named = 0;
         for adapter in adapters {
             let info = adapter.get_info();
+            if let Some((name, ordinal)) = wanted {
+                if !info.name.trim().eq_ignore_ascii_case(name.trim()) {
+                    continue;
+                }
+                named += 1;
+                if named - 1 != ordinal {
+                    continue;
+                }
+            }
             if let Some(reason) = refusal(&adapter, needs) {
                 let _ = writeln!(refused, "  {} ({:?}): {reason}", info.name, info.backend);
                 continue;
@@ -57,10 +77,11 @@ impl GpuDevice {
             }
         }
         let Some((_, adapter)) = best else {
-            return Err(if refused.is_empty() {
-                "no Vulkan or Metal graphics card was found".to_string()
-            } else {
-                format!("no graphics card can render here:\n{refused}")
+            return Err(match wanted {
+                Some((name, _)) if refused.is_empty() => format!("{name} is not a Vulkan or Metal graphics card here"),
+                Some((name, _)) => format!("{name} cannot render here:\n{refused}"),
+                None if refused.is_empty() => "no Vulkan or Metal graphics card was found".to_string(),
+                None => format!("no graphics card can render here:\n{refused}"),
             });
         };
         let info = adapter.get_info();
@@ -128,6 +149,37 @@ impl GpuDevice {
     }
 }
 
+/// A graphics card as wgpu sees it, for a list of devices: its name, the
+/// backend it is reached through, and why it cannot render, if it cannot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Adapter {
+    pub name: String,
+    pub backend: String,
+    pub refused: Option<String>,
+}
+
+/// Every card wgpu finds through Tequila's backends, software ones left
+/// out: nobody chooses those to render on.
+pub fn adapters(needs: Needs) -> Vec<Adapter> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: BACKENDS,
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    pollster::block_on(instance.enumerate_adapters(BACKENDS))
+        .into_iter()
+        .filter(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
+        .map(|adapter| {
+            let info = adapter.get_info();
+            let backend = match info.backend {
+                wgpu::Backend::Vulkan => "Vulkan".to_string(),
+                wgpu::Backend::Metal => "Metal".to_string(),
+                other => format!("{other:?}"),
+            };
+            Adapter { name: info.name.trim().to_string(), backend, refused: refusal(&adapter, needs) }
+        })
+        .collect()
+}
+
 /// Why `adapter` cannot do what `needs` asks, if it cannot.
 fn refusal(adapter: &wgpu::Adapter, needs: Needs) -> Option<String> {
     let features = adapter.features();
@@ -161,5 +213,20 @@ pub fn for_test(needs: Needs) -> Option<GpuDevice> {
             eprintln!("skipped: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A card a person chose that is not here is said by its name, never
+    /// swapped for another without a word; software adapters are not
+    /// offered to choose.
+    #[test]
+    fn a_card_that_is_not_here_is_said_by_name() {
+        let error = GpuDevice::on(Needs::Compute, Some(("No Such Graphics Card 9000", 0))).err().expect("no such card");
+        assert!(error.starts_with("No Such Graphics Card 9000 "), "{error}");
+        assert!(adapters(Needs::Compute).iter().all(|a| !a.name.is_empty()));
     }
 }

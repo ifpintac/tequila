@@ -209,6 +209,10 @@ pub struct GroundSettings {
     /// all. It keeps the bottom of each face a little darker, as a real
     /// floor's light is.
     pub bounce_contact_falloff: f32,
+    /// The floor shows the light the product sends onto it: off a white
+    /// part, from a glowing one, through frosted glass. Off, it only
+    /// darkens where the product takes light away.
+    pub product_light: bool,
     /// Project the below-horizon part of the environment flat onto the ground
     /// (`G`), so the floor does not visibly curve away.
     pub flatten: bool,
@@ -237,6 +241,7 @@ impl Default for GroundSettings {
             bounce_strength: 1.0,
             bounce_color: Spectrum::splat(1.0),
             bounce_contact_falloff: 0.0,
+            product_light: true,
             flatten: false,
             size: 0.0,
         }

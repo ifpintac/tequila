@@ -727,6 +727,10 @@ fn build(file: File, name: &str, quality: Tessellation) -> RawScene {
         Tessellation::Draft => 2,
         Tessellation::Medium => 3,
         Tessellation::High | Tessellation::Ultra => 4,
+        // As the preset whose chord it is as fine as.
+        Tessellation::Custom { chord, .. } if chord >= Tessellation::Draft.chord() => 2,
+        Tessellation::Custom { chord, .. } if chord >= Tessellation::Medium.chord() => 3,
+        Tessellation::Custom { .. } => 4,
     };
     let mut unread_in_breps: BTreeMap<String, usize> = BTreeMap::new();
     for (i, r) in records.iter().enumerate() {
@@ -841,7 +845,7 @@ fn build(file: File, name: &str, quality: Tessellation) -> RawScene {
     }
     scene.warnings = warnings;
     if divided_any {
-        scene.tessellation = Some(quality.label().to_string());
+        scene.tessellation = Some(quality.name());
     }
     scene
 }

@@ -316,6 +316,12 @@ pub struct ShadowCatcher {
     /// like ambient occlusion over that distance, in scene units; 0 for not
     /// at all.
     pub bounce_falloff: f32,
+    /// Whether the floor shows the light the product sends onto it, as a
+    /// real floor under it would: off a white part, from a glowing one,
+    /// through frosted glass and translucent plastic. Without it the floor
+    /// only darkens where the product takes light away, and a neon tube
+    /// stood on it casts a shadow and no glow (`integrator::catch_shadow`).
+    pub product_light: bool,
     /// A part made a catcher (`Rays::catcher`), not the floor: drawn in the
     /// working views as the part it is, where the floor is not drawn at
     /// all, and not what "the floor" means to them.
@@ -337,6 +343,7 @@ impl Default for ShadowCatcher {
             reflection_fade_by_distance: false,
             bounce: None,
             bounce_falloff: 0.0,
+            product_light: false,
             part: false,
         }
     }

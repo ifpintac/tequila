@@ -40,12 +40,16 @@ fn plain() -> IntegratorConfig {
     IntegratorConfig { caustics: true, caustics_method: CausticsMethod::Photons, regularization_start_bounce: u32::MAX, ..IntegratorConfig::product() }
 }
 
-/// With the bounces the closed forms below describe, through glass the
+/// With the limits the closed forms below describe, through glass the
 /// path crosses `crossings` times: the floor lit straight through the
 /// glass, and none of the light the floor and the glass reflect between
-/// them.
+/// them. One bounce, the floor's own, and the crossings against the
+/// transmission limit, which is where passes through glass count
+/// (`docs/01` §11). Allowed `crossings + 1` bounces, as when the crossings
+/// counted as bounces too, the floor lit by its own light off the glass
+/// came back in: 1.4% more under the sun through the slab.
 fn single(config: IntegratorConfig, crossings: u32) -> IntegratorConfig {
-    IntegratorConfig { max_bounces: crossings + 1, ..config }
+    IntegratorConfig { max_bounces: 1, max_transmission_bounces: crossings, ..config }
 }
 
 /// A box with a normal per face, for glass whose faces the walk steps

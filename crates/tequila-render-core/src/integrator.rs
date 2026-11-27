@@ -3022,6 +3022,13 @@ fn catch_shadow(
         coverage = 0.0;
     }
 
+    // What the product sends onto the floor, added to what is behind it in
+    // the share it adds to the light the floor gets in the open: the other
+    // half of the ratio a shadow is, which can only take light away.
+    if catcher.product_light && catcher.shadows && !config.floor_reflection_only {
+        radiance += behind * light_from_the_product(intersector, config, hit, normal, sampler);
+    }
+
     let mut guide = (radiance, hit.shading_normal);
     if catcher.reflections > 0.0 {
         if let Some((seen, share)) = floor_reflection(intersector, config, hit, catcher, view, normal, sampler) {
@@ -3045,6 +3052,77 @@ fn catch_shadow(
     }
 
     CaughtShadow { radiance, coverage, guide }
+}
+
+/// The light the product sends onto the floor at `hit`, facing `normal`,
+/// over the light the floor would receive there with nothing on it: bounced
+/// off the product, glowing from it, through its frosted glass or
+/// translucent plastic. Per channel, so a red part reddens the floor by it.
+///
+/// One direction from the floor in proportion to its cosine; where it meets
+/// the product, the light coming back along it is a path of its own, traced
+/// as the floor's reflection's is. A direction that meets the sky or the
+/// floor brings nothing here: that light is the shadow's to account for.
+///
+/// Smooth glass is left out: what passes it straight on is already the
+/// shadow's transmittance (a pane, `Pane::of`), and what it focuses is the
+/// caustics', and counted here as well either would light the floor twice.
+fn light_from_the_product(
+    intersector: &dyn Intersector,
+    config: &IntegratorConfig,
+    hit: &Hit,
+    normal: Vec3,
+    sampler: &mut Sampler,
+) -> Spectrum {
+    let scene = intersector.scene();
+    let open = open_irradiance(scene, hit.position, normal);
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(open > 0.0) {
+        return Spectrum::ZERO;
+    }
+    let local = tequila_core::sampling::sample_cosine_hemisphere(sampler.next_unstructured2());
+    let direction = Onb::from_normal(normal).to_world(local);
+    let ray = Ray::new(hit.offset(normal), direction);
+    let Some(seen) = intersector.intersect(&ray) else {
+        return Spectrum::ZERO;
+    };
+    if scene.instances.get(seen.instance.0 as usize).is_some_and(|i| i.shadow_catcher.is_some()) {
+        return Spectrum::ZERO;
+    }
+    if scene.pane(seen.material).is_some() {
+        return Spectrum::ZERO;
+    }
+    let material = scene.material(seen.material);
+    let focuses = material.specular_roughness <= caustics::FOCUSING_ROUGHNESS
+        && (material.transmission_weight > 0.5 || material.base_metalness > 0.5);
+    if config.caustics && focuses {
+        return Spectrum::ZERO;
+    }
+    let mut child = config.clone();
+    child.max_bounces = config.max_bounces.min(4);
+    child.in_floor_reflection = true;
+    child.floor_reflection_only = false;
+    let back = trace_path(intersector, &child, ray, Vec2::ZERO, sampler).radiance;
+    // Irradiance from a cosine-weighted draw is pi times the radiance.
+    back * (std::f32::consts::PI / open)
+}
+
+/// The light, as luminance, the environment and the lamps bring onto a
+/// point facing `normal` with nothing in the way: what the product's light
+/// on the floor is measured against. The environment's is exact for a
+/// floor facing up (`Environment::irradiance_bound`); each lamp's is its
+/// light from its middle.
+fn open_irradiance(scene: &crate::scene::SceneSnapshot, position: Vec3, normal: Vec3) -> f32 {
+    let mut total = scene.environment.irradiance_bound(position, normal);
+    for light in scene.lights.lights() {
+        if let Some(sample) = light.sample(position, Vec2::splat(0.5)) {
+            let density = if sample.is_delta { 1.0 } else { sample.pdf };
+            if density > 0.0 {
+                total += sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density;
+            }
+        }
+    }
+    total
 }
 
 /// What the floor reflects along one direction, and how much of it shows:
@@ -6167,6 +6245,16 @@ mod tests {
         sphere: Sphere,
         sphere_material: Material,
     ) -> AnalyticIntersector {
+        catcher_scene_with(ShadowCatcher::default(), environment, lights, sphere, sphere_material)
+    }
+
+    fn catcher_scene_with(
+        catcher: ShadowCatcher,
+        environment: Environment,
+        lights: Vec<crate::light::Light>,
+        sphere: Sphere,
+        sphere_material: Material,
+    ) -> AnalyticIntersector {
         let size = crate::scene::Mesh::new(
             vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)],
             vec![0, 1, 2],
@@ -6174,7 +6262,7 @@ mod tests {
         let instances = vec![
             crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
             crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(1), tequila_core::ids::MaterialId(0))
-                .with_shadow_catcher(ShadowCatcher::default()),
+                .with_shadow_catcher(catcher),
         ];
         let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![sphere_material], Arc::new(environment))
             .with_lights(Arc::new(crate::light::LightSet::new(lights)));
@@ -6335,6 +6423,43 @@ mod tests {
         assert!(intersector.scene().has_cutouts());
         let (caught, _) = caught_at_origin(&intersector);
         assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
+    }
+
+    /// A floor that takes the product's light shows it: a white ball just
+    /// over it lightens the shadow under it, a black one does not, and with
+    /// the setting off the two cast the same shadow, as they always did.
+    /// Under a uniform sky a white diffuse ball sends the floor less than
+    /// the sky it hides, so the floor stays darker than in the open: the
+    /// light is not counted twice.
+    #[test]
+    fn a_floor_shows_the_light_a_white_part_sends_onto_it() {
+        let floor = |albedo: f32, product_light: bool| -> f32 {
+            let intersector = catcher_scene_with(
+                ShadowCatcher { product_light, ..ShadowCatcher::default() },
+                Environment::uniform(Spectrum::ONE),
+                Vec::new(),
+                Sphere::new(vec3(0.0, 0.6, 0.0), 0.5, tequila_core::ids::MaterialId(0)),
+                Material::diffuse(Spectrum::splat(albedo)),
+            );
+            let config = IntegratorConfig { shadows: true, ..IntegratorConfig::product() };
+            let n = 6_000u32;
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                let mut sampler = Sampler::new(3, 5, i, 29);
+                let ray = Ray::new(vec3(4.0, 1.0, 0.5), vec3(-4.0, -1.0, -0.5).normalize());
+                let result = trace_path(&intersector, &config, ray, Vec2::ZERO, &mut sampler);
+                assert_eq!(result.object_id, 1, "the camera ray missed the floor");
+                sum += f64::from(result.radiance.luminance());
+            }
+            (sum / f64::from(n)) as f32
+        };
+        let (black_off, black_on) = (floor(0.0, false), floor(0.0, true));
+        let (white_off, white_on) = (floor(0.9, false), floor(0.9, true));
+        assert!(black_off < 0.8, "the ball casts too little shadow to test with: {black_off:.3}");
+        assert!((black_on - black_off).abs() < 0.01, "a black ball lit the floor: {black_off:.3} to {black_on:.3}");
+        assert!((white_off - black_off).abs() < 0.01, "with the setting off a white ball lit the floor: {white_off:.3}");
+        assert!(white_on > white_off + 0.1, "a white ball sent the floor too little: {white_off:.3} to {white_on:.3}");
+        assert!(white_on < 1.0, "the floor under a white ball came out brighter than in the open: {white_on:.3}");
     }
 
     fn mirrored(normal: Vec3, wo: Vec3) -> Vec3 {

@@ -343,6 +343,72 @@ fn unlinking_and_undoing_leaves_no_orphan_material() {
     same_scene(&doc, &start, "after undoing an unlink");
 }
 
+/// Paste puts one copy of a material on the parts it is pasted onto, in one
+/// step: undo puts back each part's own material, whatever it was, and takes
+/// the copy away; redo brings the copy back under the key it had. The copy
+/// is theirs alone: editing it leaves the original as it was.
+#[test]
+fn pasting_a_material_is_one_step_and_the_copy_is_its_own() {
+    let (mut doc, ids, _, base) = assembly();
+    let mut bus = CommandBus::new();
+    // Part 3 wears a material of its own first, so undo has two to put back.
+    bus.apply(&mut doc, Command::UnlinkMaterial { node: ids[4] }).unwrap();
+    bus.end_interaction();
+    let own = doc.tree.get(ids[4]).unwrap().material;
+    assert_ne!(own, Some(base));
+    let start = doc.clone();
+
+    bus.apply(&mut doc, Command::PasteMaterial { material: base, nodes: vec![ids[2], ids[4]] }).unwrap();
+    bus.end_interaction();
+    let pasted = doc.tree.get(ids[2]).unwrap().material.unwrap();
+    assert_ne!(pasted, base);
+    assert_eq!(doc.tree.get(ids[4]).unwrap().material, Some(pasted), "the parts pasted onto together share one copy");
+    assert_eq!(doc.tree.get(ids[1]).unwrap().material, Some(base), "a part not pasted onto kept its material");
+    let (original, copy) = (doc.materials.get(base).unwrap(), doc.materials.get(pasted).unwrap());
+    assert_eq!(copy.graph, original.graph, "the copy is the whole material");
+    assert_eq!(copy.material_type, original.material_type);
+    assert_eq!(copy.name, "Base 3", "named as an unlinked copy is");
+
+    // Edited, the copy changes alone.
+    let before = doc.materials.get(base).unwrap().clone();
+    bus.apply(&mut doc, Command::SetMaterialParameter { material: pasted, parameter: MaterialParameter::scalar(Param::SpecularRoughness, 0.9) }).unwrap();
+    bus.end_interaction();
+    assert_eq!(doc.materials.get(base), Some(&before), "editing the pasted copy changed the original");
+    bus.undo(&mut doc).unwrap();
+
+    bus.undo(&mut doc).unwrap();
+    same_scene(&doc, &start, "after undoing a paste");
+    assert_eq!(doc.tree.get(ids[4]).unwrap().material, own, "undo did not put back the part's own material");
+    assert!(doc.materials.get(pasted).is_none(), "the pasted copy was left behind");
+    bus.redo(&mut doc).unwrap();
+    assert_eq!(doc.tree.get(ids[2]).unwrap().material, Some(pasted), "redo gave the copy another key");
+    assert_eq!(doc.tree.get(ids[4]).unwrap().material, Some(pasted));
+}
+
+/// A group pasted onto means every part in it, and a locked part refuses
+/// the paste whole rather than leaving it half done.
+#[test]
+fn a_paste_onto_a_group_reaches_its_parts_and_a_locked_part_refuses_it() {
+    let (mut doc, ids, _, base) = assembly();
+    let mut bus = CommandBus::new();
+    bus.apply(&mut doc, Command::PasteMaterial { material: base, nodes: vec![ids[0]] }).unwrap();
+    let pasted = doc.tree.get(ids[1]).unwrap().material.unwrap();
+    assert_ne!(pasted, base);
+    for &part in &ids[1..] {
+        assert_eq!(doc.tree.get(part).unwrap().material, Some(pasted));
+    }
+    assert_eq!(doc.tree.get(ids[0]).unwrap().material, None, "the group's own material, never drawn, was set");
+    bus.undo(&mut doc).unwrap();
+
+    bus.apply(&mut doc, Command::set_locked(ids[3], true)).unwrap();
+    let before = doc.clone();
+    assert!(bus.apply(&mut doc, Command::PasteMaterial { material: base, nodes: vec![ids[0]] }).is_err());
+    same_scene(&doc, &before, "after a refused paste");
+    assert_eq!(doc.materials.len(), before.materials.len());
+    assert!(bus.apply(&mut doc, Command::PasteMaterial { material: MaterialKey(999), nodes: vec![ids[1]] }).is_err());
+    assert!(bus.apply(&mut doc, Command::PasteMaterial { material: base, nodes: vec![NodeId(999)] }).is_err());
+}
+
 /// Dragging a slider must leave one undo entry, not two hundred (§8.1).
 #[test]
 fn continuous_parameter_edits_coalesce_into_one_step() {
@@ -566,6 +632,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetUnits { .. }
         | Command::AssignMaterial { .. }
         | Command::UnlinkMaterial { .. }
+        | Command::PasteMaterial { .. }
         | Command::SetMaterialParameter { .. }
         | Command::AddDecal { .. }
         | Command::SetDecals { .. }
@@ -705,6 +772,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             mesh: tequila_scene::tree::MeshKey(9),
         },
         Command::UnlinkMaterial { node: NodeId(1) },
+        Command::PasteMaterial { material: MaterialKey(1), nodes: vec![NodeId(1)] },
         Command::SetMaterialParameter {
             material: MaterialKey(1),
             parameter: MaterialParameter::scalar(Param::SpecularRoughness, 0.0),

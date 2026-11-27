@@ -472,7 +472,8 @@ fn image_extension(mime: Option<&str>, bytes: &[u8]) -> Option<&'static str> {
 /// The glTF's own `name` where there is one, so that extracted files are
 /// recognisable rather than a row of numbers. Reduced to characters that are
 /// safe in a filename on every platform: the name is arbitrary text from a
-/// file that may not be friendly, and it is about to become a path.
+/// file that may not be friendly, and it is about to become a path. Letters
+/// in any script are: an image called 皮革 is `皮革_0.png`.
 fn embedded_name(image: &json::Value, index: usize) -> String {
     let cleaned: String = image
         .get("name")
@@ -480,7 +481,7 @@ fn embedded_name(image: &json::Value, index: usize) -> String {
         .unwrap_or("")
         .chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            if tequila_format::library::keeps_in_file_name(c) || c == '-' || c == '_' {
                 c
             } else {
                 '_'

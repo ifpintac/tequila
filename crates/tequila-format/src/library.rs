@@ -738,16 +738,23 @@ fn write_entry_in(entry: &LibraryEntry, directory: Option<&Path>) -> String {
 
 /// A filename for an entry, derived from its name.
 ///
-/// Lower case, words joined by underscores, and nothing outside
-/// `[a-z0-9_]` — so a material called `Anodised 6061 / Blue` cannot write
-/// itself into a directory it was not given, or produce a name the filesystem
-/// refuses.
+/// Lower case, words joined by underscores, and nothing but letters and
+/// digits between them — so a material called `Anodised 6061 / Blue` cannot
+/// write itself into a directory it was not given, or produce a name the
+/// filesystem refuses. Letters in any script: a material called 皮革 or
+/// Cuero marrón is `皮革.json` and `cuero_marrón.json`, not `material.json`
+/// and `cuero_marr_n.json`. No longer than a Linux file name may be once
+/// a `_12.json` is added.
 pub fn file_stem(name: &str) -> String {
+    const LONGEST: usize = 160;
     let mut out = String::with_capacity(name.len());
     let mut last_was_gap = true;
     for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
+        if out.len() + c.len_utf8() > LONGEST {
+            break;
+        }
+        if c.is_alphanumeric() || (!last_was_gap && joins_letters(c)) {
+            out.extend(c.to_lowercase());
             last_was_gap = false;
         } else if !last_was_gap {
             out.push('_');
@@ -762,6 +769,29 @@ pub fn file_stem(name: &str) -> String {
     } else {
         out
     }
+}
+
+/// Whether `c` may stay in a file name made from a name someone wrote, in a
+/// model or the library: a letter or digit in any script, or a mark that
+/// belongs to one. Never a separator, a dot or anything a filesystem
+/// refuses.
+pub fn keeps_in_file_name(c: char) -> bool {
+    c.is_alphanumeric() || joins_letters(c)
+}
+
+/// A mark that belongs to the letter before it rather than separating
+/// words: an accent written as its own character (as a Mac spells é), the
+/// virama and vowel signs of Devanagari and the scripts beside it, the
+/// sound marks of kana. `char::is_alphanumeric` counts most vowel signs
+/// but not these.
+pub(crate) fn joins_letters(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036F}' // combining accents
+        | '\u{0900}'..='\u{0DFF}' // Devanagari to Sinhala
+        | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}' | '\u{20D0}'..='\u{20FF}' // more combining marks
+        | '\u{3099}' | '\u{309A}' // kana's voiced sound marks
+        | '\u{200C}' | '\u{200D}' // the joiners Indic spelling uses
+    ) && !matches!(c, '\u{0964}' | '\u{0965}') // the danda ends a sentence
 }
 
 /// Write an entry into `directory`, returning the file it went to.
@@ -1761,7 +1791,25 @@ mod writer_tests {
         assert_eq!(file_stem("Blue / Green"), "blue_green");
         assert_eq!(file_stem("../../etc/passwd"), "etc_passwd");
         assert_eq!(file_stem("  "), "material");
-        assert_eq!(file_stem("Ünïcode ✨"), "n_code");
+        assert_eq!(file_stem("Ünïcode ✨"), "ünïcode");
+        assert_eq!(file_stem("..\\..\\Windows\\system32"), "windows_system32");
+    }
+
+    /// The person's own letters stay in the filename, whatever the script:
+    /// Chinese, Japanese and Korean, Hindi with its virama and vowel signs,
+    /// Spanish accents, and an accent written as its own character, as a
+    /// Mac spells it. A name too long for a Linux filename is cut short,
+    /// never through a character.
+    #[test]
+    fn a_filename_keeps_the_letters_of_any_script() {
+        assert_eq!(file_stem("皮革 レザー"), "皮革_レザー");
+        assert_eq!(file_stem("가죽 / 소재"), "가죽_소재");
+        assert_eq!(file_stem("हिन्दी चमड़ा"), "हिन्दी_चमड़ा");
+        assert_eq!(file_stem("Cuero Marrón, Año 2"), "cuero_marrón_año_2");
+        assert_eq!(file_stem("Cafe\u{301} noir"), "cafe\u{301}_noir");
+        assert_eq!(file_stem("\u{301}x"), "x", "a mark does not begin a word");
+        let long = file_stem(&"革".repeat(200));
+        assert!(long.len() <= 160 && long.chars().all(|c| c == '革'), "{} bytes", long.len());
     }
 
     /// Saving never overwrites. Two materials somebody happened to give the

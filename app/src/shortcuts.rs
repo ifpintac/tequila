@@ -135,6 +135,8 @@ pub enum Action {
     SelectAll,
     DeselectAll,
     Duplicate,
+    CopyMaterial,
+    PasteMaterial,
     Group,
     Delete,
     HideSelection,
@@ -235,6 +237,12 @@ pub static ACTIONS: &[Info] = &[
     info(Action::SelectAll, "edit.select_all", Group::Edit, "Select all", &["Ctrl + A"]),
     info(Action::DeselectAll, "edit.deselect_all", Group::Edit, "Deselect all", &["Esc", "Ctrl + Shift + A"]),
     info(Action::Duplicate, "edit.duplicate", Group::Edit, "Duplicate", &["Ctrl + D"]),
+    // Not Ctrl+C and Ctrl+V: the window turns those into the system's copy
+    // and paste before any key reaches this table - and Ctrl+V into
+    // nothing at all when the clipboard holds no text - so they could
+    // never be pressed here, nor chosen in Preferences.
+    info(Action::CopyMaterial, "edit.copy_material", Group::Edit, "Copy material", &["Alt + C"]),
+    info(Action::PasteMaterial, "edit.paste_material", Group::Edit, "Paste material", &["Alt + V"]),
     info(Action::Group, "edit.group", Group::Edit, "Group", &["Ctrl + G"]),
     info(Action::Delete, "edit.delete", Group::Edit, "Delete", &["Delete", "Backspace"]),
     Info { mac_defaults: Some(&["Control + H"]), ..info(Action::HideSelection, "edit.hide", Group::Edit, "Hide the selection", &["Ctrl + H"]) },
@@ -572,6 +580,10 @@ mod tests {
         assert_eq!(pressed(Key::G, egui::Modifiers::SHIFT), vec![Action::Gizmo]);
         assert_eq!(pressed(Key::E, egui::Modifiers::NONE), vec![Action::GizmoRotate, Action::BackgroundEnvironment]);
         assert_eq!(pressed(Key::Z, egui::Modifiers { shift: true, ..command }), vec![Action::Redo]);
+        // Alt and C copies a material; C alone is still the background.
+        assert_eq!(pressed(Key::C, egui::Modifiers::ALT), vec![Action::CopyMaterial]);
+        assert_eq!(pressed(Key::V, egui::Modifiers::ALT), vec![Action::PasteMaterial]);
+        assert_eq!(pressed(Key::C, egui::Modifiers::NONE), vec![Action::BackgroundColour]);
         assert!(pressed(Key::F9, egui::Modifiers::NONE).is_empty());
     }
 }

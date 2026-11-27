@@ -110,7 +110,7 @@ pub fn wave(
         n += distortion * (fbm(p.map(|v| v * detail_scale), detail, detail_roughness, 2.0, true) * 2.0 - 1.0);
     }
     match profile {
-        WaveProfile::Sine => 0.5 + 0.5 * (n - FRAC_PI_2).sin(),
+        WaveProfile::Sine => 0.5 + 0.5 * crate::trig::sin(n - FRAC_PI_2),
         WaveProfile::Saw => {
             let n = n / TAU;
             n - n.floor()

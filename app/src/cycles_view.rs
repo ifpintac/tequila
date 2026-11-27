@@ -131,6 +131,10 @@ pub fn divided(full: (usize, usize), divider: f32) -> (usize, usize) {
 pub struct CyclesView {
     session: Session,
     engine: RenderEngine,
+    /// The devices it renders on, as chosen for the view
+    /// (`render_devices`), and in a few words, as the session says.
+    plan: tequila_render_cycles::devices::Plan,
+    label: String,
     /// The scene last translated. Compared by pointer, as the viewport's own
     /// rebuild does: a camera move bumps the document's generation but keeps
     /// the scene, and must move Cycles' camera rather than translate again.
@@ -186,18 +190,36 @@ pub struct CyclesView {
 /// Whether imported or deleted parts go into a session made afresh: on a
 /// graphics card with memory of its own, where Cycles' rebuild in place
 /// failed (see `CyclesView::sync`). Not on a Mac, and not on the processor.
-fn renews_for_new_parts(engine: RenderEngine) -> bool {
-    engine == RenderEngine::CyclesGpu && !cfg!(target_os = "macos")
+fn renews_for_new_parts(plan: &tequila_render_cycles::devices::Plan) -> bool {
+    plan.on_card() && !cfg!(target_os = "macos")
 }
 
 impl CyclesView {
-    /// A live session on the engine's device. Slow the first time (the GPU
-    /// kernels load), so it is made once and kept.
+    /// A live session on the engine's devices, as Tequila chooses them
+    /// where the person has not: the tests'.
+    #[cfg(test)]
     pub fn new(engine: RenderEngine) -> Result<CyclesView, String> {
-        let session = Session::live(engine.cycles_device(), 0, None)?;
+        let plan = crate::render_devices::cycles_plan(engine, &Default::default(), tequila_render_core::devices::Use::View);
+        CyclesView::on(engine, plan)
+    }
+
+    /// A live session on the devices `plan` names
+    /// (`render_devices::cycles_plan`). Slow the first time (the GPU
+    /// kernels load), so it is made once and kept.
+    pub fn on(engine: RenderEngine, plan: tequila_render_cycles::devices::Plan) -> Result<CyclesView, String> {
+        let session = Session::live(&plan.device, 0, None)?;
+        let label = match session.devices() {
+            Some(devices) => crate::render_devices::catalogue_now().and_then(|catalogue| crate::render_devices::session_label(catalogue, &devices)),
+            None => None,
+        }
+        .or_else(|| crate::render_devices::catalogue_now().map(|catalogue| catalogue.summary(&plan.keys)))
+        .unwrap_or_else(|| if plan.on_card() { "graphics card".to_string() } else { "processor".to_string() });
+        let renew_on_new_parts = renews_for_new_parts(&plan);
         Ok(CyclesView {
             session,
             engine,
+            plan,
+            label,
             scene: None,
             camera: None,
             asked: None,
@@ -219,7 +241,7 @@ impl CyclesView {
             answered: true,
             restarted: std::time::Instant::now(),
             translations: 0,
-            renew_on_new_parts: renews_for_new_parts(engine),
+            renew_on_new_parts,
             renewals: 0,
         })
     }
@@ -231,7 +253,7 @@ impl CyclesView {
     fn renew(&mut self) -> Result<(), String> {
         let (engine, translations, renew, renewals) = (self.engine, self.translations, self.renew_on_new_parts, self.renewals);
         self.session.close();
-        *self = CyclesView::new(engine)?;
+        *self = CyclesView::on(engine, self.plan.clone())?;
         self.translations = translations;
         self.renew_on_new_parts = renew;
         self.renewals = renewals + 1;
@@ -240,6 +262,16 @@ impl CyclesView {
 
     pub fn engine(&self) -> RenderEngine {
         self.engine
+    }
+
+    /// The device it was opened on, as `Session::live` takes it.
+    pub fn device(&self) -> &str {
+        &self.plan.device
+    }
+
+    /// What it renders on, in a few words: "GeForce RTX 2060", "processor".
+    pub fn devices_label(&self) -> &str {
+        &self.label
     }
 
     /// How many times the whole scene has been translated, rather than
@@ -1180,6 +1212,7 @@ mod floor_tests {
             gpu_solid: false,
             shading: crate::orchestrator::Shading::Rendered,
             engine: RenderEngine::CyclesCpu,
+            devices: Default::default(),
             pixels_per_point: 1.0,
             checker: None,
             submitted: std::time::Instant::now(),
@@ -1221,6 +1254,7 @@ mod floor_tests {
             gpu_solid: false,
             shading: crate::orchestrator::Shading::Rendered,
             engine: RenderEngine::CyclesCpu,
+            devices: Default::default(),
             pixels_per_point: 1.0,
             checker: None,
             submitted: std::time::Instant::now(),
