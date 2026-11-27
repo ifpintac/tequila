@@ -670,7 +670,14 @@ Alembic deformation import serve neither.
       outline (its light and shade correlated 0.95). That took a pass
       through a fibre counting as a transmission rather than a bounce, as
       Cycles counts hair's, and firefly rejection leaving fibres' glints
-      alone: before, Tequila's ball was 19% darker. Fibres take shadows,
+      alone: before, Tequila's ball was 19% darker. Its colour is read in
+      the light each engine renders, not in the developed picture (November
+      27): blue is the ball's dimmest channel, which PBR Neutral develops as
+      6.25 times its square, so the pictures' red over blue followed each
+      engine's noise at 64 samples (Tequila 1.78, Cycles 1.64, their light
+      1.28 and 1.33), and converged, at 4096 samples with no clamp and no
+      Filter Glossy, the pictures differ by 10% where the light differs by
+      3.1% (`fibres_converged`). Fibres take shadows,
       cast them, show in reflections and keep their part's rays, holdout,
       light links, render layer and name; picking one picks the part.
       Measured at 960 x 600 and 256 samples: a tennis ball's 205,000 fibres
