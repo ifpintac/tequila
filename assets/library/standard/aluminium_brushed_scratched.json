@@ -303,18 +303,18 @@
         "position": [0, 0],
         "procedural": {
           "bend": 0.25,
-          "density": 0.6,
+          "density": 0.9,
           "depth_variation": 0.6,
           "direction": "random",
           "fade": 0.3,
-          "frequency": 28,
+          "frequency": 80,
           "kind": "wear_scratches",
           "layers": 2,
           "length": 0.85,
           "length_variation": 0.6,
           "spread": 0.3,
           "taper": 0.6,
-          "width": 0.004,
+          "width": 0.009,
           "wobble": 0.25
         },
         "seed": 3
@@ -404,7 +404,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.22
+              "float": 0.3
             }
           }
         ],

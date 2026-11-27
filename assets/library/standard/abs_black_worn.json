@@ -175,8 +175,8 @@
         "kind": "procedural",
         "position": [0, 0],
         "procedural": {
-          "coverage": 0.5,
-          "frequency": 14,
+          "coverage": 0.9,
+          "frequency": 30,
           "kind": "scuffs",
           "softness": 0.55,
           "streaks": 0.55,
@@ -190,18 +190,18 @@
         "position": [0, 0],
         "procedural": {
           "bend": 0.2,
-          "density": 0.45,
+          "density": 0.85,
           "depth_variation": 0.7,
           "direction": "random",
           "fade": 0.3,
-          "frequency": 34,
+          "frequency": 80,
           "kind": "wear_scratches",
           "layers": 2,
           "length": 0.8,
           "length_variation": 0.6,
           "spread": 0.3,
           "taper": 0.6,
-          "width": 0.005,
+          "width": 0.009,
           "wobble": 0.2
         },
         "seed": 4
@@ -323,7 +323,7 @@
           {
             "socket": "input:2",
             "value": {
-              "color": [0.06865793, 0.06852921, 0.07177798]
+              "color": [0.11217114, 0.11200021, 0.11631477]
             }
           }
         ],

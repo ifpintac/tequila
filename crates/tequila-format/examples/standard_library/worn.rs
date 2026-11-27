@@ -33,7 +33,7 @@ fn aluminium_brushed_scratched() -> Preset {
     let both = plus(&mut r, grooves, 0.6, streaks);
     let scratches = pattern(
         &mut r,
-        Procedural::WearScratches(Scratches { frequency: 28.0, density: 0.6, width: 0.004, length: 0.85, bend: 0.25, wobble: 0.25, layers: 2, ..Scratches::default() }),
+        Procedural::WearScratches(Scratches { frequency: 80.0, density: 0.9, width: 0.009, length: 0.85, bend: 0.25, wobble: 0.25, layers: 2, ..Scratches::default() }),
         3,
     );
     // The brushing raises, the scratches sink: one height, the brushing a
@@ -42,7 +42,7 @@ fn aluminium_brushed_scratched() -> Preset {
     let height = plus(&mut r, grooves, 0.25, sunk);
     r.bump(height, 6e-6);
     let brushed = r.range(both, (0.45, 1.15), (roughness * 0.8, roughness * 1.25));
-    let gloss = plus(&mut r, scratches, 0.22, brushed);
+    let gloss = plus(&mut r, scratches, 0.3, brushed);
     r.to(Param::SpecularRoughness, gloss);
     let shade = r.range(both, (0.45, 1.15), (0.86, 1.04));
     let colour = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", tint).w("B", shade).out("Result");
@@ -68,7 +68,7 @@ fn chrome_swirl_marks() -> Preset {
             density: 1.0,
             length: 0.9,
             length_variation: 0.4,
-            width: 0.0025,
+            width: 0.005,
             taper: 0.5,
             fade: 0.45,
             wobble: 0.1,
@@ -82,7 +82,7 @@ fn chrome_swirl_marks() -> Preset {
     );
     let sunk = r.math("multiply", swirls, -1.0);
     r.bump(sunk, 8e-7);
-    let gloss = plus(&mut r, swirls, 0.12, gloss);
+    let gloss = plus(&mut r, swirls, 0.25, gloss);
     r.to(Param::SpecularRoughness, gloss);
     preset("Chrome Swirl Marks", "Metal", &["chrome", "mirror", "swirl", "polishing marks", "holograms", "worn", "wear"], MaterialType::Metal, r)
 }
@@ -98,10 +98,10 @@ fn abs_black_worn() -> Preset {
         m.specular_ior = 1.54;
     }));
     let gloss = wear(&mut r, 0.25, 0.34, 30.0);
-    let scuffs = pattern(&mut r, Procedural::Scuffs(Scuffs { frequency: 14.0, coverage: 0.5, stretch: 0.6, streaks: 0.55, softness: 0.55 }), 2);
+    let scuffs = pattern(&mut r, Procedural::Scuffs(Scuffs { frequency: 30.0, coverage: 0.9, stretch: 0.6, streaks: 0.55, softness: 0.55 }), 2);
     let scratches = pattern(
         &mut r,
-        Procedural::WearScratches(Scratches { frequency: 34.0, density: 0.45, width: 0.005, depth_variation: 0.7, layers: 2, ..Scratches::default() }),
+        Procedural::WearScratches(Scratches { frequency: 80.0, density: 0.85, width: 0.009, depth_variation: 0.7, layers: 2, ..Scratches::default() }),
         4,
     );
     let edges = pattern(&mut r, Procedural::EdgeWear(EdgeWear { radius: 0.0015, amount: 0.45, breakup: 0.7, frequency: 260.0, softness: 0.35 }), 6);
@@ -113,7 +113,7 @@ fn abs_black_worn() -> Preset {
     // And both lighten it: abraded plastic scatters, a grey bloom.
     let marks = plus(&mut r, scratches, 0.8, scuffs);
     let marks = plus(&mut r, edges, 0.5, marks);
-    let worn = r.node("mix").set("blend_type", "mix").w("Factor", marks).c("A", colour).c("B", srgb("#4A4A4C")).out("Result");
+    let worn = r.node("mix").set("blend_type", "mix").w("Factor", marks).c("A", colour).c("B", srgb("#5E5E60")).out("Result");
     r.to(Param::BaseColor, worn);
     let grain = noise(&mut r, 2600.0, 2.0, 0.5);
     let sunk = r.math("multiply", scratches, -1.5);

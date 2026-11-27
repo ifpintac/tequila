@@ -126,7 +126,7 @@
           "length_variation": 0.4,
           "spread": 0.12,
           "taper": 0.5,
-          "width": 0.0025,
+          "width": 0.005,
           "wobble": 0.1
         },
         "seed": 5
@@ -162,7 +162,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.12
+              "float": 0.25
             }
           }
         ],

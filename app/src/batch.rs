@@ -7317,7 +7317,9 @@ mod tests {
         let folder = std::path::PathBuf::from(std::env::var("TEQUILA_WEAR_OUT").expect("TEQUILA_WEAR_OUT names a folder"));
         std::fs::create_dir_all(&folder).expect("a folder");
         let only = std::env::var("TEQUILA_WEAR_ONLY").ok().map(|s| s.to_lowercase());
-        let (width, height, samples) = (480, 360, 256);
+        // Enough to see the marks; more with TEQUILA_WEAR_SAMPLES.
+        let samples = std::env::var("TEQUILA_WEAR_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(64);
+        let (width, height) = (400, 300);
         let side_by_side = |name: &str, graph: tequila_materials::graph::MaterialGraph, scale: f32| {
             if only.as_ref().is_some_and(|only| !name.to_lowercase().contains(only.as_str())) {
                 return;
