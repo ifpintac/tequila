@@ -245,18 +245,6 @@ fn live_size(image: [usize; 2], scale: f32, max_side: usize) -> (usize, usize) {
     (side(width), side(height))
 }
 
-/// Sizes people actually ask for, by the name they ask for them by.
-const SIZES: &[(&str, usize, usize)] = &[
-    ("HD 1080p", 1920, 1080),
-    ("4K UHD", 3840, 2160),
-    ("Square", 2048, 2048),
-    ("Portrait 4:5", 1600, 2000),
-    ("Story 9:16", 1080, 1920),
-    ("Web banner 3:1", 2400, 800),
-    ("A4 portrait, 300 DPI", 2480, 3508),
-    ("A4 landscape, 300 DPI", 3508, 2480),
-];
-
 /// Sample budgets by what they are for. The slider is still there for
 /// anything between; these are the four a person reaches for without having
 /// to know what a sample is.
@@ -269,28 +257,6 @@ const QUALITY: &[(&str, u32, &str)] = &[
 
 fn quality_name(samples: u32) -> Option<&'static str> {
     QUALITY.iter().find(|(_, spp, _)| *spp == samples).map(|(name, _, _)| *name)
-}
-
-/// The height that keeps a ratio when the width changes.
-fn locked_height(new_width: usize, old_width: usize, old_height: usize) -> usize {
-    if old_width == 0 {
-        return old_height.max(1);
-    }
-    ((new_width as f64 * old_height as f64 / old_width as f64).round() as usize).max(1)
-}
-
-/// `16:9`, `4:5`, `1:1` — or a decimal when the ratio has no short name.
-fn ratio_name(width: usize, height: usize) -> String {
-    fn gcd(a: usize, b: usize) -> usize {
-        if b == 0 { a } else { gcd(b, a % b) }
-    }
-    let divisor = gcd(width, height).max(1);
-    let (w, h) = (width / divisor, height / divisor);
-    if w <= 32 && h <= 32 {
-        format!("{w}:{h}")
-    } else {
-        format!("{:.2}:1", width as f64 / height.max(1) as f64)
-    }
 }
 
 /// The largest rectangle of the given shape that fits, centred.
@@ -360,8 +326,9 @@ pub struct RenderWindow {
     /// The print-size calculator's own inputs, which are *derived* from the
     /// resolution and so cannot simply be the settings.
     print_inches: Option<(f32, f32)>,
-    /// Keep the width-to-height ratio when either is typed.
-    lock_ratio: bool,
+    /// Keep the width-to-height ratio when either is typed: here and in
+    /// the viewport's size chip, which share it.
+    pub(crate) lock_ratio: bool,
     /// Whether a job is in progress, so Stop appears only when there is
     /// something to stop.
     pub rendering: bool,
@@ -1128,66 +1095,24 @@ impl RenderWindow {
             });
     }
 
+    /// The size, as the viewport's chip shows it too (`image_size`), and
+    /// the print size under it.
     fn size_section(&mut self, ui: &mut egui::Ui, settings: &mut RenderSettings) {
-        let current = SIZES
-            .iter()
-            .find(|(_, w, h)| *w == settings.width && *h == settings.height)
-            .map(|(name, _, _)| *name)
-            .unwrap_or("Custom");
-        egui::ComboBox::from_id_salt("render-size-preset")
-            .selected_text(current)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for (name, w, h) in SIZES {
-                    if ui
-                        .selectable_label(current == *name, format!("{name}   {w} × {h}"))
-                        .clicked()
-                    {
-                        settings.width = *w;
-                        settings.height = *h;
-                        self.print_inches = None;
-                    }
-                }
-            });
-
-        ui.horizontal(|ui| {
-            let (old_w, old_h) = (settings.width, settings.height);
-            let mut width = settings.width as u32;
-            let mut height = settings.height as u32;
-            if ui.add(egui::DragValue::new(&mut width).range(16..=16384).prefix("W ").suffix(" px")).changed() {
-                settings.width = width as usize;
-                if self.lock_ratio {
-                    settings.height = locked_height(settings.width, old_w, old_h).clamp(16, 16384);
-                }
-                self.print_inches = None;
-            }
-            ui.label("×");
-            if ui.add(egui::DragValue::new(&mut height).range(16..=16384).prefix("H ").suffix(" px")).changed() {
-                settings.height = height as usize;
-                if self.lock_ratio {
-                    settings.width = locked_height(settings.height, old_h, old_w).clamp(16, 16384);
-                }
-                self.print_inches = None;
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.toggle_value(&mut self.lock_ratio, "Lock ratio")
-                .on_hover_text("Keep the shape when you change the width or the height");
-            if ui.button("Swap").on_hover_text("Turn landscape into portrait, and back").clicked() {
-                std::mem::swap(&mut settings.width, &mut settings.height);
-                self.print_inches = None;
-            }
-            ui.label(
-                egui::RichText::new(format!(
-                    "{}  ·  {:.1} MP",
-                    ratio_name(settings.width, settings.height),
-                    (settings.width * settings.height) as f64 / 1e6
-                ))
-                .small()
-                .color(crate::theme::dim()),
-            );
-        });
+        if crate::image_size::fields(ui, "render-size", settings, &mut self.lock_ratio) {
+            self.print_inches = None;
+        }
         self.print_calculator(ui, settings);
+    }
+
+    /// The same Image size controls, for the viewport's chip: on the same
+    /// lock, and a print size typed here is let go of when the pixels
+    /// change there. Whether the size changed.
+    pub(crate) fn size_fields(&mut self, ui: &mut egui::Ui, settings: &mut RenderSettings) -> bool {
+        let changed = crate::image_size::fields(ui, "viewport-size", settings, &mut self.lock_ratio);
+        if changed {
+            self.print_inches = None;
+        }
+        changed
     }
 
     /// §1.8's print-size calculator.
@@ -2514,22 +2439,6 @@ mod tests {
         assert_eq!(image.pixels[0], egui::Color32::from_rgb(255, 0, 0));
         assert!(load_preview(&directory.join("absent.png").display().to_string()).is_none());
         let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    #[test]
-    fn a_locked_ratio_follows_the_width() {
-        assert_eq!(locked_height(3840, 1920, 1080), 2160);
-        assert_eq!(locked_height(1000, 1600, 2000), 1250);
-        // A degenerate old size does not divide by zero.
-        assert_eq!(locked_height(500, 0, 300), 300);
-    }
-
-    #[test]
-    fn ratios_have_their_short_names() {
-        assert_eq!(ratio_name(1920, 1080), "16:9");
-        assert_eq!(ratio_name(1600, 2000), "4:5");
-        assert_eq!(ratio_name(2048, 2048), "1:1");
-        assert_eq!(ratio_name(2480, 3508), "0.71:1");
     }
 
     #[test]

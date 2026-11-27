@@ -156,7 +156,8 @@ impl StudioShelf {
             ui.label(egui::RichText::new(if self.presets.is_empty() { "No studio presets yet. Install one, or save the studio you have." } else { "None match." }).color(crate::theme::dim()));
         }
         let width = ui.available_width();
-        let tile = ((width - 8.0) / 2.0).floor().max(60.0);
+        let columns = columns_for(width);
+        let tile = ((width - 8.0 * (columns as f32 - 1.0)) / columns as f32).floor().max(60.0);
         let mut family: Option<String> = None;
         let mut row: Vec<PresetFile> = Vec::new();
         let mut rows: Vec<(Option<String>, Vec<PresetFile>)> = Vec::new();
@@ -169,7 +170,7 @@ impl StudioShelf {
                 rows.push((Some(if file.preset.family.is_empty() { "Studios".into() } else { file.preset.family.clone() }), Vec::new()));
             }
             row.push(file);
-            if row.len() == 2 {
+            if row.len() == columns {
                 rows.push((None, std::mem::take(&mut row)));
             }
         }
@@ -362,5 +363,30 @@ impl StudioShelf {
             self.saving = None;
         }
         action
+    }
+}
+
+/// The narrowest a studio's picture is drawn: two across in the Library as
+/// it opens, more in a Library dragged wider.
+const TILE_LEAST: f32 = 110.0;
+
+/// How many studios fit across a shelf `width` wide, eight at the most.
+fn columns_for(width: f32) -> usize {
+    (((width + 8.0) / (TILE_LEAST + 8.0)).floor() as usize).clamp(1, 8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two studios across in the Library as it opens, three and more as
+    /// it is dragged wider.
+    #[test]
+    fn studios_reflow_as_the_library_widens() {
+        assert_eq!(columns_for(crate::library_tab::PANEL_WIDTH - 24.0), 2);
+        assert_eq!(columns_for(356.0), 3);
+        assert_eq!(columns_for(crate::library_tab::MAX_PANEL_WIDTH - 24.0), 5);
+        assert_eq!(columns_for(40.0), 1);
+        assert_eq!(columns_for(f32::INFINITY), 8);
     }
 }

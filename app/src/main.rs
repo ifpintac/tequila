@@ -40,6 +40,7 @@ mod graph_editor;
 mod view_mode;
 mod grid;
 mod image_tab;
+mod image_size;
 mod library_actions;
 mod plugins;
 mod previews;
@@ -1836,16 +1837,11 @@ impl eframe::App for TequilaApp {
             && !self.full_viewport
             && (ctx.screen_rect().width() >= 1100.0 || !self.show_project)
         {
-            egui::SidePanel::left("library")
-                // Exact, not a range.
-                //
-                // A resizable panel sizes itself to its contents, and a range
-                // is only advisory against that — the browser grew past a
-                // 340 px ceiling a hundred pixels a frame until the viewport
-                // had nothing left. The contents are bounded now as well, but
-                // the panel not being able to grow at all is the guarantee
-                // that does not depend on getting every child widget right.
-                .exact_width(library_tab::PANEL_WIDTH)
+            // Its edge drags it wider, for more across; it is told its width
+            // every frame, so nothing inside it can widen it as it once did,
+            // a hundred points a frame (`library_tab::panel`).
+            let (panel, shown) = library_tab::panel(ctx, self.library.width);
+            let drawn = panel
                 .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }))
                 .show(ctx, |ui| {
                     // Named for the section showing: the materials, or the
@@ -1858,7 +1854,10 @@ impl eframe::App for TequilaApp {
                         self.show_library = false;
                     }, "Hide the library · M");
                     profile::time("ui: library", || self.library_panel(ui));
-                });
+                })
+                .response
+                .rect;
+            library_tab::keep_dragged_width(ctx, &mut self.library.width, drawn, shown);
         }
 
         // Under the viewport and between the side panels, as a terminal sits
@@ -2467,7 +2466,7 @@ impl TequilaApp {
         }
 
         if rect != area {
-            render_frame::draw(ui.painter(), area, rect, self.project.render_settings());
+            render_frame::draw(ui.painter(), area, rect);
         }
 
         if self.show_axis_legend {
@@ -2479,6 +2478,7 @@ impl TequilaApp {
 
         if !presenting {
             self.viewport_overlays(ui, area);
+            self.size_chip(ui, area);
             if self.show_hud {
                 self.hud(ui, area);
             }
@@ -3727,7 +3727,7 @@ impl TequilaApp {
                     ui.add(crate::field::Checkbox::new(&mut self.show_gizmo, "Gizmo"))
                         .on_hover_text(format!("{}. The move, turn and scale handles on the selection", self.key_text(shortcuts::Action::Gizmo)));
                     ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
-                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
+                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size with the chip in the view's bottom-right corner, or in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))

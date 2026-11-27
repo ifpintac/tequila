@@ -55,6 +55,7 @@ A change answers with what changed, as it now is. The settings come a page at a 
 | `interface.size` | `compact`, `regular`, `large` |
 | `interface.tooltips`, `interface.tooltip_delay` | true or false; seconds |
 | `interface.library_view` | `thumbnails`, `icons`, `list`, `cards` |
+| `interface.library_width` | The Library's width in points, 260 to 720 |
 | `viewport.shading` | The mode a project opens in: `wireframe`, `solid`, `material`, `rendered` |
 | `viewport.grid`, `viewport.axis_legend`, `viewport.render_frame`, `viewport.statistics`, `viewport.model_edges`, `viewport.light_outlines`, `viewport.selection_outline`, `viewport.gizmo` | true or false |
 | `viewport.gizmo_size`, `viewport.samples` | A number |
