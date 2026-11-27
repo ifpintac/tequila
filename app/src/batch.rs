@@ -6349,6 +6349,8 @@ mod tests {
         let runs = [
             Run { as_tested: true, ..run("test-tequila", t, true, None, true, None, false) },
             Run { as_tested: true, ..run("test-cycles", c, true, None, true, None, false) },
+            // Cycles as it was tested before it stopped getting Filter Glossy.
+            Run { as_tested: true, ..run("test-fg-cycles", c, true, None, true, Some(0.5), false) },
             run("unbiased-tequila", t, false, None, false, None, false),
             run("unbiased-cycles", c, false, None, false, Some(0.0), false),
             run("deep-tequila", t, false, None, false, None, true),
