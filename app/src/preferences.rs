@@ -298,6 +298,8 @@ pub struct Prefs {
     pub show_render_frame: bool,
     pub show_statistics: bool,
     pub show_model_edges: bool,
+    /// Each light's shape and size over the view (`light_outlines`).
+    pub show_light_outlines: bool,
     pub show_outline: bool,
     pub show_gizmo: bool,
     /// The gizmo's size on screen, in percent of its usual.
@@ -335,6 +337,7 @@ impl Default for Prefs {
             show_render_frame: true,
             show_statistics: false,
             show_model_edges: false,
+            show_light_outlines: true,
             show_outline: true,
             show_gizmo: true,
             gizmo_size: 100.0,
@@ -732,6 +735,18 @@ pub static SETTINGS: &[Setting] = &[
         "The parts' edges drawn in Solid and Material Preview.",
         show_model_edges,
         |app, on| app.show_model_edges = on
+    ),
+    // Kept the moment the viewport's button or View › Light outlines is
+    // clicked, as the composition guides beside it are: read where it is
+    // drawn, it has no session field of its own to set.
+    own_toggle!(
+        "viewport.light_outlines",
+        Viewport,
+        STARTS,
+        "Light outlines",
+        "Each light's shape and size drawn over the view, in every shading. They never appear in screenshots or renders.",
+        show_light_outlines,
+        |_app, _on| {}
     ),
     own_toggle!(
         "viewport.selection_outline",

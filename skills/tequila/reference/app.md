@@ -56,7 +56,7 @@ A change answers with what changed, as it now is. The settings come a page at a 
 | `interface.tooltips`, `interface.tooltip_delay` | true or false; seconds |
 | `interface.library_view` | `thumbnails`, `icons`, `list`, `cards` |
 | `viewport.shading` | The mode a project opens in: `wireframe`, `solid`, `material`, `rendered` |
-| `viewport.grid`, `viewport.axis_legend`, `viewport.render_frame`, `viewport.statistics`, `viewport.model_edges`, `viewport.selection_outline`, `viewport.gizmo` | true or false |
+| `viewport.grid`, `viewport.axis_legend`, `viewport.render_frame`, `viewport.statistics`, `viewport.model_edges`, `viewport.light_outlines`, `viewport.selection_outline`, `viewport.gizmo` | true or false |
 | `viewport.gizmo_size`, `viewport.samples` | A number |
 | `viewport.gizmo_mode` | `all`, `move`, `rotate`, `scale` |
 | `viewport.moving_picture` | While the view moves: `smooth`, `balanced`, `sharp` |
