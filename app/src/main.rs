@@ -105,6 +105,7 @@ mod thumbnail;
 mod toast;
 mod ui_capture;
 mod update;
+mod wear_ui;
 mod windows;
 mod material_lab;
 mod view_timing;
@@ -915,8 +916,11 @@ const GUIDES: [(&str, &str, &str, &str); 3] = [
 /// A file shipped beside the application (`packaged`), or - run from a
 /// checkout - `source` in the checkout it was built from.
 fn shipped_file(packaged: &str, source: &str) -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let folder = exe.parent()?;
+    shipped_file_from(std::env::current_exe().ok()?.parent()?, packaged, source)
+}
+
+/// The same, for a program in `folder`.
+fn shipped_file_from(folder: &std::path::Path, packaged: &str, source: &str) -> Option<std::path::PathBuf> {
     shipped_in(folder, packaged).or_else(|| folder.ancestors().map(|a| a.join(source)).find(|p| p.is_file()))
 }
 
@@ -7772,7 +7776,19 @@ mod undo_tests {
         assert!(app.show_about, "it closed itself");
         let note = read_build_note("\u{feff}Source: 5198cc44c7dc\nBuilt: 2026-10-15T14:06:02+08:00\nIncludes current working-tree changes.\n");
         assert_eq!(note, Some(("2026-10-15T14:06:02+08:00".to_string(), "5198cc44c7dc".to_string())), "the byte-order mark hid the source");
-        assert_eq!(GUIDES.iter().filter(|(_, packaged, docs, _)| shipped_file(packaged, &format!("docs/{docs}")).is_some()).count(), GUIDES.len(), "a guide is missing from docs");
+        // Every guide is in docs, where a program built in the checkout - in
+        // its `target` folder, where cargo builds unless told otherwise -
+        // finds it. Asked of that folder rather than of this test's own: a
+        // test built into a target folder outside the checkout has no
+        // checkout above it to look in.
+        let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the checkout");
+        let guides = |found: &dyn Fn(&str, &str) -> Option<std::path::PathBuf>| GUIDES.iter().filter(|(_, packaged, docs, _)| found(packaged, &format!("docs/{docs}")).is_some()).count();
+        let built_in_the_checkout = checkout.join("target").join("debug");
+        assert_eq!(guides(&|packaged, source| shipped_file_from(&built_in_the_checkout, packaged, source)), GUIDES.len(), "a guide is missing from docs");
+        // And this test, when it was built there, finds them itself.
+        if std::env::current_exe().is_ok_and(|exe| exe.starts_with(checkout)) {
+            assert_eq!(guides(&shipped_file), GUIDES.len(), "a guide is not found beside this build");
+        }
     }
 
     /// A sample opens as a new project: its scene, no file of its own to be

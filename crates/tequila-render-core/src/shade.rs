@@ -175,6 +175,19 @@ pub fn point_input(input: PointInput, point: &SurfacePoint) -> Value {
     }
 }
 
+/// What a wear pattern reads of a shading point (`tequila_texture::wear`):
+/// its place and footprint in scene units, as the patterns measure them,
+/// its normal in the part's own space, and how far it faces up in the world.
+pub fn wear_point(point: &SurfacePoint) -> tequila_texture::wear::WearPoint {
+    tequila_texture::wear::WearPoint {
+        position: point.position * point.scale,
+        normal: point.normal,
+        up: point.world.normal.y,
+        footprint: point.footprint * point.scale,
+        curvature: point.curvature,
+    }
+}
+
 /// Evaluate a material at a shading point.
 ///
 /// Returns the constants directly when the program is empty, which is the
@@ -261,6 +274,10 @@ pub fn shade<'a>(
                     // A flat pattern lies on the mapping's (u, v); a solid one
                     // is sampled on that plane of its space.
                     Some(coords) => procedural.evaluate_uv(coords.u, coords.v, *seed),
+                    // A wear pattern reads more of the point than its place:
+                    // which way it faces, how wide a pixel is there, how
+                    // sharply the surface bends.
+                    None if procedural.is_wear() => procedural.evaluate_at(&wear_point(point), *seed),
                     // In object space, measured in scene units.
                     None => procedural.evaluate(point.position * point.scale, *seed),
                 })

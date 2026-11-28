@@ -148,6 +148,10 @@ pub struct GraphEditor {
     /// project mutably: `Some(None)` ends it.
     solo_request: Option<Option<(NodeId, u8)>>,
     clipboard: Option<Clipboard>,
+    /// The line a copy put on the system clipboard (see
+    /// [`GraphEditor::copy_to_clipboard`]): a Ctrl+V that brings it back
+    /// pastes the nodes.
+    clipboard_text: Option<String>,
     /// The wire a node being dragged would be dropped into.
     insert_into: Option<Link>,
     /// Focus the name field in the sidebar (F2).
@@ -232,6 +236,7 @@ impl Default for GraphEditor {
             frame_members: Vec::new(),
             solo_request: None,
             clipboard: None,
+            clipboard_text: None,
             insert_into: None,
             focus_label: false,
             solo_shown: None,
@@ -1765,6 +1770,24 @@ impl GraphEditor {
         let plain = !m.ctrl && !m.command && !m.alt && !m.shift;
         let at_pointer = pointer.map(|p| (self.to_canvas(rect, p), p));
         let output = graph.output();
+        // In the app, Ctrl+C, Ctrl+X and Ctrl+V arrive as egui's Copy, Cut and
+        // Paste events and not as keys: egui-winit turns them into those and
+        // sends no key event. A Paste comes only when the system clipboard
+        // holds text, so a copy puts a line there ([`Self::copy_to_clipboard`])
+        // and a Paste that brings that line back pastes the nodes.
+        let (copied, cut, pasted) = ctx.input(|i| {
+            let (mut copied, mut cut, mut pasted) = (false, false, None);
+            for event in &i.events {
+                match event {
+                    egui::Event::Copy => copied = true,
+                    egui::Event::Cut => cut = true,
+                    egui::Event::Paste(text) => pasted = Some(text.clone()),
+                    _ => {}
+                }
+            }
+            (copied, cut, pasted)
+        });
+        let pasted = pasted.is_some_and(|text| self.clipboard_text.as_deref() == Some(text.as_str()));
 
         if (m.shift && key(egui::Key::A) && !m.ctrl) || (plain && key(egui::Key::Tab)) {
             if let Some((canvas, screen)) = at_pointer {
@@ -1796,7 +1819,7 @@ impl GraphEditor {
                 committed = true;
             }
         }
-        if (m.ctrl || m.command) && !m.shift && key(egui::Key::X) && !removable.is_empty() {
+        if (((m.ctrl || m.command) && key(egui::Key::X)) || cut) && !m.shift && !removable.is_empty() {
             for id in &removable {
                 dissolve(graph, *id);
             }
@@ -1826,10 +1849,10 @@ impl GraphEditor {
                 self.grab = Some(Grab { start: canvas, nodes: self.selected.iter().filter_map(|id| graph.node(*id).map(|n| (*id, n.position))).collect() });
             }
         }
-        if (m.ctrl || m.command) && key(egui::Key::C) && !removable.is_empty() {
-            self.copy(graph, &removable);
+        if (((m.ctrl || m.command) && key(egui::Key::C)) || copied) && !removable.is_empty() {
+            self.copy_to_clipboard(ctx, graph, &removable);
         }
-        if (m.ctrl || m.command) && key(egui::Key::V) {
+        if ((m.ctrl || m.command) && key(egui::Key::V)) || pasted {
             if let Some((canvas, _)) = at_pointer {
                 committed |= self.paste(graph, canvas);
             }
@@ -1888,6 +1911,16 @@ impl GraphEditor {
             nodes: ids.iter().filter_map(|id| graph.node(*id).map(|n| (*id, n.clone()))).collect(),
             links: graph.links().iter().filter(|l| set.contains(&l.from) && set.contains(&l.to)).copied().collect(),
         });
+    }
+
+    /// [`Self::copy`], and a line naming what was copied put on the system
+    /// clipboard, so that Ctrl+V reaches the editor as a Paste of that line.
+    fn copy_to_clipboard(&mut self, ctx: &egui::Context, graph: &MaterialGraph, ids: &[NodeId]) {
+        self.copy(graph, ids);
+        let count = self.clipboard.as_ref().map_or(0, |clip| clip.nodes.len());
+        let text = format!("Tequila material nodes ({count})");
+        ctx.copy_text(text.clone());
+        self.clipboard_text = Some(text);
     }
 
     fn clipboard_centre(&self) -> Option<egui::Vec2> {
@@ -2159,7 +2192,7 @@ impl GraphEditor {
                 true
             }
             "copy" => {
-                self.copy(graph, &chosen);
+                self.copy_to_clipboard(ctx, graph, &chosen);
                 false
             }
             "paste" => self.paste(graph, canvas),
@@ -3167,6 +3200,8 @@ mod tests {
         library: Vec<tequila_format::library::LibraryEntry>,
         /// What the last frame drew.
         shapes: Vec<egui::epaint::ClippedShape>,
+        /// What the editor last put on the system clipboard.
+        copied: String,
     }
 
     impl Harness {
@@ -3188,7 +3223,7 @@ mod tests {
             let mut editor = GraphEditor::default();
             editor.show_browser = browser;
             editor.open_for(key);
-            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0, library: Vec::new(), shapes: Vec::new() };
+            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0, library: Vec::new(), shapes: Vec::new(), copied: String::new() };
             h.frame(Vec::new());
             h.frame(Vec::new());
             h
@@ -3212,7 +3247,11 @@ mod tests {
             };
             let (editor, project) = (&mut self.editor, &mut self.project);
             let library = Library { entries: &self.library, picture: &|_| None };
-            self.shapes = self.ctx.run(input, |ctx| editor.show(ctx, project, &library)).shapes;
+            let output = self.ctx.run(input, |ctx| editor.show(ctx, project, &library));
+            if !output.platform_output.copied_text.is_empty() {
+                self.copied = output.platform_output.copied_text;
+            }
+            self.shapes = output.shapes;
         }
 
         /// The editor on a material whose graph is `graph`, the view fitted
@@ -3531,6 +3570,34 @@ mod tests {
         assert_eq!(fresh.len(), 2);
         assert_eq!(graph.links().iter().filter(|l| fresh.contains(&l.from) && fresh.contains(&l.to)).count(), 1);
         assert!(!graph.links().iter().any(|l| fresh.contains(&l.from) && l.to == surface), "the copy is not wired to the surface");
+    }
+
+    /// Ctrl+C, Ctrl+V and Ctrl+X as the app gets them: egui-winit sends
+    /// egui's Copy, Paste and Cut events and no key event, and a Paste only
+    /// with the system clipboard's text. Copy puts a line there, a Paste of
+    /// that line pastes the nodes, a Paste of anything else pastes nothing,
+    /// and Cut dissolves the selection as Ctrl+X does.
+    #[test]
+    fn copy_paste_and_cut_arrive_as_egui_events() {
+        let mut h = Harness::new();
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::A, egui::Modifiers::SHIFT);
+        h.text("checker");
+        h.key(egui::Key::Enter, egui::Modifiers::NONE);
+        let before = h.graph().len();
+        assert!(!h.editor.selected.is_empty(), "the new node is selected");
+        let copy_at = h.empty_spot();
+        h.move_to(copy_at);
+        h.frame(vec![egui::Event::Copy]);
+        assert_eq!(h.copied, "Tequila material nodes (1)", "Copy put a line on the system clipboard");
+        h.frame(vec![egui::Event::Paste("something else".into())]);
+        assert_eq!(h.graph().len(), before, "another program's text pastes no nodes");
+        let copied = h.copied.clone();
+        h.frame(vec![egui::Event::Paste(copied)]);
+        assert_eq!(h.graph().len(), before + 1, "Paste of the copy's line pastes the node");
+        h.frame(vec![egui::Event::Cut]);
+        assert_eq!(h.graph().len(), before, "Cut dissolves the pasted node");
     }
     /// What the browser asks is done as the Add menu does it: a
     /// double-clicked row is a node in the middle of the view, selected,

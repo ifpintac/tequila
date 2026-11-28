@@ -665,7 +665,9 @@ fn unported_patterns_are_refused() {
     for procedural in Procedural::catalog() {
         let program = program_of(vec![Instruction::Evaluate { dst: Register(0), procedural: Box::new(procedural), seed: 3, mapping: None }], 1, Some(Register(0)), None);
         assert_eq!(program::lower(&program), Err(Refusal::Instruction("a Tequila procedural")));
-        let ported = !matches!(procedural, Procedural::WoodAdvanced { .. });
+        // Nor the wear patterns (`tequila_texture::wear`), which the
+        // processor and Cycles render.
+        let ported = !matches!(procedural, Procedural::WoodAdvanced { .. }) && !procedural.is_wear();
         match program::lower_with(&program, Pictures::On(&pictures)) {
             Ok(Some(_)) => assert!(ported, "{} runs on the card", procedural.label()),
             Err(Refusal::Procedural(name)) => assert!(!ported && name == procedural.label(), "{} is refused", procedural.label()),

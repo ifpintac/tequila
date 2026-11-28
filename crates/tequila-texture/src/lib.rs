@@ -31,6 +31,7 @@ pub mod tga;
 pub mod trig;
 pub mod video;
 pub mod volume;
+pub mod wear;
 
 pub use bump::{BumpGradient, TangentFrame};
 pub use cache::{CacheStats, TextureCache};

@@ -1451,7 +1451,7 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         let gpu = tequila_render_gpu::GpuDevice::on(tequila_render_gpu::Needs::RayQueries, wanted)
             .map_err(|why| format!("--device {}: {why}", options.device.as_deref().unwrap_or("GPU")))?;
         println!(
-            "  on the graphics card, {}: materials, glass among them, volumes that scatter, subsurface scattering, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor, the lamps, background colours and backplates, depth of field, shifted, orthographic and 360-degree cameras, pixel filters, a dome of a size, parts hidden from some rays and held out, shadow links, parts and lamps that cast no shadow, IES lamps, the floor's shadows from the lamps, direct lighting off, metallic flakes, thin films, dispersion, rendering by wavelength; caustics, fibres, cutaways and Volume Maps are still to come (docs/07 R3)",
+            "  on the graphics card, {}: materials, glass among them, volumes that scatter, subsurface scattering, their patterns, pictures and bumps, rounded edges, glowing parts and cut-outs, the floor and the light the product sends onto it, the lamps, background colours and backplates, depth of field, shifted, orthographic and 360-degree cameras, pixel filters, a dome of a size, parts hidden from some rays and held out, shadow links, parts and lamps that cast no shadow, IES lamps, the floor's shadows from the lamps, direct lighting off, metallic flakes, thin films, dispersion, rendering by wavelength; caustics, fibres, cutaways and Volume Maps are still to come (docs/07 R3)",
             gpu.describe()
         );
         let settings = tequila_render_gpu::transport::FrameSettings {

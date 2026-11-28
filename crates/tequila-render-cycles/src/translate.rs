@@ -34,6 +34,8 @@ use tequila_texture::projection::{Mapping, Projection as TextureProjection};
 
 use crate::{ffi, Node, Session, Shader};
 
+mod wear;
+
 /// Tequila world (Y up) to Cycles world (Z up): x stays, y becomes z, and z
 /// becomes -y. Row major.
 pub const Y_UP_TO_Z_UP: Mat4 = Mat4 {
@@ -309,6 +311,10 @@ pub fn configure(session: &mut Session, quality: &Quality) -> Result<(), String>
 pub struct Images {
     entries: HashMap<usize, (Kept, i32)>,
     used: std::collections::HashSet<usize>,
+    /// How wide one pixel of the view last translated is, as an angle:
+    /// what the wear patterns widen a fine line to (`translate::wear`),
+    /// kept for a material changed afterwards. Zero until a view is.
+    pixel_spread: f32,
 }
 
 /// Held, never read: holding the picture is what keeps its address from
@@ -320,6 +326,12 @@ enum Kept {
 }
 
 impl Images {
+    /// [`Images::pixel_spread`], or Tequila's renderer's own guess before a
+    /// view has said.
+    fn pixel_spread(&self) -> f32 {
+        if self.pixel_spread > 0.0 { self.pixel_spread } else { tequila_render_core::settings::DEFAULT_PIXEL_SPREAD }
+    }
+
     fn get(&mut self, key: usize) -> Option<i32> {
         let id = self.entries.get(&key).map(|(_, id)| *id)?;
         self.used.insert(key);
@@ -568,6 +580,10 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
     let mut out = Translation::default();
     // What updates since the last translation used is asked again below.
     images.used.clear();
+    // A pixel's angle, as Tequila's renderer works it out for this camera
+    // at this size (`tequila_render_cpu`'s `pixel_spread`).
+    let fov = view.camera.vertical_fov(view.width as f32 / view.height.max(1) as f32);
+    images.pixel_spread = if fov > 0.0 && view.height > 0 { fov / view.height as f32 } else { tequila_render_core::settings::DEFAULT_PIXEL_SPREAD };
     let mut builder = Builder {
         session,
         scene,
@@ -3053,6 +3069,10 @@ impl Builder<'_> {
         use tequila_texture::noise::{Fractal, Metric};
         use tequila_texture::procedural::{CellOutput, Procedural};
         let octaves = |n: u32| Fractal { octaves: n, ..Fractal::default() };
+        // The wear patterns, node for node as Tequila's renderer runs them.
+        if procedural.is_wear() {
+            return self.wear(shader, procedural, seed, mapping);
+        }
         if procedural.is_planar() {
             // On the mapping's (u, v), or flattened onto x-z in object space.
             let position = self.procedural_position(shader, mapping)?;
@@ -3281,6 +3301,9 @@ impl Builder<'_> {
                 }
             }
             Procedural::Scratches { .. } | Procedural::Weave { .. } | Procedural::Mesh { .. } => unreachable!("planar, and handled above"),
+            Procedural::WearScratches(_) | Procedural::Dust(_) | Procedural::Fingerprints(_) | Procedural::Scuffs(_) | Procedural::EdgeWear(_) => {
+                unreachable!("wear, and handled above")
+            }
         };
         Ok(Some(slot))
     }

@@ -1,0 +1,202 @@
+{
+  "category": "Metal",
+  "description": "Chrome polished once too often with the wrong cloth: a mirror with the fine swirl marks of a polishing pad, arcs that ring every highlight in circles.",
+  "edge_radius": 0.00015,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:2",
+        "to": 7
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 7,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 22
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.012
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.035
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 4,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "bend": 0.2,
+          "density": 1,
+          "depth_variation": 0.7,
+          "direction": "swirl",
+          "fade": 0.45,
+          "frequency": 140,
+          "kind": "wear_scratches",
+          "layers": 2,
+          "length": 0.9,
+          "length_variation": 0.4,
+          "spread": 0.12,
+          "taper": 0.5,
+          "width": 0.005,
+          "wobble": 0.1
+        },
+        "seed": 5
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0000008,
+        "id": 6,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Chromium",
+  "name": "Chrome Swirl Marks",
+  "specular_roughness": 0.02,
+  "tags": [
+    "chrome",
+    "mirror",
+    "swirl",
+    "polishing marks",
+    "holograms",
+    "worn",
+    "wear",
+    "chromium",
+    "chrome plated",
+    "swirls",
+    "buffing marks",
+    "reflective",
+    "automotive",
+    "interior",
+    "appliances",
+    "accessories"
+  ],
+  "type": "metal"
+}
+

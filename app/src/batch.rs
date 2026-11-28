@@ -3877,18 +3877,59 @@ mod tests {
 
     /// As [`both_engines_scaled`], under `lit`'s lighting.
     fn both_engines_lit(name: &str, scale: f32, lit: Lit, change: impl Fn(&mut tequila_render_core::scene::SceneSnapshot)) -> [Vec<u8>; 2] {
+        both_engines_written(name, scale, lit, |_| {}, change).map(|(image, _)| image)
+    }
+
+    /// As [`both_engines_lit`], each engine's picture with the light it was
+    /// developed from: the mean red, green and blue of the light in the
+    /// pixels [`inside_the_sphere`] reads, from the EXR each writes.
+    fn both_engines_in_light(name: &str, scale: f32, lit: Lit, change: impl Fn(&mut tequila_render_core::scene::SceneSnapshot)) -> [(Vec<u8>, [f64; 3]); 2] {
+        let exr = |settings: &mut RenderSettings| {
+            settings.format = OutputFormat::Exr;
+            settings.depth = tequila_scene::render::BitDepth::ThirtyTwo;
+        };
+        both_engines_written(name, scale, lit, exr, change).map(|(image, file)| {
+            let light = light_in(&file);
+            let inside = in_the_sphere();
+            let pixels: Vec<usize> = (0..96 * 72).filter(|&i| inside(i)).collect();
+            let sum = pixels.iter().fold([0.0f64; 3], |sum, &i| [0, 1, 2].map(|c| sum[c] + f64::from(light[c][i])));
+            (image, sum.map(|s| s / pixels.len() as f64))
+        })
+    }
+
+    /// The red, green and blue of the light in an EXR a render wrote, a
+    /// pixel each, top row first.
+    fn light_in(file: &str) -> [Vec<f32>; 3] {
+        let exr = exr::prelude::read_all_flat_layers_from_file(file).expect("the EXR reads back");
+        ["R", "G", "B"].map(|name| {
+            let channel = exr.layer_data[0].channel_data.list.iter().find(|c| c.name.to_string() == name).expect("a colour channel");
+            channel.sample_data.values_as_f32().collect()
+        })
+    }
+
+    /// As [`both_engines_lit`], the render settings changed by `settings`
+    /// too: each engine's picture and the file it wrote.
+    fn both_engines_written(
+        name: &str,
+        scale: f32,
+        lit: Lit,
+        settings: impl Fn(&mut RenderSettings),
+        change: impl Fn(&mut tequila_render_core::scene::SceneSnapshot),
+    ) -> [(Vec<u8>, String); 2] {
         use tequila_core::spectrum::Spectrum;
         use tequila_render_core::environment::{Background, Environment};
         let mut images = Vec::new();
         for engine in [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu] {
             let directory = scratch(&format!("tequila-cycles-{name}-{}", engine.key()));
             let renderer = BatchRenderer::new();
-            let mut render = job(1, &directory, RenderSettings {
+            let mut asked = RenderSettings {
                 engine,
                 width: 96, height: 72, max_samples: 64, denoise: false,
                 reject_fireflies: lit.reject_fireflies,
                 ..Default::default()
-            });
+            };
+            settings(&mut asked);
+            let mut render = job(1, &directory, asked);
             let mut scene = (*render.scene).clone();
             scene.environment = Arc::new(Environment::uniform(Spectrum::splat(0.5)));
             scene.background = Background::Environment;
@@ -3910,7 +3951,7 @@ mod tests {
             render.config = lit.config.clone();
             renderer.submit(render);
             match wait_for_finish(&renderer) {
-                BatchEvent::Finished { preview, .. } => images.push(preview),
+                BatchEvent::Finished { preview, path, .. } => images.push((preview, path)),
                 BatchEvent::Failed { message, .. } => panic!("{message}"),
                 _ => unreachable!(),
             }
@@ -5649,6 +5690,18 @@ mod tests {
     /// The brightness of each pixel inside the sphere's outline, away from
     /// its rim, in the view `both_engines` renders.
     fn inside_the_sphere(image: &[u8]) -> Vec<f64> {
+        let inside = in_the_sphere();
+        image
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(i, _)| inside(*i))
+            .map(|(_, p)| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]))
+            .collect()
+    }
+
+    /// Whether pixel `i` of a 96 by 72 picture is one [`inside_the_sphere`]
+    /// reads.
+    fn in_the_sphere() -> impl Fn(usize) -> bool {
         use tequila_render_core::camera::Camera;
         let camera = Camera::look_at(vec3(2.0, 1.5, 3.0), vec3(0.0, 0.5, 0.0), Vec3::Y);
         let aspect = 96.0 / 72.0;
@@ -5656,12 +5709,7 @@ mod tests {
         let side = (vec3(0.0, 1.0, 0.0) - vec3(2.0, 1.5, 3.0)).cross(Vec3::Y).normalize();
         let edge = camera.project(vec3(0.0, 1.0, 0.0) + side, aspect).expect("in view");
         let radius = ((edge.x - centre.x) * 96.0).hypot((edge.y - centre.y) * 72.0) * 0.8;
-        image
-            .chunks_exact(4)
-            .enumerate()
-            .filter(|(i, _)| ((*i % 96) as f32 + 0.5 - centre.x * 96.0).hypot((*i / 96) as f32 + 0.5 - centre.y * 72.0) < radius)
-            .map(|(_, p)| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]))
-            .collect()
+        move |i| ((i % 96) as f32 + 0.5 - centre.x * 96.0).hypot((i / 96) as f32 + 0.5 - centre.y * 72.0) < radius
     }
 
     /// The mean of each channel inside the sphere's outline.
@@ -5996,6 +6044,68 @@ mod tests {
 "));
     }
 
+    /// How much smaller than the demo scene the felt ball is rendered: a
+    /// ball five centimetres across, the size its fibres are made for.
+    const FELT_BALL_SCALE: f32 = 0.025;
+
+    /// The fibre tests' felt ball, made of the demo scene's sphere: dark
+    /// blue felt grown over with orange fibres, `density` of them - or,
+    /// `chequered`, orange and teal by a checker on the Sheen Color, squares
+    /// a centimetre and two thirds across, about four over the ball - under
+    /// the thumbnails' studio, to be rendered at [`FELT_BALL_SCALE`].
+    fn felt_ball(scene: &mut tequila_render_core::scene::SceneSnapshot, density: f32, chequered: bool) {
+        use tequila_core::spectrum::spectrum;
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+        use tequila_materials::material_type::{MaterialType, Param};
+        use tequila_materials::nodes::ShaderNode;
+        const SCALE: f32 = FELT_BALL_SCALE;
+        let mut felt = MaterialType::Velvet.defaults();
+        felt.base_color = spectrum(0.02, 0.03, 0.08);
+        felt.fuzz_weight = 0.0;
+        felt.fuzz_color = spectrum(0.8, 0.35, 0.05);
+        felt.fuzz_roughness = 0.4;
+        felt.fuzz_density = density;
+        felt.fuzz_length = 0.003;
+        felt.fuzz_thickness = 0.00005;
+        felt.fuzz_lean = 0.4;
+        felt.fuzz_curl = 0.4;
+        felt.fuzz_color_variation = 0.3;
+        scene.environment = Arc::new(tequila_scene::demo::preview_environment());
+        scene.materials[0] = felt.clone();
+        let textures = tequila_render_core::shade::TextureTable::new();
+        let program = chequered.then(|| {
+            let mut graph = MaterialGraph::from_material(felt.clone());
+            let mut checker = Node::new(NodeKind::Node(ShaderNode::from_key("checker_texture").expect("a node")));
+            checker.literals.insert(Socket::Input(1), Value::Color(spectrum(0.8, 0.35, 0.05)));
+            checker.literals.insert(Socket::Input(2), Value::Color(spectrum(0.04, 0.45, 0.4)));
+            checker.literals.insert(Socket::Input(3), Value::Float(60.0));
+            let checker = graph.add_node(checker);
+            let output = graph.output();
+            graph.connect(checker, output, Socket::Param(Param::FuzzColor));
+            Arc::new(graph.compile().expect("compiles"))
+        });
+        // Grown as the snapshot grows them, at the scale the ball is about
+        // to be given, each fibre taking the checker's colour where it is
+        // rooted.
+        if let Some(request) = tequila_materials::graph::FuzzRequest::of_material(&felt) {
+            let ball = scene.instances[0].clone();
+            let placed = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(SCALE, SCALE, SCALE))).expect("invertible") * ball.transform;
+            let paint = program.as_ref().and_then(|p| tequila_scene::fuzz::Paint::of(p, &textures, placed, 0));
+            let growth = tequila_scene::fuzz::Growth { count: None, paint: paint.as_ref() };
+            let fur = tequila_scene::fuzz::grow_with(&scene.meshes[ball.mesh.index()], SCALE, &request, growth).expect("fibres");
+            assert_eq!(fur.fibres.as_ref().unwrap().colors.is_empty(), !chequered);
+            scene.meshes.push(Arc::new(fur));
+            let mesh = tequila_core::ids::MeshId(scene.meshes.len() as u32 - 1);
+            scene.instances.push(
+                tequila_render_core::scene::Instance::new(tequila_core::ids::InstanceId(1), mesh, ball.material).with_transform(ball.transform),
+            );
+        }
+        if let Some(program) = program {
+            let plain = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2));
+            *scene = plain.with_programs(vec![Some(program)], Arc::new(textures));
+        }
+    }
+
     /// §4.4's fibres come out of Cycles as out of Tequila's renderer: a ball
     /// of dark blue felt grown over with orange fibres, lit by the studio,
     /// lands at the same level, in the same colour and with the same light
@@ -6010,7 +6120,8 @@ mod tests {
     /// Before them Tequila's ball was 19% darker than Cycles' and less red.
     /// Fibres are finer than these pixels, so the picture is compared in
     /// blocks of 8 by 8 rather than pixel by pixel, which their noise would
-    /// decide.
+    /// decide. Its colour is read in the light the pictures were developed
+    /// from, where noise leaves a mean as it was.
     ///
     /// And with a checker on the Sheen Color, each fibre takes the colour
     /// where it is rooted - Tequila's renderer from the fibres' own colours,
@@ -6020,8 +6131,6 @@ mod tests {
     /// fibres.
     #[test]
     fn fibres_render_alike_in_both_renderers() {
-        use tequila_core::spectrum::spectrum;
-        use tequila_materials::material_type::MaterialType;
         use tequila_render_core::camera::Camera;
         if let Err(why) = tequila_render_cycles::available() {
             eprintln!("skipped: {why}");
@@ -6031,61 +6140,9 @@ mod tests {
             eprintln!("skipped: this Cycles library predates fibres");
             return;
         }
-        const SCALE: f32 = 0.025;
-        // Felt, its fibres orange - or, chequered, orange and teal by a
-        // checker on the Sheen Color, squares a centimetre and two thirds
-        // across, about four over the ball.
+        const SCALE: f32 = FELT_BALL_SCALE;
         let render = |density: f32, chequered: bool| {
-            both_engines_scaled(&format!("fibres-{density}-{}", if chequered { "chequered" } else { "plain" }), SCALE, |scene| {
-                use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
-                use tequila_materials::material_type::Param;
-                use tequila_materials::nodes::ShaderNode;
-                let mut felt = MaterialType::Velvet.defaults();
-                felt.base_color = spectrum(0.02, 0.03, 0.08);
-                felt.fuzz_weight = 0.0;
-                felt.fuzz_color = spectrum(0.8, 0.35, 0.05);
-                felt.fuzz_roughness = 0.4;
-                felt.fuzz_density = density;
-                felt.fuzz_length = 0.003;
-                felt.fuzz_thickness = 0.00005;
-                felt.fuzz_lean = 0.4;
-                felt.fuzz_curl = 0.4;
-                felt.fuzz_color_variation = 0.3;
-                scene.environment = Arc::new(tequila_scene::demo::preview_environment());
-                scene.materials[0] = felt.clone();
-                let textures = tequila_render_core::shade::TextureTable::new();
-                let program = chequered.then(|| {
-                    let mut graph = MaterialGraph::from_material(felt.clone());
-                    let mut checker = Node::new(NodeKind::Node(ShaderNode::from_key("checker_texture").expect("a node")));
-                    checker.literals.insert(Socket::Input(1), Value::Color(spectrum(0.8, 0.35, 0.05)));
-                    checker.literals.insert(Socket::Input(2), Value::Color(spectrum(0.04, 0.45, 0.4)));
-                    checker.literals.insert(Socket::Input(3), Value::Float(60.0));
-                    let checker = graph.add_node(checker);
-                    let output = graph.output();
-                    graph.connect(checker, output, Socket::Param(Param::FuzzColor));
-                    Arc::new(graph.compile().expect("compiles"))
-                });
-                // Grown as the snapshot grows them, at the scale the ball is
-                // about to be given, each fibre taking the checker's colour
-                // where it is rooted.
-                if let Some(request) = tequila_materials::graph::FuzzRequest::of_material(&felt) {
-                    let ball = scene.instances[0].clone();
-                    let placed = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(SCALE, SCALE, SCALE))).expect("invertible") * ball.transform;
-                    let paint = program.as_ref().and_then(|p| tequila_scene::fuzz::Paint::of(p, &textures, placed, 0));
-                    let growth = tequila_scene::fuzz::Growth { count: None, paint: paint.as_ref() };
-                    let fur = tequila_scene::fuzz::grow_with(&scene.meshes[ball.mesh.index()], SCALE, &request, growth).expect("fibres");
-                    assert_eq!(fur.fibres.as_ref().unwrap().colors.is_empty(), !chequered);
-                    scene.meshes.push(Arc::new(fur));
-                    let mesh = tequila_core::ids::MeshId(scene.meshes.len() as u32 - 1);
-                    scene.instances.push(
-                        tequila_render_core::scene::Instance::new(tequila_core::ids::InstanceId(1), mesh, ball.material).with_transform(ball.transform),
-                    );
-                }
-                if let Some(program) = program {
-                    let plain = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2));
-                    *scene = plain.with_programs(vec![Some(program)], Arc::new(textures));
-                }
-            })
+            both_engines_scaled(&format!("fibres-{density}-{}", if chequered { "chequered" } else { "plain" }), SCALE, |scene| felt_ball(scene, density, chequered))
         };
         // Where the ball is in the picture, and how big, in pixels.
         let camera = Camera::look_at(vec3(2.0, 1.5, 3.0), vec3(0.0, 0.5, 0.0), Vec3::Y);
@@ -6144,7 +6201,8 @@ mod tests {
             cov / (va.sqrt() * vb.sqrt()).max(1e-9)
         };
         let [bare_tequila, bare_cycles] = render(0.0, false);
-        let [tequila, cycles] = render(800.0, false);
+        let lit = Lit { config: IntegratorConfig::product(), reject_fireflies: true, camera: None };
+        let [(tequila, light_a), (cycles, light_b)] = both_engines_in_light("fibres-800-plain", SCALE, lit, |scene| felt_ball(scene, 800.0, false));
         let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
         let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
         let (blocks_a, blocks_b) = (blocks(&tequila), blocks(&cycles));
@@ -6154,7 +6212,7 @@ mod tests {
         let (ring_a, ring_b) = (ring(&tequila), ring(&cycles));
         let (bare_ring_a, bare_ring_b) = (ring(&bare_tequila), ring(&bare_cycles));
         eprintln!(
-            "fibres: {} blocks correlated {r:.3}; Tequila {ma:.1} {ca:.1?}, Cycles {mb:.1} {cb:.1?}; bare {bare_a:.1?} {bare_b:.1?}; ring {ring_a:.1?} {ring_b:.1?}, bare ring {bare_ring_a:.1?} {bare_ring_b:.1?}",
+            "fibres: {} blocks correlated {r:.3}; Tequila {ma:.1} {ca:.1?}, Cycles {mb:.1} {cb:.1?}; in the light {light_a:.5?} and {light_b:.5?}; bare {bare_a:.1?} {bare_b:.1?}; ring {ring_a:.1?} {ring_b:.1?}, bare ring {bare_ring_a:.1?} {bare_ring_b:.1?}",
             blocks_a.len()
         );
         let mut wrong = Vec::new();
@@ -6164,10 +6222,20 @@ mod tests {
         if r < 0.9 {
             wrong.push(format!("light and shade across the ball correlate {r:.3}"));
         }
-        // The colour: red over blue, the fibres' over the felt's.
-        let (warm_a, warm_b) = (ca[0] / ca[2].max(1.0), cb[0] / cb[2].max(1.0));
+        // The colour: red over blue, the fibres' over the felt's, in the
+        // light the pictures were developed from. Not in the pictures: blue
+        // is their dimmest channel here, 13 of 255, and PBR Neutral takes
+        // each pixel's dimmest channel down to 6.25 times its square and the
+        // others down by as much, so a pixel's noise raises its developed
+        // blue and lowers its red, and the mean of 64 samples' noisy pixels
+        // is bluer than their light. The engines' noise differs - Cycles'
+        // is 1.7 times Tequila's here - and so did their pictures' red over
+        // blue, by 8% where their light's differs by 3.5%; converged, at
+        // 4096 samples without a clamp, by 10% the other way, where the
+        // light's differs by 3.1% (`fibres_converged`).
+        let (warm_a, warm_b) = (light_a[0] / light_a[2].max(1e-6), light_b[0] / light_b[2].max(1e-6));
         if (warm_b / warm_a - 1.0).abs() > 0.07 {
-            wrong.push(format!("colour: red over blue {warm_a:.2} in Tequila, {warm_b:.2} in Cycles"));
+            wrong.push(format!("colour: red over blue in the light {warm_a:.3} in Tequila, {warm_b:.3} in Cycles"));
         }
         // And the fibres are what made it: the bare ball is blue in both,
         // and its outline is the backdrop, where the furred one's is warm.
@@ -6230,6 +6298,174 @@ mod tests {
             eprintln!("chequered fibres skipped: this Cycles library predates fibres' own colours");
         }
         assert!(wrong.is_empty(), "fibres render differently in Cycles:\n{}", wrong.join("\n"));
+    }
+
+    /// Which picture of the felt ball of `fibres_render_alike_in_both_renderers`
+    /// is right, measured: the plain ball converged in both engines, under
+    /// each way of settling the noise, and the test's red over blue for each
+    /// beside the linear light's. Each run's line goes in `results.tsv` in
+    /// `TEQUILA_FIBRES_OUT`, with its picture and its linear EXR;
+    /// `TEQUILA_FIBRES_SPP` is the samples (1024 unless told),
+    /// `TEQUILA_FIBRES_SCALE` renders it that many times larger each way, its
+    /// light read back at the test's size box by box, and
+    /// `TEQUILA_FIBRES_RUNS` picks runs by name, comma separated:
+    /// `TEQUILA_FIBRES_OUT=<folder> cargo test -p tequila-app --bin
+    /// tequila-app --release fibres_converged -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn fibres_converged() {
+        use tequila_render_core::settings::IntegratorConfig;
+        use tequila_scene::render::{BitDepth, RenderEngine};
+        let Some(out) = std::env::var_os("TEQUILA_FIBRES_OUT").map(std::path::PathBuf::from) else {
+            eprintln!("skipped: TEQUILA_FIBRES_OUT names no folder");
+            return;
+        };
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        std::fs::create_dir_all(&out).unwrap();
+        let spp: u32 = std::env::var("TEQUILA_FIBRES_SPP").ok().and_then(|s| s.parse().ok()).unwrap_or(1024);
+        let k: usize = std::env::var("TEQUILA_FIBRES_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1).max(1);
+        let picked: Option<Vec<String>> = std::env::var("TEQUILA_FIBRES_RUNS").ok().map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
+        /// One way of rendering the ball. `clamp` is a ceiling on indirect
+        /// light alone, none on direct; `Some(0.0)` with `reject` leaves
+        /// Tequila's rejection without its clamp.
+        struct Run {
+            name: &'static str,
+            engine: RenderEngine,
+            /// The test's own: 64 samples, adaptive.
+            as_tested: bool,
+            reject: bool,
+            clamp: Option<f32>,
+            /// Tequila's roughness floor deep in a path (§3.5).
+            regularized: bool,
+            filter_glossy: Option<f32>,
+            /// Bounce limits no path reaches: 64 of each.
+            deep: bool,
+        }
+        let (t, c) = (RenderEngine::Tequila, RenderEngine::CyclesCpu);
+        let run = |name, engine, reject, clamp, regularized, filter_glossy, deep| Run { name, engine, as_tested: false, reject, clamp, regularized, filter_glossy, deep };
+        let runs = [
+            Run { as_tested: true, ..run("test-tequila", t, true, None, true, None, false) },
+            Run { as_tested: true, ..run("test-cycles", c, true, None, true, None, false) },
+            // Cycles as it was tested before it stopped getting Filter Glossy.
+            Run { as_tested: true, ..run("test-fg-cycles", c, true, None, true, Some(0.5), false) },
+            run("unbiased-tequila", t, false, None, false, None, false),
+            run("unbiased-cycles", c, false, None, false, Some(0.0), false),
+            run("deep-tequila", t, false, None, false, None, true),
+            run("deep-cycles", c, false, None, false, Some(0.0), true),
+            run("regularized-tequila", t, false, None, true, None, false),
+            run("clamp-tequila", t, false, Some(10.0), true, None, false),
+            run("rejection-tequila", t, true, Some(0.0), true, None, false),
+            run("product-tequila", t, true, None, true, None, false),
+            run("product-cycles", c, true, None, true, None, false),
+            run("fg-cycles", c, false, None, false, Some(0.5), false),
+            run("fg-product-cycles", c, true, None, true, Some(0.5), false),
+            run("deep-clamp-tequila", t, false, Some(10.0), true, None, true),
+            run("deep-clamp-cycles", c, false, Some(10.0), true, None, true),
+        ];
+        let table = out.join("results.tsv");
+        if !table.exists() {
+            std::fs::write(&table, "run\tsamples\tseconds\tmean\tR\tG\tB\tR/B\tlinear R\tlinear G\tlinear B\tlinear R/B\n").unwrap();
+        }
+        for run in runs.iter().filter(|r| picked.as_ref().is_none_or(|p| p.iter().any(|n| n == r.name))) {
+            let samples = if run.as_tested { 64 } else { spp };
+            let mut config = IntegratorConfig::product();
+            if !run.regularized {
+                config.regularization_roughness = 0.0;
+                config.regularization_start_bounce = u32::MAX;
+            }
+            if run.deep {
+                config.max_bounces = 64;
+                config.max_transmission_bounces = 64;
+            }
+            config.cycles.filter_glossy = run.filter_glossy;
+            let directory = scratch(&format!("tequila-fibres-converged-{}", run.name));
+            let mut render = job(1, &directory, RenderSettings {
+                engine: run.engine,
+                width: 96 * k, height: 72 * k, max_samples: samples, denoise: false,
+                adaptive: run.as_tested,
+                reject_fireflies: run.reject,
+                clamp_indirect: run.clamp,
+                clamp_direct: run.clamp.map(|_| 0.0),
+                format: OutputFormat::Exr,
+                depth: BitDepth::ThirtyTwo,
+                filename_template: run.name.into(),
+                ..Default::default()
+            });
+            // As `both_engines_lit` renders it.
+            let mut scene = (*render.scene).clone();
+            scene.environment = Arc::new(tequila_render_core::environment::Environment::uniform(tequila_core::spectrum::Spectrum::splat(0.5)));
+            scene.background = tequila_render_core::environment::Background::Environment;
+            scene.instances.truncate(1);
+            felt_ball(&mut scene, 800.0, false);
+            let resize = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(FELT_BALL_SCALE, FELT_BALL_SCALE, FELT_BALL_SCALE))).expect("invertible");
+            for instance in &mut scene.instances {
+                instance.transform = resize * instance.transform;
+            }
+            render.camera = tequila_render_core::camera::Camera::look_at(vec3(2.0, 1.5, 3.0) * FELT_BALL_SCALE, vec3(0.0, 0.5, 0.0) * FELT_BALL_SCALE, Vec3::Y);
+            render.scene = Arc::new(scene);
+            render.config = config;
+            let renderer = BatchRenderer::new();
+            renderer.submit(render);
+            let (path, preview, seconds, samples) = loop {
+                if let Some(event) = renderer.drain().into_iter().find(|e| matches!(e, BatchEvent::Finished { .. } | BatchEvent::Failed { .. })) {
+                    match event {
+                        BatchEvent::Finished { path, preview, seconds, samples, .. } => break (path, preview, seconds, samples),
+                        BatchEvent::Failed { message, .. } => panic!("{}: {message}", run.name),
+                        _ => unreachable!(),
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            let rgb = light_in(&path);
+            // The light at the test's 96 by 72, each pixel the mean of the
+            // k by k rendered in it. EXR's rows run top down, as the
+            // preview's do.
+            let small: Vec<[f32; 3]> = (0..96 * 72)
+                .map(|i| {
+                    let (x, y) = (i % 96, i / 96);
+                    let mut sum = [0.0f32; 3];
+                    for dy in 0..k {
+                        for dx in 0..k {
+                            let j = (y * k + dy) * 96 * k + x * k + dx;
+                            for (c, s) in sum.iter_mut().enumerate() {
+                                *s += rgb[c][j];
+                            }
+                        }
+                    }
+                    sum.map(|s| s / (k * k) as f32)
+                })
+                .collect();
+            let inside = in_the_sphere();
+            let pixels: Vec<usize> = (0..96 * 72).filter(|&i| inside(i)).collect();
+            let linear = pixels.iter().fold([0.0f64; 3], |sum, &i| [0, 1, 2].map(|c| sum[c] + f64::from(small[i][c])));
+            let linear = linear.map(|s| s / pixels.len() as f64);
+            // The developed picture's, as the test reads it: at its size only.
+            let developed = if k == 1 {
+                let (mean, _) = mean_and_spread(&inside_the_sphere(&preview));
+                let means = channel_means(&preview);
+                format!("{mean:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.4}", means[0], means[1], means[2], means[0] / means[2])
+            } else {
+                "-\t-\t-\t-\t-".to_string()
+            };
+            let file = if k == 1 { run.name.to_string() } else { format!("{}-x{k}", run.name) };
+            let line = format!(
+                "{file}\t{samples}\t{seconds:.0}\t{developed}\t{:.5}\t{:.5}\t{:.5}\t{:.4}\n",
+                linear[0], linear[1], linear[2], linear[0] / linear[2]
+            );
+            eprint!("{line}");
+            use std::io::Write;
+            std::fs::OpenOptions::new().append(true).open(&table).unwrap().write_all(line.as_bytes()).unwrap();
+            crate::thumbnail::DiskCache::write_png(&out.join(format!("{file}.png")), 96 * k, 72 * k, &preview).expect("writable");
+            std::fs::copy(&path, out.join(format!("{file}.exr"))).unwrap();
+            // And the light at the test's size as plain numbers, red, green
+            // and blue a pixel, for looking at elsewhere.
+            let raw: Vec<u8> = small.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+            std::fs::write(out.join(format!("{file}.rgb32")), raw).unwrap();
+            let _ = std::fs::remove_dir_all(&directory);
+        }
     }
 
     /// Coats blended on a material are a stack in both renderers: each over
@@ -6734,6 +6970,13 @@ mod tests {
             ("Spunbond Sheet Black", 0.025),
             ("Wood Walnut Burl", 0.025),
             ("Wood Bamboo", 0.05),
+            // Worn finishes, of 2026-11-27: the wear patterns on them, on
+            // the same pixels in both.
+            ("Aluminium Brushed Scratched", 0.025),
+            ("Chrome Swirl Marks", 0.025),
+            ("ABS Black Worn", 0.025),
+            ("Automotive Black Dusty", 0.025),
+            ("Display Glass Black Fingerprinted", 0.025),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();
@@ -7227,6 +7470,172 @@ mod tests {
             }
         }
         assert!(wrong.is_empty(), "patterns that differ: {wrong:#?}");
+    }
+
+    /// The wear patterns render the same in both renderers: not alike on
+    /// average, as Tequila's random patterns are, but the same scratches,
+    /// specks, prints, scuffs and worn edges on the same pixels of the
+    /// sphere, lit, read through a black-to-white ramp. Each is written once
+    /// over Cycles' own nodes (`tequila_texture::wear`), and its random
+    /// numbers are Cycles' own hashes. The edge wear reads the sphere's
+    /// curvature, which both renderers take from the mesh. Skipped where
+    /// Cycles is not installed.
+    #[test]
+    fn wear_patterns_render_the_same_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_texture::gradient::Gradient;
+        use tequila_texture::procedural::Procedural;
+        use tequila_texture::wear::{Dust, EdgeWear, ScratchDirection, Scratches, Scuffs, Fingerprints};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut wrong = Vec::new();
+        for (name, procedural) in [
+            ("wear-scratches", Procedural::WearScratches(Scratches { frequency: 1.5, width: 0.03, density: 0.9, layers: 2, ..Scratches::default() })),
+            (
+                "wear-swirls",
+                Procedural::WearScratches(Scratches { frequency: 3.0, width: 0.03, density: 1.0, direction: ScratchDirection::Swirl, layers: 1, ..Scratches::default() }),
+            ),
+            ("wear-dust", Procedural::Dust(Dust { frequency: 2.0, amount: 0.5, speck_frequency: 12.0, specks: 0.9, up_bias: 0.7, ..Dust::default() })),
+            ("wear-fingerprints", Procedural::Fingerprints(Fingerprints { frequency: 1.2, prints: 1.0, ridges: 0.3, ..Fingerprints::default() })),
+            ("wear-scuffs", Procedural::Scuffs(Scuffs { frequency: 1.2, coverage: 1.0, streaks: 0.3, ..Scuffs::default() })),
+            ("wear-edges", Procedural::EdgeWear(EdgeWear { radius: 0.8, amount: 0.5, breakup: 1.0, frequency: 4.0, softness: 0.3 })),
+        ] {
+            let [tequila, cycles] = both_engines(name, |scene| {
+                procedural_material(scene, procedural, Gradient::two(Spectrum::splat(0.02), Spectrum::splat(0.9)));
+                edges_on_the_sphere(scene);
+            });
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, sa), (mb, sb)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(&b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            let correlation = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+            eprintln!("{name}: correlation {correlation:.3}, mean {ma:.1} vs {mb:.1}, spread {sa:.1} vs {sb:.1}");
+            if sa < 10.0 || correlation < 0.9 || (mb / ma - 1.0).abs() > 0.1 {
+                wrong.push(format!("{name}: correlation {correlation:.2}, Tequila {ma:.1} bright (spread {sa:.1}), Cycles {mb:.1} (spread {sb:.1})"));
+            }
+        }
+        assert!(wrong.is_empty(), "patterns that differ: {wrong:#?}");
+    }
+
+    /// The demo sphere as though it had edges: a curvature that comes and
+    /// goes across it, for the edge wear to read in both renderers. Its own
+    /// mesh carries none (the snapshot measures a document's, not the demo's).
+    fn edges_on_the_sphere(scene: &mut tequila_render_core::scene::SceneSnapshot) {
+        let index = scene.instances[0].mesh.index();
+        let mesh = &scene.meshes[index];
+        let curvature = mesh.positions.iter().map(|p| 0.6 + 0.6 * (5.0 * p.x).sin() * (3.0 * p.y).cos()).collect();
+        scene.meshes[index] = Arc::new((**mesh).clone().with_curvature(curvature));
+    }
+
+    /// The wear presets and patterns on the library's ball in both
+    /// renderers, side by side - Tequila's on the left, Cycles' on the right
+    /// - for a person to look at: `TEQUILA_WEAR_OUT=<folder> cargo test -p
+    /// tequila-app --release wear_side_by_side -- --ignored`.
+    /// `TEQUILA_WEAR_ONLY` keeps the ones whose name has it in.
+    #[test]
+    #[ignore = "renders pictures for a person to look at"]
+    fn wear_side_by_side() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Background;
+        use tequila_texture::gradient::Gradient;
+        use tequila_texture::procedural::Procedural;
+        use tequila_texture::wear::{Dust, EdgeWear, Fingerprints, ScratchDirection, Scratches, Scuffs};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = std::path::PathBuf::from(std::env::var("TEQUILA_WEAR_OUT").expect("TEQUILA_WEAR_OUT names a folder"));
+        std::fs::create_dir_all(&folder).expect("a folder");
+        let only = std::env::var("TEQUILA_WEAR_ONLY").ok().map(|s| s.to_lowercase());
+        // Enough to see the marks; more with TEQUILA_WEAR_SAMPLES.
+        let samples = std::env::var("TEQUILA_WEAR_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(64);
+        let (width, height) = (400, 300);
+        let side_by_side = |name: &str, graph: tequila_materials::graph::MaterialGraph, scale: f32| {
+            if only.as_ref().is_some_and(|only| !name.to_lowercase().contains(only.as_str())) {
+                return;
+            }
+            let mut images = Vec::new();
+            for engine in [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu] {
+                let directory = scratch(&format!("tequila-wear-{}-{}", tequila_format::library::file_stem(name), engine.key()));
+                let renderer = BatchRenderer::new();
+                let mut render = job(1, &directory, RenderSettings { engine, width, height, max_samples: samples, denoise: false, reject_fireflies: true, ..Default::default() });
+                let mut scene = (*render.scene).clone();
+                scene.environment = Arc::new(tequila_scene::demo::preview_environment());
+                scene.background = Background::Environment;
+                scene.instances.truncate(1);
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                scene = scene.with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                edges_on_the_sphere(&mut scene);
+                let resize = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(scale, scale, scale))).expect("invertible");
+                for instance in &mut scene.instances {
+                    instance.transform = resize * instance.transform;
+                }
+                // Close on the sphere, from above and to one side, so the
+                // light's reflection crosses it.
+                render.camera = tequila_render_core::camera::Camera::look_at(vec3(1.3, 2.1, 2.2) * scale, vec3(0.0, 1.0, 0.0) * scale, Vec3::Y);
+                render.scene = Arc::new(scene);
+                render.config = IntegratorConfig::product();
+                renderer.submit(render);
+                // Larger and longer than a test's pictures: a debug build takes
+                // minutes over one.
+                match wait_for_finish_within(&renderer, Duration::from_secs(1800)) {
+                    BatchEvent::Finished { preview, .. } => images.push(preview),
+                    BatchEvent::Failed { message, .. } => panic!("{message}"),
+                    _ => unreachable!(),
+                }
+            }
+            let mut joined = vec![0u8; width * 2 * height * 4];
+            for (side, image) in images.iter().enumerate() {
+                for y in 0..height {
+                    let from = &image[y * width * 4..(y + 1) * width * 4];
+                    let at = (y * width * 2 + side * width) * 4;
+                    joined[at..at + width * 4].copy_from_slice(from);
+                }
+            }
+            let path = folder.join(format!("{}.png", tequila_format::library::file_stem(name)));
+            let file = std::fs::File::create(&path).expect("writable");
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), (width * 2) as u32, height as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().and_then(|mut w| w.write_image_data(&joined)).expect("written");
+            eprintln!("{}", path.display());
+        };
+        // The presets, on the library's five-centimetre ball.
+        let entries = tequila_format::library::read_directory(&crate::library_tab::standard_library_path()).0;
+        for name in ["Aluminium Brushed Scratched", "Chrome Swirl Marks", "ABS Black Worn", "Automotive Black Dusty", "Display Glass Black Fingerprinted"] {
+            let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
+            side_by_side(name, entry.graph.clone(), 0.025);
+        }
+        // Each pattern alone, read through a black-to-white ramp, on a
+        // ball twenty centimetres across.
+        for (name, procedural) in [
+            // Before: the first, flat scratches, which lie in the x-z plane
+            // and run down the ball's sides as stripes.
+            ("Pattern Flat Scratches", Procedural::Scratches { frequency: 30.0, width: 0.03, density: 0.5, spread: 0.25 }),
+            ("Pattern Scratches", Procedural::WearScratches(Scratches { frequency: 30.0, width: 0.008, ..Scratches::default() })),
+            ("Pattern Swirls", Procedural::WearScratches(Scratches { frequency: 60.0, width: 0.008, density: 1.0, direction: ScratchDirection::Swirl, spread: 0.1, layers: 1, ..Scratches::default() })),
+            ("Pattern Dust", Procedural::Dust(Dust { speck_frequency: 400.0, ..Dust::default() })),
+            ("Pattern Fingerprints", Procedural::Fingerprints(Fingerprints { frequency: 12.0, prints: 0.8, ..Fingerprints::default() })),
+            ("Pattern Scuffs", Procedural::Scuffs(Scuffs { frequency: 8.0, coverage: 0.8, ..Scuffs::default() })),
+            ("Pattern Edge Wear", Procedural::EdgeWear(EdgeWear { radius: 0.12, amount: 0.5, breakup: 0.8, frequency: 60.0, softness: 0.2 })),
+        ] {
+            use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+            use tequila_materials::material_type::{MaterialType, Param};
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            let pattern = graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(procedural), seed: 7 }));
+            let ramp = graph.add_node(Node::new(NodeKind::Gradient { gradient: Box::new(Gradient::two(Spectrum::splat(0.03), Spectrum::splat(0.85))) }));
+            graph.connect(pattern, ramp, Socket::Input(0));
+            let output = graph.output();
+            graph.connect(ramp, output, Socket::Param(Param::BaseColor));
+            side_by_side(name, graph, 0.1);
+        }
     }
 
     /// Tequila's random patterns come out of Cycles as Tequila's renderer
@@ -8220,7 +8629,11 @@ mod tests {
     }
 
     fn wait_for_finish(renderer: &BatchRenderer) -> BatchEvent {
-        let deadline = Instant::now() + Duration::from_secs(120);
+        wait_for_finish_within(renderer, Duration::from_secs(120))
+    }
+
+    fn wait_for_finish_within(renderer: &BatchRenderer, time: Duration) -> BatchEvent {
+        let deadline = Instant::now() + time;
         loop {
             for event in renderer.drain() {
                 match event {
