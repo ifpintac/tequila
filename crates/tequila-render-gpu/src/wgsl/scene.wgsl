@@ -98,7 +98,9 @@ struct GpuCatcher {
     occlusion_radius: f32,
     shadows: u32,
     bounce_falloff: f32,
-    _pad: array<u32, 3>,
+    // 1 where the floor shows the light the product sends onto it.
+    product_light: u32,
+    _pad: array<u32, 2>,
 };
 
 @group(0) @binding(0) var scene_tlas: acceleration_structure;

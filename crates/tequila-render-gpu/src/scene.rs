@@ -160,7 +160,10 @@ pub struct GpuCatcher {
     pub occlusion_radius: f32,
     pub shadows: u32,
     pub bounce_falloff: f32,
-    pub _pad: [u32; 3],
+    /// 1 where the floor shows the light the product sends onto it
+    /// (`ShadowCatcher::product_light`).
+    pub product_light: u32,
+    pub _pad: [u32; 2],
 }
 
 /// [`GpuCatcher::fade`]: a reflection that never fades.
@@ -193,7 +196,8 @@ impl GpuCatcher {
             occlusion_radius: c.occlusion_radius,
             shadows: c.shadows as u32,
             bounce_falloff: c.bounce_falloff,
-            _pad: [0; 3],
+            product_light: c.product_light as u32,
+            _pad: [0; 2],
         }
     }
 }

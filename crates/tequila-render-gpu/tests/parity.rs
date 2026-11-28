@@ -564,6 +564,13 @@ fn a_shell_split_by_material_is_the_processors_picture() {
     same_picture("split_shell");
 }
 
+/// The floor showing the light the product sends onto it (the processor's
+/// #171): off a red block and from a glowing bar.
+#[test]
+fn the_light_the_product_sends_onto_the_floor_is_the_processors_picture() {
+    same_picture("product_light");
+}
+
 /// The presets of the standard library with subsurface scattering that the
 /// card renders whole (their programs lowered with their pictures none
 /// loaded, as no preset of these has one; their surfaces on the card's

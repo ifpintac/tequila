@@ -161,6 +161,7 @@ const SCENE_BEVEL: u32 = 64u;
 const SCENE_BACKGROUND_COLOUR: u32 = 128u;
 const SCENE_BACKPLATE: u32 = 256u;
 const SCENE_FINITE_DOME: u32 = 512u;
+const SCENE_PRODUCT_LIGHT: u32 = 1024u;
 
 // FrameParams::lamp_flags (lights.rs's LAMPS_*): a bounce off a sharp
 // enough reflection has a density to see by; a lamp a seeing bounce meets;

@@ -111,3 +111,7 @@ override FEATURE_SCATTERING: bool = true;
 // Subsurface scattering: the walk's doorway in the stack, the random walk
 // under a surface, guided back towards where it came in, and its way out.
 override FEATURE_SUBSURFACE: bool = true;
+// The light the product sends onto a floor that shows it: the light it
+// would get in the open, and a path of its own from the floor towards the
+// product.
+override FEATURE_PRODUCT_LIGHT: bool = true;
