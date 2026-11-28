@@ -84,6 +84,46 @@ About 10,500 lines that exist only to feed it (`native/cycles`, `crates/tequila-
 
 `crates/tequila-render-gpu` is a four-line stub. The integrator is shaped for a processor: one 1,700-line function (`trace` in `crates/tequila-render-core/src/integrator.rs`) over `&dyn Intersector`, with recursion at the first glass and the floor reflection, closures, and heap allocation per path. Two things are already the right shape: a material graph compiles to a flat list of instructions over registers (`tequila-materials/src/graph.rs`, `tequila-render-core/src/shade.rs`), and the surface is a fixed array of five lobes with no allocation (`tequila-materials/src/lobes/openpbr.rs`).
 
+### 2.6 Where things stand, 2026-11-28: the work moves to the Mac
+
+Written on the RTX 2060 PC at main `fe66f34f`, for the session that carries on on the Mac, which will not have the PC session's notes. §4 R3 has each item's record; this is the summary and what is next.
+
+**Done.** R0, R1 and R2, and R3's tiers A and B apart from what is open below.
+- Parity (R0.3, R2.6): all 73 scenes pass at `--test-threads=4` on the RTX 2060, with the chaotic scenes' bar (the last item of R3's record).
+- The library (`tests/library.rs`): of the 539 presets with a program, the card runs 475. The other 64 are refused, and the processor renders them (open item 4).
+- G1.1 holds on all five bench rows measured ("The Headphones to G1.1" in R3's record): the like-for-like Headphones take 0.44 of Cycles OptiX's time to clean, `lamp_lit` 0.98, the other three under 0.6.
+- The whole workspace passes on the PC at `fe66f34f` with the hold tests in `app/src/batch.rs` made to fail instead of hanging (2026-11-28): the 73 parity scenes, 117 tests of the rest of the GPU suite, 2,561 in the other crates with Cycles loaded, and 785 in the app.
+
+**Open, in the order to take them.**
+1. **The card on the Mac.** GitHub's `macos-15` job (Metal, on a virtual machine's graphics) fails 15 differential tests on main and on every pull request, in `graphs.rs`, `nodes.rs`, `textures.rs`, `flakes.rs`, `lobes.rs` and `media.rs`. For example Math has 131 of 41,000 items outside the bound, Voronoi 45 of 13,440 and the bumped normals 1,432 of 21,696, and `division_and_the_arctangent_are_the_processors` and `the_levels_logarithm_is_correctly_rounded` fail too.
+   - Run the GPU suite and the parity set on the Mac's own card first.
+   - If they fail there too, the cause is in how Metal compiles the kernel: fast math, or a library function less exact than Vulkan's. Division and the logarithm failing point that way. The fix belongs in the kernel, or in how wgpu is asked to compile it, never in the bounds (§0).
+   - The `graphics card kernels (software Vulkan)` job fails as well (105 tests, the parity set among them). The gate for a merge has been `windows-latest` and `macos-15-intel`.
+2. **The kernel's cold compile, and D5's split.**
+   - At `fe66f34f` the whole kernel takes 57.6-58.2 s cold on the RTX 2060 with the machine quiet (three rounds), against the 60 s ceiling in `the_transport_kernel_compiles_in_reasonable_time`. That is under 4% of room, and readings with other work running go over it (61.1 s the day before). The floor's product light added about 1 s.
+   - The ceiling is not raised. Splitting the kernel into smaller pipelines (D5) is the way through.
+   - The split is also what G1.6 needs: a scene's variant takes 9-24 s to compile the first time, where G1.6 asks for 5 s.
+3. **Cutaways on the card** (`r3-cutaways`, pushed, `5595cb79`). They are ported and match the processor to 1e-6. They are kept off main because they put the whole kernel about 5 s over its ceiling. They land after the split.
+4. **What the card refuses** and leaves to the processor:
+   - 64 library presets: 29 read a Tequila procedural, 12 drive Subsurface Color, 9 use the Wave Texture node, 8 read the curvature, 4 read the baked occlusion and 2 use the Gabor Texture node (`tests/library.rs` names them).
+   - The wear patterns of #225 (scratches, scuffs, edge wear, dust, fingerprints): the card does not run them yet.
+5. **Set aside: a clamp like Cycles'** (`clamp-cycles-ceiling`, pushed for the record).
+   - Cycles compares the mean of red, green and blue with its clamp, where Tequila compares their sum. So under the same setting Tequila's clamp is three times as hard.
+   - Matching Cycles made the pictures noisier, and the card's first preset wall then had 61 pixels more than 0.02 apart (0.106%), over the 0.1% bar.
+   - #207 had already brought the glass ball back. A clamp is a trade of noise against light, not physics, so this waits until a measurement asks for it.
+6. **Fibres** (`docs/05`, `fibres_converged`).
+   - Converged, with no clamps and no Filter Glossy, the two engines' light on the felt ball is 3.1% apart. Neither engine was shown wrong.
+   - Cycles' Filter Glossy stays off (#184).
+
+**The owner's words, 2026-11-27, which stand** (§6.2):
+- Pull requests that are ready merge without waiting for the owner.
+- Nothing is released until the owner asks.
+- The technical bars, and which picture is physically right, are ours to decide on measurement, written down here or in the pull request ("most realistic wins", 2026-11-19). A bar is never loosened to hide a fault.
+
+**On the PC** (§6.3), when it runs checks:
+- Run the parity set at `--test-threads=4`; more runs out of its 16 GB.
+- Take a cold-compile reading only with nothing else running.
+
 ---
 
 ## 3. Decisions
@@ -572,8 +612,8 @@ Hosted CI machines have no graphics card and vary too much to gate speed. Speed 
 - No repository-wide `cargo fmt`.
 
 ### 6.2 The owner's
-- Nothing merges and nothing is released without the owner's word. Feature updates go out every second Saturday; fixes any day.
-- The owner judges the look. A passing test is not "it looks right".
+- Nothing is released without the owner's word. Feature updates go out every second Saturday; fixes any day. Pull requests that are ready merge without waiting for it (owner, 2026-11-27).
+- The owner judges the look. A passing test is not "it looks right". The technical bars, and which picture is physically right, are decided on measurement and written down; the most realistic picture wins (owner, 2026-11-19 and 2026-11-27).
 - Reports to the owner carry pictures.
 
 ### 6.3 Machines
