@@ -9068,6 +9068,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
+    /// Lets go of a hold when dropped. A test that fails while its threads
+    /// are held then fails, instead of `thread::scope` waiting for ever on
+    /// threads that are never let go.
+    struct LetGo<'a>(&'a Hold);
+
+    impl Drop for LetGo<'_> {
+        fn drop(&mut self) {
+            self.0.set(false);
+        }
+    }
+
+    /// Wait until `threads` of a job's threads are held. A thread can start
+    /// late on a busy machine, so a test waits for it rather than guessing
+    /// how long that takes.
+    fn until_held(hold: &Hold, threads: u32) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while hold.state().waiting < threads {
+            assert!(Instant::now() < deadline, "the threads never waited");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
     /// The hold behind Pause: nothing waits unless asked; asked, a job's
     /// threads wait until let go, or until the job is stopped; the time held
     /// is counted once however many of them wait; and a new job starts
@@ -9079,13 +9101,10 @@ mod tests {
         hold.set(true);
         assert!(hold.asked() && !hold.holding(), "asked, and not yet held: the pass finishes first");
         std::thread::scope(|scope| {
+            let _let_go = LetGo(&hold);
             let first = scope.spawn(|| hold.wait(&|| false));
             let second = scope.spawn(|| hold.wait(&|| false));
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while hold.state().waiting < 2 {
-                assert!(Instant::now() < deadline, "the threads never waited");
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            until_held(&hold, 2);
             assert!(hold.holding());
             std::thread::sleep(Duration::from_millis(300));
             hold.set(false);
@@ -9118,7 +9137,10 @@ mod tests {
         let wall = Instant::now();
         hold.set(true);
         std::thread::scope(|scope| {
+            let _let_go = LetGo(&hold);
             let waiting = scope.spawn(|| hold.wait(&|| false));
+            // The clock stops once the thread is held, not when asked.
+            until_held(&hold, 1);
             std::thread::sleep(Duration::from_millis(400));
             // Mid-pause the clock stands still.
             let during = clock.elapsed();
