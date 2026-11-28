@@ -7,7 +7,8 @@
 //! differently, the card's division, square root and trigonometry are not
 //! correctly rounded, and an FMA here and there. The mean absolute
 //! difference must be under 0.002 in scene-linear values, and at most 0.1%
-//! of pixels more than 0.02 apart.
+//! of pixels more than 0.02 apart - or, for a scene in [`CHAOTIC`], no more
+//! than twice the processor's own floor (see there).
 
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::scheduler::ProgressiveSchedule;
@@ -632,6 +633,39 @@ fn a_third_subsurface_wall_is_the_processors_picture() {
     subsurface_wall(2);
 }
 
+/// The scenes whose paths are chaotic: a ray an ulp apart at the start ends
+/// up somewhere else, so even the processor against itself, with its camera
+/// moved one unit in the last place, is more than 0.1% of pixels apart.
+/// Measured on 2026-11-27 (docs/07 R3, "the processor's own floor"):
+/// - `dispersive_wall`: paths bounce ten times and more inside small curved
+///   gems; the processor is 65 pixels (0.113%) from itself, the card 59.
+/// - `subsurface_wall_2`: bumped faces lying square to z, where Duff's
+///   frame turns over as the normal's z changes sign; the processor is 63
+///   pixels (0.109%) from itself, the card 79.
+///
+/// For these the pixel bar is the processor's own: the test renders the
+/// processor a second time with its camera moved one unit in the last place,
+/// counts the pixels more than 0.02 apart between its two pictures, and lets
+/// the card be at most twice that. Twice, because the card's points differ
+/// from Embree's in more than one place at once (the camera ray's direction
+/// an ulp, a ray query's distance two). The mean and the alpha bars are
+/// unchanged. The bar still catches a real fault: before the deep-path fix
+/// the card was 621 pixels from the processor on `dispersive_wall` (about
+/// ten times the floor).
+const CHAOTIC: &[&str] = &["dispersive_wall", "subsurface_wall_2"];
+
+/// The pixels of `a` and `b` more than 0.02 apart in any channel.
+fn pixels_apart(a: &Framebuffer, b: &Framebuffer) -> usize {
+    a.pixels()
+        .iter()
+        .zip(b.pixels())
+        .filter(|(a, b)| {
+            let (a, b) = (a.mean(), b.mean());
+            (a.r - b.r).abs().max((a.g - b.g).abs()).max((a.b - b.b).abs()) > 0.02
+        })
+        .count()
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
@@ -817,7 +851,21 @@ fn same_shot(mut scene: Shot) {
         return;
     }
     assert!(mean < 0.002, "{name}: the mean absolute difference is {mean:.6}, not under 0.002");
-    assert!(share <= 0.001, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+    if share > 0.001 && CHAOTIC.contains(&name) {
+        // The processor's own floor ([`CHAOTIC`]): the processor again, its
+        // camera moved one unit in the last place.
+        let mut moved = context.camera;
+        let x = &mut moved.camera_to_world.m[0][3];
+        *x = f32::from_bits(x.to_bits() + 1);
+        let moved_context = RenderContext { camera: moved, ..context.clone() };
+        let mut itself = Framebuffer::new(scene.width, scene.height);
+        render_pass(&intersector, &mut itself, &moved_context, &schedule, scene.samples);
+        let floor = pixels_apart(&processor, &itself);
+        eprintln!("{name}: the processor against itself, its camera moved one unit in the last place: {floor} pixels more than 0.02 apart; the card {far}, allowed {}", 2 * floor);
+        assert!(far <= 2 * floor, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than twice the processor's own floor of {floor}", 100.0 * share);
+    } else {
+        assert!(share <= 0.001, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+    }
     // A sample's coverage is all or nothing where a shadow catcher's shadow
     // ray is (one direction, blocked or not), so the same paths give the
     // same alpha but where a ray query and Embree round an edge apart:
