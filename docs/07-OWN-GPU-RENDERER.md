@@ -86,7 +86,7 @@ About 10,500 lines that exist only to feed it (`native/cycles`, `crates/tequila-
 
 ### 2.6 Where things stand, 2026-11-28: the work moves to the Mac
 
-Written on the RTX 2060 PC at main `fe66f34f`, for the session that carries on on the Mac, which will not have the PC session's notes. §4 R3 has each item's record; this is the summary and what is next.
+Written on the RTX 2060 PC at main `fe66f34f`, for the sessions that carry on on the Mac and on a new Windows laptop, which will not have the PC session's notes. §4 R3 has each item's record; this is the summary and what is next.
 
 **Done.** R0, R1 and R2, and R3's tiers A and B apart from what is open below.
 - Parity (R0.3, R2.6): all 73 scenes pass at `--test-threads=4` on the RTX 2060, with the chaotic scenes' bar (the last item of R3's record).
@@ -123,6 +123,16 @@ Written on the RTX 2060 PC at main `fe66f34f`, for the session that carries on o
 **On the PC** (§6.3), when it runs checks:
 - Run the parity set at `--test-threads=4`; more runs out of its 16 GB.
 - Take a cold-compile reading only with nothing else running.
+
+**On another machine.** The owner is moving the work to the Mac and to a stronger Windows laptop (2026-11-28). Item 1 needs the Mac; items 2 to 4 can be done on either.
+- Every figure above is from the PC: a Ryzen 7 2700X (8 cores, 16 threads), 16 GB and an RTX 2060.
+- Before changing anything, run the whole workspace once on main at this commit, and write down that machine's figures: the parity set, the GPU suite, and three quiet cold-compile readings. A different card can move a scene's parity a little either way, and a faster processor compiles faster.
+- The 60 s ceiling stays where it is. A faster machine passing it with room to spare does not mean the split is no longer needed. Measure a change's cost to the compile against main on the same machine, taking turns between the two, and read it as a ratio: on the PC, main at this commit takes 0.96 to 0.97 of the ceiling.
+- To build on Windows you need:
+  - Rust, and the graphics card's own Vulkan driver.
+  - Embree 4.4.1, OIDN 2.5.1 and OCCT 8.0.1 in the checkout's `third_party/`, as `.github/workflows/release-windows.yml` downloads them. A worktree has no `third_party/`, so set `EMBREE_DIR` and `OIDN_DIR` to the checkout's copies there.
+  - A Tequila install for the Cycles library: `TEQUILA_CYCLES` set to its `cycles\tequila_cycles.dll`, and its folder on `PATH`.
+  - `TEQUILA_REQUIRE_GPU_TESTS=1` and `TEQUILA_REQUIRE_RAY_QUERIES=1`, so that a missing card fails the tests instead of skipping them.
 
 ---
 
