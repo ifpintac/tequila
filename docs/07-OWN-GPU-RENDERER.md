@@ -92,7 +92,7 @@ Written on the RTX 2060 PC at main `fe66f34f`, for the session that carries on o
 - Parity (R0.3, R2.6): all 73 scenes pass at `--test-threads=4` on the RTX 2060, with the chaotic scenes' bar (the last item of R3's record).
 - The library (`tests/library.rs`): of the 539 presets with a program, the card runs 475. The other 64 are refused, and the processor renders them (open item 4).
 - G1.1 holds on all five bench rows measured ("The Headphones to G1.1" in R3's record): the like-for-like Headphones take 0.44 of Cycles OptiX's time to clean, `lamp_lit` 0.98, the other three under 0.6.
-- The whole workspace passes on the PC at `fe66f34f` with the hold tests' fix (below): the 73 parity scenes, 117 tests of the rest of the GPU suite, 2,561 in the other crates with Cycles loaded, and 785 in the app.
+- The whole workspace passes on the PC at `fe66f34f` with the hold tests in `app/src/batch.rs` made to fail instead of hanging (2026-11-28): the 73 parity scenes, 117 tests of the rest of the GPU suite, 2,561 in the other crates with Cycles loaded, and 785 in the app.
 
 **Open, in the order to take them.**
 1. **The card on the Mac.** GitHub's `macos-15` job (Metal, on a virtual machine's graphics) fails 15 differential tests on main and on every pull request, in `graphs.rs`, `nodes.rs`, `textures.rs`, `flakes.rs`, `lobes.rs` and `media.rs`. For example Math has 131 of 41,000 items outside the bound, Voronoi 45 of 13,440 and the bumped normals 1,432 of 21,696, and `division_and_the_arctangent_are_the_processors` and `the_levels_logarithm_is_correctly_rounded` fail too.
