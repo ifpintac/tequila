@@ -766,7 +766,13 @@ impl MaterialTab {
                                             ui.close_menu();
                                         }
                                         ui.separator();
+                                        let mut wear = false;
                                         for candidate in tequila_texture::procedural::Procedural::catalog() {
+                                            // The wear patterns, last, by themselves.
+                                            if candidate.is_wear() && !wear {
+                                                wear = true;
+                                                ui.separator();
+                                            }
                                             if ui
                                                 .button(candidate.label())
                                                 .on_hover_text(procedural_hint(&candidate))
@@ -1655,9 +1661,9 @@ fn procedural_hint(p: &tequila_texture::procedural::Procedural) -> &'static str 
              — leather, granite, grout."
         }
         Procedural::Scratches { .. } => {
-            "Sparse fine scratches. What anything assembled, packed or handled \
-             carries, and what stops a polished surface looking moulded from a \
-             render farm."
+            "Sparse fine scratches, straight and flat in one plane: the first \
+             scratches pattern. For scratches that follow any surface, take \
+             Scratches."
         }
         Procedural::Brushed { .. } => "A directional grain, for brushed and machined metal.",
         Procedural::Marble { .. } => {
@@ -1706,6 +1712,9 @@ fn procedural_hint(p: &tequila_texture::procedural::Procedural) -> &'static str 
         Procedural::Mesh { .. } => {
             "A perforated sheet. Put it on opacity for real holes: speaker \
              grilles, wire mesh."
+        }
+        Procedural::WearScratches(_) | Procedural::Dust(_) | Procedural::Fingerprints(_) | Procedural::Scuffs(_) | Procedural::EdgeWear(_) => {
+            crate::wear_ui::hint(p)
         }
     }
 }
@@ -1993,6 +2002,11 @@ pub(crate) fn procedural_controls(
                 ui.add(crate::field::Slider::new(size, 0.0..=1.0).text("Hole size"));
                 ui.add(crate::field::Slider::new(softness, 0.0..=1.0).text("Softness"));
             }
+            Procedural::WearScratches(s) => crate::wear_ui::scratches(ui, s, param.key()),
+            Procedural::Dust(d) => crate::wear_ui::dust(ui, d),
+            Procedural::Fingerprints(s) => crate::wear_ui::fingerprints(ui, s),
+            Procedural::Scuffs(s) => crate::wear_ui::scuffs(ui, s),
+            Procedural::EdgeWear(e) => crate::wear_ui::edge_wear(ui, e),
         });
 
     (next != current).then_some(next)

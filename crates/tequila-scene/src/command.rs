@@ -4352,11 +4352,43 @@ pub fn attach_procedural(
     use tequila_materials::material_type::ParamUi;
 
     detach_texture(graph, param);
-    let node = graph.add_node(Node::new(NodeKind::Procedural {
+    let mut node = graph.add_node(Node::new(NodeKind::Procedural {
         procedural: Box::new(procedural),
         seed,
     }));
     let output = graph.output();
+
+    // A wear pattern is nothing on the untouched surface and rises on the
+    // mark. Wired straight in, it would send the whole part to one end of
+    // the parameter - scratches on a roughness made the rest a mirror - so
+    // it comes through a range from the parameter's own value to its other
+    // end, leaving the surface as it was and the marks going the other way.
+    // On a bump it is turned over, so a scratch is a groove, not a ridge.
+    if procedural.is_wear() && param.ui() != ParamUi::Color {
+        use tequila_materials::material_type::ParamValue;
+        let range = match param {
+            Param::Bump | Param::Displacement => Some((1.0, 0.0)),
+            _ => match (param.range(), param.read(graph.material())) {
+                (Some(r), Some(ParamValue::Scalar(v))) if r.low == 0.0 && r.high == 1.0 && !r.logarithmic => {
+                    Some((v, if v < 0.5 { 1.0 } else { 0.0 }))
+                }
+                _ => None,
+            },
+        };
+        if let Some((low, high)) = range {
+            use tequila_materials::graph::Value;
+            let remap = graph.add_node(
+                Node::new(NodeKind::Node(tequila_materials::nodes::ShaderNode::MapRange {
+                    kind: tequila_texture::cycles::ops::MapRangeKind::Linear,
+                    clamp: true,
+                }))
+                .with_literal(Socket::Input(3), Value::Float(low))
+                .with_literal(Socket::Input(4), Value::Float(high)),
+            );
+            graph.connect(node, remap, Socket::Input(0));
+            node = remap;
+        }
+    }
 
     // A procedural produces one number. That is the whole answer for a
     // roughness and none of it for a colour, so a colour parameter gets a ramp
@@ -4377,7 +4409,15 @@ pub fn attach_procedural(
     }
     graph.connect(node, output, Socket::Param(param));
     through_bump_node(graph, param);
+    if procedural.is_wear() {
+        set_bump_depth(graph, param, WEAR_BUMP_DEPTH);
+    }
 }
+
+/// How deep a wear pattern put on Bump cuts, in scene units: a fiftieth of
+/// a millimetre in a scene in metres, about as deep as a handled part's
+/// scratches are.
+pub const WEAR_BUMP_DEPTH: f32 = 2e-5;
 
 /// On the Bump parameter, put a Bump node between the socket and whatever
 /// drives it, so a 0-to-1 pattern or height map becomes a bump of a sensible
@@ -5462,6 +5502,50 @@ mod bump_attach_tests {
             },
         )
         .expect("attach");
+    }
+
+    /// A wear pattern put on a parameter leaves the untouched surface as it
+    /// was: on a roughness of 0.3 it comes through a range from 0.3 up to
+    /// 1, on a metalness of 0 from 0 to 1, on a coat of 1 from 1 to 0; on
+    /// Bump it is turned over (a groove) and shallow. A colour keeps its
+    /// ramp, and the other patterns are wired as they always were.
+    #[test]
+    fn a_wear_pattern_leaves_the_untouched_surface_as_it_was() {
+        use tequila_materials::graph::{NodeKind, Socket, Value};
+        use tequila_texture::procedural::Procedural;
+        let scratches = Procedural::WearScratches(tequila_texture::wear::Scratches::default());
+        let range = |graph: &tequila_materials::graph::MaterialGraph, param: Param| {
+            let driver = graph.driver_of(param)?;
+            let node = graph.node(driver)?;
+            matches!(node.kind, NodeKind::Node(tequila_materials::nodes::ShaderNode::MapRange { .. }))
+                .then(|| (node.literals.get(&Socket::Input(3)).copied(), node.literals.get(&Socket::Input(4)).copied()))
+        };
+        for (param, value, expected) in [
+            (Param::SpecularRoughness, 0.3, (0.3, 1.0)),
+            (Param::BaseMetalness, 0.0, (0.0, 1.0)),
+            (Param::CoatWeight, 1.0, (1.0, 0.0)),
+        ] {
+            let mut graph = tequila_materials::graph::MaterialGraph::from_material(tequila_materials::material_type::MaterialType::Generic.defaults());
+            param.write(graph.material_mut(), tequila_materials::material_type::ParamValue::Scalar(value));
+            attach_procedural(&mut graph, param, scratches, 3);
+            assert_eq!(range(&graph, param), Some((Some(Value::Float(expected.0)), Some(Value::Float(expected.1)))), "{param:?}");
+            assert_eq!(procedural_of(&graph, param), Some((scratches, 3)));
+            graph.compile().expect("compiles");
+        }
+        let mut graph = tequila_materials::graph::MaterialGraph::from_material(tequila_materials::material_type::MaterialType::Plastic.defaults());
+        attach_procedural(&mut graph, Param::Bump, scratches, 3);
+        assert_eq!(bump_depth_of(&graph, Param::Bump), Some(WEAR_BUMP_DEPTH));
+        let bump = graph.driver_of(Param::Bump).expect("a bump node");
+        let height = graph.links().iter().find(|l| l.to == bump).map(|l| l.from).expect("its height");
+        assert!(matches!(graph.node(height).map(|n| &n.kind), Some(NodeKind::Node(tequila_materials::nodes::ShaderNode::MapRange { .. }))));
+        assert_eq!(graph.node(height).unwrap().literals.get(&Socket::Input(3)), Some(&Value::Float(1.0)));
+        // A colour has its ramp; an old pattern is wired straight in.
+        let mut graph = tequila_materials::graph::MaterialGraph::from_material(tequila_materials::material_type::MaterialType::Plastic.defaults());
+        attach_procedural(&mut graph, Param::BaseColor, scratches, 3);
+        assert!(matches!(graph.node(graph.driver_of(Param::BaseColor).unwrap()).map(|n| &n.kind), Some(NodeKind::Gradient { .. })));
+        let noise = Procedural::catalog()[0];
+        attach_procedural(&mut graph, Param::SpecularRoughness, noise, 3);
+        assert!(matches!(graph.node(graph.driver_of(Param::SpecularRoughness).unwrap()).map(|n| &n.kind), Some(NodeKind::Procedural { .. })));
     }
 
     /// A pattern on Bump goes through a Bump node whose depth the Material

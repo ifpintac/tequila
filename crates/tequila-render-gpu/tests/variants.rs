@@ -52,12 +52,12 @@ fn each_scene_keeps_the_parts_it_reaches() {
     for (name, wanted) in [
         ("grey_product", F::NONE),
         ("product_materials", F::NONE),
-        ("product_floor", F::FLOOR),
+        ("product_floor", F::FLOOR | F::PRODUCT_LIGHT),
         ("lamp_lit", F::LAMPS | F::GLOW),
         ("glass_ball", F::GLASS | F::PANES),
         ("liquid_in_glass", F::GLASS | F::PANES),
         ("textured_product", F::PROGRAMS | F::op(24)),
-        ("headphones", F::FLOOR | F::PROGRAMS | headphones_ops),
+        ("headphones", F::FLOOR | F::PRODUCT_LIGHT | F::PROGRAMS | headphones_ops),
     ] {
         assert_eq!(of(name), wanted, "{name}");
     }
@@ -104,6 +104,7 @@ fn each_scene_keeps_the_parts_it_reaches() {
         ("ies_lamps", F::IES | F::FLOOR | F::LAMPS),
         ("milk_in_glass", F::GLASS | F::PANES | F::SCATTERING),
         ("scattering_volumes", F::GLASS | F::LAMPS | F::SCATTERING),
+        ("product_light", F::FLOOR | F::PRODUCT_LIGHT | F::EMITTERS | F::GLOW),
     ] {
         assert!(of(name).contains(wanted), "{name} keeps {}, not all of {}", of(name).names(), wanted.names());
     }

@@ -742,6 +742,16 @@ pub const SET: &[ParityScene] = &[ParityScene {
     build: split_shell,
     lens: framed,
     pictures: no_pictures,
+}, ParityScene {
+    name: "product_light",
+    covers: "the processor's #171 on the card: product_floor with the floor showing the light the product sends              onto it - a red block and a glowing cyan bar standing on it under a dimmer sky - against the light it              would get in the open (the sky's bound and each lamp from its middle), one direction from the floor by              its cosine on the open stream, and where it meets the product a path of its own, four bounces at most,              seeing no floor as the camera would; then the floor's reflection, on the sampler as that path left it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: product_light,
+    lens: framed,
+    pictures: no_pictures,
 }];
 
 /// A lamp added to `document`: its name, its settings and its place.
@@ -2514,6 +2524,31 @@ fn split_shell() -> SceneDocument {
         vec![
             ("Shell Outside", outside, MaterialType::Plastic, lime.clone(), placed),
             ("Shell Inside", inside, MaterialType::Plastic, lime, placed),
+        ],
+    );
+    document
+}
+
+/// product_floor under a dimmer sky, a red block and a glowing cyan bar
+/// standing on its floor beside the product, the floor showing the light
+/// they send onto it (the ground's product_light, on by default).
+fn product_light() -> SceneDocument {
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    for parameter in [
+        EnvironmentParameter::scalar(EnvParam::Brightness, 0.4),
+        EnvironmentParameter::new(EnvParam::GroundProductLight, EnvValue::Flag(true)),
+    ] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the environment is set");
+    }
+    let red = Material { base_color: Spectrum { r: 0.85, g: 0.12, b: 0.08 }, ..MaterialType::Plastic.defaults() };
+    let neon = Material { emission_color: Spectrum { r: 0.3, g: 0.9, b: 1.0 }, emission_luminance: 6.0, ..MaterialType::Emissive.defaults() };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Red Block", crate::bench::rounded_box(vec3(0.09, 0.06, 0.09), 0.01, 8), MaterialType::Plastic, red, Transform::translation(vec3(0.33, 0.061, 0.82))),
+            ("Neon Bar", crate::bench::rounded_box(vec3(0.015, 0.1, 0.015), 0.005, 8), MaterialType::Emissive, neon, Transform::translation(vec3(-0.32, 0.101, 0.86))),
         ],
     );
     document

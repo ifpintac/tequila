@@ -55,7 +55,7 @@ fn records_have_one_layout_on_both_sides() {
         &module,
         GpuCatcher {
             shadow_color, bounce, reflections, reflection_roughness, reflection_fade, fade, reflection_fresnel,
-            occlusion_only, occlusion_radius, shadows, bounce_falloff, _pad,
+            occlusion_only, occlusion_radius, shadows, bounce_falloff, product_light, _pad,
         }
     );
     let source = shader::source("frame");

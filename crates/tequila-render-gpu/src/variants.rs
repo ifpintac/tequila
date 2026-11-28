@@ -139,9 +139,12 @@ impl KernelFeatures {
     /// Subsurface scattering: the walk's doorway, the walk under a surface
     /// and its way out.
     pub const SUBSURFACE: KernelFeatures = part(31);
+    /// The light the product sends onto a floor that shows it: its open
+    /// irradiance and its path towards the product.
+    pub const PRODUCT_LIGHT: KernelFeatures = part(32);
 
     /// Each part, with its constant's name in `features.wgsl`.
-    pub const NAMED: [(KernelFeatures, &'static str); 32] = [
+    pub const NAMED: [(KernelFeatures, &'static str); 33] = [
         (Self::GLASS, "FEATURE_GLASS"),
         (Self::PANES, "FEATURE_PANES"),
         (Self::CUTOUTS, "FEATURE_CUTOUTS"),
@@ -174,6 +177,7 @@ impl KernelFeatures {
         (Self::SPECTRAL, "FEATURE_SPECTRAL"),
         (Self::SCATTERING, "FEATURE_SCATTERING"),
         (Self::SUBSURFACE, "FEATURE_SUBSURFACE"),
+        (Self::PRODUCT_LIGHT, "FEATURE_PRODUCT_LIGHT"),
     ];
 
     /// The instructions' constant in `features.wgsl`.
@@ -221,7 +225,7 @@ impl KernelFeatures {
     pub fn of(r: &SceneRecords) -> KernelFeatures {
         use crate::material::{GLASS_BOUNDARY, GLASS_PANE, GLASS_SCATTERS};
         use crate::program::{PROGRAM_AT_HIT, PROGRAM_CUTS, PROGRAM_NORMAL_PROJECTED, PROGRAM_NORMAL_UV, PROGRAM_RUNS};
-        use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_TRANSMITS};
+        use crate::transport::{SCENE_BACKGROUND_COLOUR, SCENE_BACKPLATE, SCENE_CUTOUTS, SCENE_CUT_PROGRAMS, SCENE_FINITE_DOME, SCENE_PANES, SCENE_PRODUCT_LIGHT, SCENE_TRANSMITS};
         let mut f = KernelFeatures::NONE;
         let mut keep = |on: bool, part: KernelFeatures| {
             if on {
@@ -317,6 +321,9 @@ impl KernelFeatures {
         // The subsurface lobe (openpbr_build, a material's subsurface
         // weight) and the walk it opens.
         keep(any_material(&|m| m.subsurface_color[3] != 0.0), Self::SUBSURFACE);
+        // The floor's light from the product (the frame's
+        // SCENE_PRODUCT_LIGHT, which a catcher's product_light sets).
+        keep(r.glass_flags & SCENE_PRODUCT_LIGHT != 0 && r.instances.iter().any(|i| i.catcher != NO_CATCHER), Self::PRODUCT_LIGHT);
         // A floor under a dome of a size keeps the programs' interpreter
         // too, whether a program runs or not: without it the floor's
         // shadow under the dome came out otherwise (finite_dome: 7,269 of
