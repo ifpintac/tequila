@@ -75,7 +75,7 @@ Mixing within the base is by weight, not by adding lobes: `base = lerp(dielectri
 | `coat_color` | RGB | Coat absorption tint |
 | `coat_roughness` | 0–1 | Coat GGX roughness |
 | `coat_ior` | 1.0–2.0 | Coat IOR, 1.5 default |
-| `coat_darkening` | 0–1 | Physically-correct darkening of the base under a coat (total internal reflection). Keep at 1 for realism |
+| `coat_darkening` | 0–1 | Physically-correct darkening of the base under a coat (total internal reflection). Keep at 1 for realism. *As built, November 20:* OpenPBR's `Δ = (1 − K) / (1 − E_b K)` on what the substrate spreads (diffuse and subsurface), channel by channel, `K = 1 − T / n²` the share of that light the coat turns back from inside (0.60 at 1.5, `lobes::openpbr::coat_escapes`): a grey 0.5 under a clear coat reads 0.32, not 0.50, and a dark colour saturates as it darkens, the deeper look of varnished wood and glazed ceramic. A metal or the base's own reflection hands light back near the angle it came, so its trapped light is the coat's Fresnel at that angle (`K_s`). 0 leaves the coat only its own reflection's share, as OpenPBR's boost does. Under a coat the base's interface is against the coat (`η = lerp(n_b, n_b / n_c, coat_weight)`), so a plastic lacquered at its own index has no second highlight. Cycles' principled has neither, and the translation darkens the base colour and passes the relative index (`under_coat`, `base_ior`). |
 | `fuzz_weight` | 0–1 | Sheen layer strength |
 | `fuzz_color` | RGB | Sheen tint |
 | `fuzz_roughness` | 0–1 | Sheen roughness |

@@ -130,6 +130,67 @@ fn layer_response(layer: f32, substrate: f32) -> f32 {
         .clamp(0.0, 1.0)
 }
 
+/// The index of the base's interface relative to what is over it: the air,
+/// or a coat of `coat_ior` at `coat_weight`. OpenPBR's Coat section,
+/// `η_s = lerp(n_b, n_b / n_c, C)`. Turned over where the coat is the denser,
+/// which reflects alike and has no critical angle to cut the base off by,
+/// as the specification suggests.
+pub fn base_ior(specular_ior: f32, coat_ior: f32, coat_weight: f32) -> f32 {
+    let n_b = specular_ior.max(1.0);
+    let n_c = coat_ior.max(1.0);
+    let eta = n_b + (n_b / n_c - n_b) * coat_weight.clamp(0.0, 1.0);
+    if eta < 1.0 {
+        1.0 / eta.max(1e-3)
+    } else {
+        eta
+    }
+}
+
+/// Whether an interface of relative index `eta` reflects enough to be worth
+/// a lobe: a millionth face-on, an index within about 0.2% of one.
+fn reflects(eta: f32) -> bool {
+    let f0 = (eta - 1.0) / (eta + 1.0);
+    f0 * f0 > 1e-6
+}
+
+/// Of the light a substrate sends back up under a coat, the share that gets
+/// out through it on the first try, `1 - K` in OpenPBR's coat darkening.
+///
+/// That light meets the coat from inside, where it is spread over a whole
+/// hemisphere but can only leave through a cone `n` times narrower: a coat
+/// lets out `T / n²` of it, `T` being what the coat lets in from the whole
+/// hemisphere outside (by reciprocity), and turns the rest back down for the
+/// base to absorb a share of again. At an index of 1.5 that is 0.60 turned
+/// back, where the coat reflects only 0.09 of the light reaching it from
+/// outside.
+pub fn coat_escapes(coat_roughness: f32, coat_ior: f32) -> f32 {
+    let n = coat_ior.max(1.0);
+    let coat = DielectricSpecular::new(coat_roughness.clamp(0.0, 1.0), n);
+    ((1.0 - coat.hemispherical_albedo()) / (n * n)).clamp(0.0, 1.0)
+}
+
+/// How much darker a coat makes what the substrate under it spreads, per
+/// channel of the base's albedo `base`, at `amount` (the coat's weight times
+/// its `coat_darkening`), `escapes` being [`coat_escapes`]. OpenPBR's coat
+/// darkening, as in Saunderson's correction for a paint film:
+/// `Δ = (1 - K) / (1 - E_b K)`.
+///
+/// What the coat turns back the base absorbs a share of, and turns back up
+/// for another try: the varnished wood, glazed ceramic and lacquer that look
+/// deeper and richer than the bare surface. A white base absorbs none of it
+/// and stays white. A dark channel loses more than a bright one, so the
+/// colour saturates as it darkens.
+pub fn coat_darkening(escapes: f32, amount: f32, base: Spectrum) -> Spectrum {
+    let escapes = escapes.clamp(0.0, 1.0);
+    let turned_back = 1.0 - escapes;
+    let amount = amount.clamp(0.0, 1.0);
+    let channel = |albedo: f32| {
+        let delta = escapes / (1.0 - albedo.clamp(0.0, 1.0) * turned_back).max(1e-3);
+        1.0 + (delta - 1.0) * amount
+    };
+    Spectrum { r: channel(base.r), g: channel(base.g), b: channel(base.b) }
+}
+
 /// One weighted component of the stack.
 #[derive(Clone, Copy, Debug)]
 enum Lobe {
@@ -217,6 +278,11 @@ pub struct OpenPbrBsdf {
     /// one trapped-light series that sits under it. See
     /// [`stack_transmittance`].
     substrate_internal: f32,
+    /// The coat's hemispherical transmittance from outside, at its weight:
+    /// what its two crossings of the substrate's light are divided by, so
+    /// that they shape that light by angle and the darkening alone sets how
+    /// much of it gets out.
+    coat_through: f32,
     /// The flake's frame in the shading frame, when this point is on one:
     /// the flake lobe is evaluated with directions turned into it. A
     /// rotation, so densities carry over unchanged.
@@ -414,10 +480,14 @@ impl OpenPbrBsdf {
                 // split, so the reflection is not added a second time.
                 let opaque = 1.0 - material.transmission_weight;
                 let specular_weight = material.specular_weight * opaque;
-                if specular_weight > 1e-4 {
+                // Under a coat the interface is between the coat and the
+                // base, not air and the base: a lacquer of the plastic's own
+                // index leaves no surface between the two to reflect.
+                let ior = base_ior(material.specular_ior, material.coat_ior, coat.map_or(0.0, |_| material.coat_weight));
+                if specular_weight > 1e-4 && (reflects(ior) || film.is_some()) {
                     let lobe = DielectricSpecular::new(
                         rough(material.specular_roughness),
-                        material.specular_ior,
+                        ior,
                     )
                     .with_tint(material.specular_color)
                     .with_film(film);
@@ -473,10 +543,43 @@ impl OpenPbrBsdf {
                 // What the trapped-light series bounces against: the whole
                 // substrate's return, the walk's share at the colour it is
                 // tuned to give back.
-                diffuse_albedo = (material.base_color * (1.0 - subsurface)
-                    + material.subsurface_color * subsurface)
-                    .luminance()
-                    .clamp(0.0, 1.0);
+                let substrate = material.base_color * (1.0 - subsurface)
+                    + material.subsurface_color * subsurface;
+                diffuse_albedo = substrate.luminance().clamp(0.0, 1.0);
+                // Under a coat, what the substrate spreads is darkened by the
+                // light the coat turns back down: see [`coat_darkening`].
+                let under_coat = match &coat {
+                    Some(_) => {
+                        let transmission = material.transmission_weight.clamp(0.0, 1.0);
+                        let interface = specular
+                            .map(|l| l.hemispherical_albedo() * specular_scale)
+                            .unwrap_or(0.0);
+                        let metallic = metalness.clamp(0.0, 1.0);
+                        let channel = |sub: f32, transmitted: f32, metal: f32, flake_colour: f32| {
+                            let under = sub * (1.0 - transmission) + transmitted * transmission;
+                            let dielectric = layer_response(interface, under);
+                            let base = metal * metallic + dielectric * (1.0 - metallic);
+                            base * (1.0 - flake) + flake_colour * flake
+                        };
+                        let (s, t, c, f) = (
+                            substrate,
+                            material.transmission_color,
+                            material.base_color,
+                            material.flake_color,
+                        );
+                        let base = Spectrum {
+                            r: channel(s.r, t.r, c.r, f.r),
+                            g: channel(s.g, t.g, c.g, f.g),
+                            b: channel(s.b, t.b, c.b, f.b),
+                        };
+                        coat_darkening(
+                            coat_escapes(rough(material.coat_roughness), material.coat_ior),
+                            material.coat_weight * material.coat_darkening,
+                            base,
+                        )
+                    }
+                    None => Spectrum::ONE,
+                };
                 let diffuse_weight = remainder * (1.0 - subsurface);
                 if diffuse_weight > 1e-4 {
                     let diffuse =
@@ -484,7 +587,7 @@ impl OpenPbrBsdf {
                     push(
                         Lobe::Diffuse(diffuse),
                         Depth::Substrate,
-                        base_scale,
+                        base_scale * under_coat,
                         diffuse_weight,
                     );
                 }
@@ -500,7 +603,7 @@ impl OpenPbrBsdf {
                     } else {
                         DiffuseTransmission::new(Spectrum::ONE, material.subsurface_color)
                     };
-                    push(Lobe::Subsurface(lobe), Depth::Substrate, base_scale, walk_weight);
+                    push(Lobe::Subsurface(lobe), Depth::Substrate, base_scale * under_coat, walk_weight);
                 }
             }
         }
@@ -554,19 +657,19 @@ impl OpenPbrBsdf {
         // bouncing against the *stack*, not against each layer in turn, and
         // giving every layer its own series counts the same trapped light
         // once per layer.
-        let substrate_internal = if diffuse_albedo > 0.0
-            && (fuzz.is_some() || coat.is_some() || specular.is_some())
-        {
-            1.0 - stack_transmittance(
-                fuzz.as_ref(),
-                (coat.as_ref(), coat_average),
-                material.coat_weight,
-                (specular.as_ref(), specular_average),
-                specular_scale,
-            )
+        // The coat's own trapped light is in the substrate lobes' darkening,
+        // which knows the coat turns back far more from inside than from
+        // outside, so it is left out of this one.
+        let substrate_internal = if diffuse_albedo > 0.0 && (fuzz.is_some() || specular.is_some()) {
+            1.0 - stack_transmittance(fuzz.as_ref(), (None, 0.0), 0.0, (specular.as_ref(), specular_average), specular_scale)
         } else {
             0.0
         };
+        // What the coat lets through from the whole hemisphere outside, for
+        // the shape of what it lets out of the substrate.
+        let coat_through = coat
+            .map(|_| (1.0 - coat_average * material.coat_weight).clamp(1e-3, 1.0))
+            .unwrap_or(1.0);
 
         let coat_response = match &coat {
             Some(_) => layer_response(coat_average * material.coat_weight, base_response),
@@ -587,6 +690,7 @@ impl OpenPbrBsdf {
             specular_scale,
             diffuse_albedo,
             substrate_internal,
+            coat_through,
             flake_frame,
             chosen,
         }
@@ -672,7 +776,11 @@ impl OpenPbrBsdf {
     /// and bounces against the whole stack rather than against each layer in
     /// turn, so there is exactly one series, summed against
     /// [`Self::substrate_internal`]. Giving each layer its own counts the
-    /// same trapped light once per layer.
+    /// same trapped light once per layer. The coat is the exception: from
+    /// inside it turns back far more than it reflects from outside (total
+    /// internal reflection), so its series is the substrate lobes' own
+    /// darkening ([`coat_darkening`]), and here it only shapes the light by
+    /// the angles it crosses at.
     fn attenuation(&self, depth: Depth, wo: Vec3, wi: Vec3) -> f32 {
         // Everything below the interface is the Lambertian substrate, and it
         // is the only thing that spreads what it returns.
@@ -694,15 +802,20 @@ impl OpenPbrBsdf {
             if let Some(coat) = &self.coat {
                 let down = 1.0 - coat.directional_albedo(wo) * self.coat_weight;
                 let up = 1.0 - coat.directional_albedo(wi) * self.coat_weight;
-                let physical = if spreads {
-                    (down * up).clamp(0.0, 1.0)
+                through *= if spreads {
+                    // In at `wo`, out at `wi`, shaped by the two crossings;
+                    // how much gets out at all, after the light the coat
+                    // turns back, is the substrate lobes' darkening.
+                    (down * up / self.coat_through).clamp(0.0, 1.0)
                 } else {
-                    Self::trapped(down, up, 1.0 - up, self.base_response)
+                    // §2.2's `coat_darkening` runs from the physical result
+                    // down to the coat taking only its own reflection's
+                    // share, as OpenPBR's boost does: never to no share at
+                    // all, which returned the coat's reflection on top of
+                    // everything the base did.
+                    let physical = Self::trapped(down, up, 1.0 - up, self.base_response);
+                    down + (physical - down) * self.coat_darkening
                 };
-                // §2.2's `coat_darkening` scales between the physical result
-                // and no darkening at all, which is the artistic cheat the
-                // parameter exists to allow.
-                through *= physical * self.coat_darkening + (1.0 - self.coat_darkening);
             }
         }
         if spreads {
@@ -1516,6 +1629,74 @@ mod tests {
             with_coat > plain * 0.7,
             "the coat swallowed the base: {plain:.4} to {with_coat:.4}"
         );
+    }
+
+    /// A matte base under a clear coat, seen straight on: what the coat lets
+    /// in, the base returns, and the coat turns back from inside, summed.
+    /// Saunderson's correction, and OpenPBR's interfaced Lambertian:
+    /// `F + (1 - F) E_b (1 - K) / (1 - E_b K)`, with `K = 1 - (1 - E_F) / n²`
+    /// what the coat turns back of the light spread under it. The coat used
+    /// to turn back only what it reflects from outside, 0.09 where it is
+    /// 0.60, and a grey 0.5 read 0.50 under a coat where it is 0.32.
+    #[test]
+    fn a_coat_darkens_a_matte_base_by_the_light_it_turns_back() {
+        let n = 1.5f32;
+        let f = ((n - 1.0) / (n + 1.0)).powi(2);
+        let turned_back = 1.0 - (1.0 - fresnel::dielectric_average(n)) / (n * n);
+        for grey in [0.18f32, 0.5, 0.8] {
+            let coated = Material {
+                base_color: Spectrum::splat(grey),
+                specular_weight: 0.0,
+                coat_weight: 1.0,
+                coat_roughness: 0.0,
+                coat_ior: n,
+                ..Default::default()
+            };
+            let seen = mean_throughput(&OpenPbrBsdf::new(&coated, 0.0), Vec3::Z);
+            let exact = f + (1.0 - f) * grey * (1.0 - turned_back) / (1.0 - grey * turned_back);
+            assert!(
+                (seen / exact - 1.0).abs() < 0.02,
+                "grey {grey} under a clear coat reads {seen:.4}; the light the coat turns back makes it {exact:.4}"
+            );
+            // At no darkening the coat takes only its own reflection's share.
+            let undarkened = mean_throughput(&OpenPbrBsdf::new(&Material { coat_darkening: 0.0, ..coated }, 0.0), Vec3::Z);
+            let share = f + (1.0 - f) * grey;
+            assert!(
+                (undarkened / share - 1.0).abs() < 0.02,
+                "grey {grey} under an undarkening coat reads {undarkened:.4}, where the coat's own share leaves {share:.4}"
+            );
+        }
+    }
+
+    /// OpenPBR's Coat section: under a coat the base's interface is against
+    /// the coat, `n_b / n_c`. A plastic lacquered at its own index has no
+    /// surface left between the two to reflect a second highlight, and reads
+    /// as its matte colour under the lacquer.
+    #[test]
+    fn a_lacquer_of_the_plastics_own_index_leaves_no_second_surface() {
+        let lacquered = |specular_weight: f32| Material {
+            base_color: Spectrum::splat(0.5),
+            specular_weight,
+            specular_ior: 1.5,
+            specular_roughness: 0.3,
+            coat_weight: 1.0,
+            coat_roughness: 0.02,
+            coat_ior: 1.5,
+            ..Default::default()
+        };
+        for degrees in [0.0f32, 45.0, 70.0] {
+            let wo = direction(degrees.to_radians());
+            let plastic = mean_throughput(&OpenPbrBsdf::new(&lacquered(1.0), 0.0), wo);
+            let matte = mean_throughput(&OpenPbrBsdf::new(&lacquered(0.0), 0.0), wo);
+            assert!(
+                (plastic / matte - 1.0).abs() < 0.005,
+                "at {degrees} degrees the lacquered plastic reads {plastic:.4} and the lacquered matte {matte:.4}"
+            );
+        }
+        assert_eq!(base_ior(1.5, 1.5, 1.0), 1.0);
+        assert!((base_ior(1.5, 1.5, 0.0) - 1.5).abs() < 1e-6);
+        // A denser coat over the base: turned over, not below one.
+        assert!((base_ior(1.4, 1.6, 1.0) - 1.6 / 1.4).abs() < 1e-5);
     }
 
     /// §2.1 mixes metal and dielectric by weight rather than adding lobes, so

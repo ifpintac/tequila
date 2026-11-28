@@ -117,7 +117,9 @@ pub struct Material {
     pub coat_roughness: f32,
     pub coat_ior: f32,
     /// Physically-correct darkening of the base under a coat, from total
-    /// internal reflection. §2.2: "Keep at 1 for realism."
+    /// internal reflection. §2.2: "Keep at 1 for realism." 0 leaves the coat
+    /// only its own reflection's share of the base (OpenPBR's boost); see
+    /// `lobes::openpbr::coat_darkening`.
     pub coat_darkening: f32,
 
     // --- fuzz ------------------------------------------------------------
