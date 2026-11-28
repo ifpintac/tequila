@@ -931,6 +931,10 @@ fn trace<C: PathColour>(
     // Accumulated relative IOR squared. §3.1: omitting this from Russian
     // roulette "makes glass unnecessarily noisy".
     let mut eta_scale = 1.0f32;
+    // What Russian roulette has scaled the throughput up by so far: its
+    // survivors carry the share of the paths it ended. The clamps judge
+    // the light a path finds without it (`light_ceiling`).
+    let mut roulette = 1.0f32;
     let mut roughness_floor = 0.0f32;
     // The smallest density any bounce so far left by, a diffuse one's or a
     // rough reflection's, for blurring what is sharper past it
@@ -1099,7 +1103,7 @@ fn trace<C: PathColour>(
                 let contribution = clamp_light(
                     colour,
                     throughput * colour.reflectance(lobes) * colour.unbounded(emitted) * weight,
-                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette),
                     &mut out.clamped_energy,
                 );
                 radiance += contribution;
@@ -1252,6 +1256,7 @@ fn trace<C: PathColour>(
                         break;
                     }
                     throughput *= 1.0 / carried;
+                    roulette /= carried;
                 }
                 collided_at = Some(travelled);
                 break;
@@ -1283,7 +1288,7 @@ fn trace<C: PathColour>(
                         instance,
                         sampler,
                     );
-                    let ceiling = light_ceiling(config, specular_chain, bounce);
+                    let ceiling = light_ceiling(config, specular_chain, bounce, roulette);
                     let sky = clamp_light(colour, throughput * colour.unbounded(sky), ceiling, &mut out.clamped_energy);
                     let lights = clamp_light(colour, throughput * colour.unbounded(lights), ceiling, &mut out.clamped_energy);
                     radiance += sky + lights;
@@ -1357,7 +1362,7 @@ fn trace<C: PathColour>(
                 let contribution = clamp_light(
                     colour,
                     throughput * colour.unbounded(emitted) * weight,
-                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette),
                     &mut out.clamped_energy,
                 );
                 radiance += contribution;
@@ -1603,7 +1608,7 @@ fn trace<C: PathColour>(
                 let emitted = clamp_light(
                     colour,
                     throughput * colour.unbounded(glow),
-                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette),
                     &mut out.clamped_energy,
                 );
                 radiance += emitted;
@@ -1850,7 +1855,7 @@ fn trace<C: PathColour>(
                 if let Some(from) = &seen_from {
                     let glass = if from.sees_glass { through_glass } else { config.shadow_glass() };
                     if !(read_caustics && smooth_since > 0) {
-                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1));
+                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette);
                         lamps_past(intersector, &hit, &ray, from, glass, |lobes, light, layer| {
                             let contribution = clamp_light(
                                 colour,
@@ -1871,7 +1876,7 @@ fn trace<C: PathColour>(
                         let receiver = emitters_from.filter(|_| from_medium.is_none());
                         let facing = if from_medium.is_some() { None } else { sky_facing };
                         let (sky, glow) = light_past(intersector, &hit, &ray, through_glass, (pdf, pass_pdf), receiver, facing, !(read_caustics && smooth_since > 0));
-                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1));
+                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette);
                         let sky = clamp_light(colour, throughput * colour.unbounded(sky), ceiling, &mut out.clamped_energy);
                         let glow = clamp_light(colour, throughput * colour.unbounded(glow), ceiling, &mut out.clamped_energy);
                         radiance += sky + glow;
@@ -1928,7 +1933,7 @@ fn trace<C: PathColour>(
             let contribution = clamp_light(
                 colour,
                 throughput * colour.unbounded(material.emission()) * (weight * face),
-                light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                light_ceiling(config, specular_chain, bounce.saturating_sub(1), roulette),
                 &mut out.clamped_energy,
             );
             radiance += contribution;
@@ -2275,7 +2280,7 @@ fn trace<C: PathColour>(
                     )
             };
             // Clamped as one, and its passes with it, so they still add up.
-            let kept = clamp_share(colour, contribution, light_ceiling(config, specular_chain, bounce));
+            let kept = clamp_share(colour, contribution, light_ceiling(config, specular_chain, bounce, roulette));
             let contribution = if kept < 1.0 {
                 out.clamped_energy += colour.rgb(contribution).luminance() * (1.0 - kept);
                 contribution * kept
@@ -2646,6 +2651,7 @@ fn trace<C: PathColour>(
                 break;
             }
             throughput /= survival;
+            roulette /= survival;
         }
     }
 
@@ -4007,13 +4013,24 @@ enum Flight {
 /// direct where it is found at the first surface (`found_at` 0: sampled
 /// there, or met by the ray leaving it), or past the camera's mirrors and
 /// clear glass alone; indirect past that.
+///
+/// Raised by what Russian roulette has scaled the path up by (`roulette`),
+/// so that the light is judged as it would be without the roulette. A path
+/// that survives it carries the share of the paths it ended, which is no
+/// firefly; judged with that share, every survivor that met a lamp brighter
+/// than the ceiling was clamped, however dim the path, and the roulette,
+/// which leaves the picture as it is, took light off it. A glass ball's
+/// reflection in a glossy floor lost 72% of the softbox seen through the
+/// ball: every path to it a survivor carrying the lamp whole, at 36 against
+/// a ceiling of 10. Cycles' kept it all.
 #[inline]
-fn light_ceiling(config: &IntegratorConfig, specular_chain: bool, found_at: u32) -> Option<f32> {
-    if found_at == 0 || specular_chain {
+fn light_ceiling(config: &IntegratorConfig, specular_chain: bool, found_at: u32, roulette: f32) -> Option<f32> {
+    let ceiling = if found_at == 0 || specular_chain {
         config.clamp_direct
     } else {
         config.clamp_indirect
-    }
+    };
+    ceiling.map(|c| c * roulette)
 }
 
 /// What of `contribution` a ceiling keeps: all of it, or the share that
@@ -5296,17 +5313,52 @@ mod tests {
         let config = IntegratorConfig { clamp_indirect: Some(10.0), clamp_direct: None, ..IntegratorConfig::default() };
         let bright = Spectrum { r: 12.0, g: 6.0, b: 2.0 };
         let mut clamped = 0.0;
-        let kept = clamp_light(&Rgb, bright, light_ceiling(&config, false, 1), &mut clamped);
+        let kept = clamp_light(&Rgb, bright, light_ceiling(&config, false, 1, 1.0), &mut clamped);
         assert!((kept.r + kept.g + kept.b - 10.0).abs() < 1e-4, "{kept:?} sums to more than the ceiling");
         assert!((kept.r / kept.g - 2.0).abs() < 1e-4 && (kept.g / kept.b - 3.0).abs() < 1e-4, "{kept:?} changed colour");
         assert!((clamped - (bright.luminance() - kept.luminance())).abs() < 1e-4, "counted {clamped}");
         for (chain, found_at) in [(false, 0), (true, 3)] {
             let mut none = 0.0;
-            assert_eq!(clamp_light(&Rgb, bright, light_ceiling(&config, chain, found_at), &mut none), bright);
+            assert_eq!(clamp_light(&Rgb, bright, light_ceiling(&config, chain, found_at, 1.0), &mut none), bright);
             assert_eq!(none, 0.0);
         }
         let dim = Spectrum::splat(3.0);
-        assert_eq!(clamp_light(&Rgb, dim, light_ceiling(&config, false, 2), &mut clamped), dim);
+        assert_eq!(clamp_light(&Rgb, dim, light_ceiling(&config, false, 2, 1.0), &mut clamped), dim);
+    }
+
+    /// Russian roulette leaves what the clamps take as it is: a grey ball
+    /// on a grey floor under a bright sky, its light found in the bounces
+    /// between them clamped, is as bright with the roulette from the first
+    /// bounce as without it. Judged with what the roulette scales its
+    /// survivors up by, those were clamped as the brightest paths, and the
+    /// roulette took a third of the clamped light off.
+    #[test]
+    fn russian_roulette_leaves_what_the_clamps_take_unchanged() {
+        let grey = Material::diffuse(Spectrum::splat(0.5));
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![grey], Arc::new(Environment::uniform(Spectrum::splat(4.0))));
+        let intersector = AnalyticIntersector::new(scene)
+            .with_sphere(Sphere::new(vec3(0.0, 1.0, 0.0), 1.0, tequila_core::ids::MaterialId(0)))
+            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+        let mean = |roulette_from: u32| {
+            let config = IntegratorConfig {
+                clamp_indirect: Some(1.0),
+                clamp_direct: None,
+                russian_roulette_start_bounce: roulette_from,
+                regularization_start_bounce: u32::MAX,
+                ..IntegratorConfig::product()
+            };
+            let samples = 1u32 << 15;
+            let mut sum = 0.0f64;
+            for i in 0..samples {
+                let mut sampler = Sampler::new(0, 0, i, 7);
+                // The ball's underside, which sees the floor.
+                let ray = Ray::new(vec3(0.0, 0.3, 3.0), vec3(0.0, 0.0, -1.0));
+                sum += f64::from(trace_path(&intersector, &config, ray, Vec2::ZERO, &mut sampler).radiance.luminance());
+            }
+            sum / f64::from(samples)
+        };
+        let (without, with) = (mean(u32::MAX), mean(1));
+        assert!((with / without - 1.0).abs() < 0.03, "clamped, {with:.4} with the roulette from the first bounce, {without:.4} without it");
     }
 
     /// Drawing only the sky a surface faces (`Environment::sample_facing`)

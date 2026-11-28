@@ -198,12 +198,15 @@ fn clamp_light4(c: vec4<f32>, ceiling: f32) -> vec4<f32> {
 // MODE_SPECTRAL), set at its start.
 var<private> spectral_on: bool;
 
-// light_ceiling.
-fn light_ceiling(specular_chain: bool, found_at: u32) -> f32 {
+// light_ceiling, raised by what Russian roulette has scaled the path up by
+// (#207): the light judged as it would be without the roulette, whose
+// survivors carry the share of the paths it ended. A ceiling at or below
+// nought stays none.
+fn light_ceiling(specular_chain: bool, found_at: u32, roulette: f32) -> f32 {
     if (found_at == 0u || specular_chain) {
-        return frame.clamp_direct;
+        return frame.clamp_direct * roulette;
     }
-    return frame.clamp_indirect;
+    return frame.clamp_indirect * roulette;
 }
 
 // A stack that is mirrors only - every lobe it holds a smooth reflection -
@@ -1239,7 +1242,7 @@ fn light_past_part(st: ptr<function, PathState>, hit: RayIntersection, place: Su
     }
     let seen = (*st).seen;
     let bounce = (*st).bounce;
-    let ceiling = light_ceiling((*st).specular_chain, select(bounce - 1u, 0u, bounce == 0u));
+    let ceiling = light_ceiling((*st).specular_chain, select(bounce - 1u, 0u, bounce == 0u), (*st).roulette);
     let lamps = select(0u, frame.light_count, FEATURE_LAMPS && seen.valid);
     // The sky and the glowing parts: past a part that casts no shadow, off
     // a bounce a light sample stands in for, but not past glass a glossy
@@ -1437,6 +1440,9 @@ struct PathState {
     seen: SeenFrom,
     ray: u32,
     eta_scale: f32,
+    // What Russian roulette has scaled the throughput up by (ic's roulette),
+    // which the clamps leave out.
+    roulette: f32,
     transmission_bounces: u32,
     // Passes through glass (ic:847-861's glass_crossings): counted against
     // the transmission limit and not against the bounces (#183), so the
@@ -1504,6 +1510,7 @@ fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, reflect
     }
     st.ray = select(RAY_CAMERA, RAY_GLOSSY, reflected || in_floor);
     st.eta_scale = 1.0;
+    st.roulette = 1.0;
     st.transmission_bounces = 0u;
     st.glass_crossings = 0u;
     st.through_glass = GLASS_SOLID;
@@ -1737,7 +1744,7 @@ fn meet_and_escape(st: ptr<function, PathState>, hit: RayIntersection, start: u3
     }
     let bounce = (*st).bounce;
     let found_at = select(bounce - 1u, 0u, bounce == 0u);
-    let ceiling = light_ceiling((*st).specular_chain, found_at);
+    let ceiling = light_ceiling((*st).specular_chain, found_at, (*st).roulette);
     let lamps = select(0u, frame.light_count, seen.valid);
     var sky = vec3<f32>(0.0);
     for (var i = start; i <= lamps; i++) {
@@ -2627,6 +2634,7 @@ fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> 
             return false;
         }
         (*st).tp4 = tp4 * (1.0 / q4);
+        (*st).roulette = cy_div((*st).roulette, q4);
         return true;
     }
     let throughput = (*st).throughput;
@@ -2635,6 +2643,7 @@ fn russian_roulette(st: ptr<function, PathState>, s: ptr<function, Sampler>) -> 
         return false;
     }
     (*st).throughput = throughput * (1.0 / q);
+    (*st).roulette = cy_div((*st).roulette, q);
     return true;
 }
 
@@ -2826,7 +2835,7 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         // draws here, before the bounce's, as the processor draws them: the
         // sky's where it lights, the lamp's choice from this point and the
         // lamp's where it lights this part, the glowing part's.
-        *light = LightSampleAt(true, false, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing, (*st).throughput, light_ceiling((*st).specular_chain, bounce), vec3<f32>(0.0), 0.0, (*st).tp4, (*st).alone, disperses, vec2<f32>(0.0), LampChoice(false, 0u, 0.0), vec2<f32>(0.0), 0.0, vec2<f32>(0.0));
+        *light = LightSampleAt(true, false, bsdf, f, wo, surf, inst.instance, transmissive, (*st).sky_facing, (*st).throughput, light_ceiling((*st).specular_chain, bounce, (*st).roulette), vec3<f32>(0.0), 0.0, (*st).tp4, (*st).alone, disperses, vec2<f32>(0.0), LampChoice(false, 0u, 0.0), vec2<f32>(0.0), 0.0, vec2<f32>(0.0));
         if (frame.env_intensity > 0.0) {
             (*light).u_sky = sampler_light_sample(s);
         }
@@ -3984,6 +3993,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                                     lost = true;
                                 } else {
                                     t = t * cy_div(1.0, carried);
+                                    st.roulette = cy_div(st.roulette, carried);
                                 }
                             }
                         } else {
@@ -4019,7 +4029,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                                 light.instance = medium.solid;
                                 light.facing = vec3<f32>(0.0);
                                 light.throughput = st.throughput;
-                                light.ceiling = light_ceiling(st.specular_chain, st.bounce);
+                                light.ceiling = light_ceiling(st.specular_chain, st.bounce, st.roulette);
                                 light.sigma = walk.sigma;
                                 light.g = walk.g;
                                 st.lit_from = medium.solid;
@@ -4337,7 +4347,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                         let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);
                         if (any(glow != vec3<f32>(0.0)) && !(FEATURE_SPECTRAL && spectral_on)) {
                             let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
-                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at, st.roulette));
                         }
                         if (FEATURE_SPECTRAL && spectral_on) {
                             // The glow, where there is one, then the spectrum
@@ -4348,7 +4358,7 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                             for (var k = select(1u, 0u, any(glow != vec3<f32>(0.0))); k < (2u | cy_zero); k++) {
                                 let c4 = spectral_of(select(glow, transmitted, k == 1u), k == 0u);
                                 if (k == 0u) {
-                                    st.rad4 += cy_exact4(clamp_light4(st.tp4 * c4, light_ceiling(st.specular_chain, found_at)));
+                                    st.rad4 += cy_exact4(clamp_light4(st.tp4 * c4, light_ceiling(st.specular_chain, found_at, st.roulette)));
                                 } else {
                                     st.tp4 = st.tp4 * c4;
                                 }
@@ -4560,9 +4570,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                     }
                     let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
                     if (FEATURE_SPECTRAL && spectral_on) {
-                        st.rad4 += cy_exact4(clamp_light4(st.tp4 * spectral_of(material_emission(material.material), true) * (weight * face), light_ceiling(st.specular_chain, found_at)));
+                        st.rad4 += cy_exact4(clamp_light4(st.tp4 * spectral_of(material_emission(material.material), true) * (weight * face), light_ceiling(st.specular_chain, found_at, st.roulette)));
                     } else {
-                        st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at));
+                        st.radiance += clamp_light(st.throughput * material_emission(material.material) * (weight * face), light_ceiling(st.specular_chain, found_at, st.roulette));
                     }
                 }
             }
